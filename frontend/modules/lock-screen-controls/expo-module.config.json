@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["LockScreenControlsModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.lockscreencontrols.LockScreenControlsModule"]
+  }
+}

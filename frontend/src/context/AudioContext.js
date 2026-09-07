@@ -1,4 +1,4 @@
-﻿import React, { createContext, useContext, useState, useEffect, useRef, Component } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, Component } from "react";
 import { Platform } from "react-native";
 import { Audio } from "expo-av";
 import { api } from "../api/client";
@@ -13,6 +13,13 @@ import {
   addRecentlyPlayed,
   recordAppSongPlay,
 } from "../services/firebase";
+
+let LockScreenControls = null;
+try {
+  if (Platform.OS !== "web") {
+    LockScreenControls = require("../../modules/lock-screen-controls/src/index").default;
+  }
+} catch (_) {}
 
 const AudioContext = createContext(null);
 
@@ -77,6 +84,69 @@ const AudioProvider = ({ children }) => {
   durationMillisRef.current = durationMillis;
 
   // MediaSession API helper: renders high-res 512x512 album banner on OS lock screens & notification panels
+  const setupMediaSessionHandlers = useCallback(() => {
+    if (typeof window === "undefined" || !("mediaSession" in navigator)) return;
+
+    const handlers = {
+      play: () => {
+        if (Platform.OS === "web" && webAudioRef.current) {
+          webAudioRef.current.play().catch(() => {});
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+          updateMediaSessionPlaybackState(true);
+        } else if (soundRef.current) {
+          soundRef.current.playAsync();
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+          updateMediaSessionPlaybackState(true);
+        } else if (currentTrackRef.current) {
+          playTrack(currentTrackRef.current);
+        }
+      },
+      pause: () => {
+        if (Platform.OS === "web" && webAudioRef.current) {
+          webAudioRef.current.pause();
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+          updateMediaSessionPlaybackState(false);
+        } else if (soundRef.current) {
+          soundRef.current.pauseAsync();
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+          updateMediaSessionPlaybackState(false);
+        }
+      },
+      previoustrack: () => {
+        if (playPreviousRef.current) playPreviousRef.current();
+      },
+      nexttrack: () => {
+        if (playNextRef.current) playNextRef.current();
+      },
+      seekto: (details) => {
+        if (details.seekTime !== undefined && Number.isFinite(details.seekTime)) {
+          seekTo(Math.floor(details.seekTime * 1000));
+        }
+      },
+    };
+
+    // Explicitly unregister seekforward & seekbackward so OS lock screen
+    // shows Next Track and Previous Track buttons instead of 10s jump icons
+    try {
+      navigator.mediaSession.setActionHandler("seekforward", null);
+    } catch (_) {}
+    try {
+      navigator.mediaSession.setActionHandler("seekbackward", null);
+    } catch (_) {}
+
+    for (const [action, handler] of Object.entries(handlers)) {
+      try {
+        navigator.mediaSession.setActionHandler(action, handler);
+      } catch (err) {
+        console.warn(`MediaSession setActionHandler("${action}") not supported:`, err.message);
+      }
+    }
+  }, []);
+
   const updateMediaSessionMetadata = (track) => {
     if (typeof window === "undefined" || !("mediaSession" in navigator) || !window.MediaMetadata) return;
     if (!track) return;
@@ -97,6 +167,8 @@ const AudioProvider = ({ children }) => {
     } catch (e) {
       console.warn("Error updating MediaSession metadata:", e);
     }
+    // Re-register action handlers after metadata so Chrome PWA shows prev/next buttons
+    setupMediaSessionHandlers();
   };
 
   const updateMediaSessionPlaybackState = (playing) => {
@@ -251,68 +323,31 @@ const AudioProvider = ({ children }) => {
 
   // ─── MediaSession Action Handlers ──────────────────────────────────────────
   useEffect(() => {
-    if (typeof window === "undefined" || !("mediaSession" in navigator)) return;
+    setupMediaSessionHandlers();
+  }, [setupMediaSessionHandlers]);
+
+  // ─── Native Lock Screen Next/Previous (iOS & Android) ─────────────────────
+  useEffect(() => {
+    if (Platform.OS === "web" || !LockScreenControls) return;
+
+    let subNext = null;
+    let subPrev = null;
 
     try {
-      navigator.mediaSession.setActionHandler("play", () => {
-        if (Platform.OS === "web" && webAudioRef.current) {
-          webAudioRef.current.play().catch(() => {});
-          setIsPlaying(true);
-          isPlayingRef.current = true;
-          updateMediaSessionPlaybackState(true);
-        } else if (soundRef.current) {
-          soundRef.current.playAsync();
-          setIsPlaying(true);
-          isPlayingRef.current = true;
-          updateMediaSessionPlaybackState(true);
-        } else if (currentTrackRef.current) {
-          playTrack(currentTrackRef.current);
-        }
-      });
-
-      navigator.mediaSession.setActionHandler("pause", () => {
-        if (Platform.OS === "web" && webAudioRef.current) {
-          webAudioRef.current.pause();
-          setIsPlaying(false);
-          isPlayingRef.current = false;
-          updateMediaSessionPlaybackState(false);
-        } else if (soundRef.current) {
-          soundRef.current.pauseAsync();
-          setIsPlaying(false);
-          isPlayingRef.current = false;
-          updateMediaSessionPlaybackState(false);
-        }
-      });
-
-      navigator.mediaSession.setActionHandler("previoustrack", () => {
-        if (playPreviousRef.current) playPreviousRef.current();
-      });
-
-      navigator.mediaSession.setActionHandler("nexttrack", () => {
+      subNext = LockScreenControls.addListener("onNextTrack", () => {
         if (playNextRef.current) playNextRef.current();
       });
-
-      navigator.mediaSession.setActionHandler("seekto", (details) => {
-        if (details.seekTime !== undefined && Number.isFinite(details.seekTime)) {
-          seekTo(Math.floor(details.seekTime * 1000));
-        }
-      });
-
-      navigator.mediaSession.setActionHandler("seekforward", (details) => {
-        const offset = (details.seekOffset || 10) * 1000;
-        const dur = authoritativeDurationRef.current || durationMillisRef.current || 0;
-        const target = Math.min(dur, (positionMillisRef.current || 0) + offset);
-        seekTo(target);
-      });
-
-      navigator.mediaSession.setActionHandler("seekbackward", (details) => {
-        const offset = (details.seekOffset || 10) * 1000;
-        const target = Math.max(0, (positionMillisRef.current || 0) - offset);
-        seekTo(target);
+      subPrev = LockScreenControls.addListener("onPreviousTrack", () => {
+        if (playPreviousRef.current) playPreviousRef.current();
       });
     } catch (err) {
-      console.warn("MediaSession action handler setup error:", err);
+      console.warn("Lock screen controls setup error:", err);
     }
+
+    return () => {
+      subNext?.remove?.();
+      subPrev?.remove?.();
+    };
   }, []);
 
   // ─── Native Audio Mode (expo-av for iOS & Android) ─────────────────────────
@@ -633,6 +668,7 @@ const AudioProvider = ({ children }) => {
         }
         const audio = webAudioRef.current;
         audio.src = playableUrl;
+        audio.load();
         audio.volume = volumeRef.current;
         await audio.play();
         setIsPlaying(true);
