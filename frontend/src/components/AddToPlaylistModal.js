@@ -197,15 +197,23 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
                 showsVerticalScrollIndicator={false}
                 renderItem={({ item }) => {
                   const status = addedPlaylists[item.id];
+                  const playlistCover =
+                    item.cover_url ||
+                    item.preview_artwork ||
+                    item.tracks?.[0]?.artwork_url ||
+                    item.tracks?.[0]?.thumbnail ||
+                    "";
+                  const trackCount = Array.isArray(item.tracks) ? item.tracks.length : (item.track_count || 0);
+
                   return (
                     <TouchableOpacity
                       style={styles.playlistRow}
                       onPress={() => handleAddToPlaylist(item)}
                       activeOpacity={0.7}
                     >
-                      {item.preview_artwork ? (
+                      {playlistCover ? (
                         <Image
-                          source={{ uri: item.preview_artwork }}
+                          source={{ uri: playlistCover }}
                           style={styles.playlistThumb}
                         />
                       ) : (
@@ -218,7 +226,7 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
                           {item.name}
                         </Text>
                         <Text style={styles.playlistCount}>
-                          {item.track_count || 0} {item.track_count === 1 ? "song" : "songs"}
+                          {trackCount} {trackCount === 1 ? "song" : "songs"}
                         </Text>
                       </View>
                       <View style={styles.actionWrap}>

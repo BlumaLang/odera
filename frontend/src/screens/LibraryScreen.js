@@ -314,34 +314,44 @@ export default function LibraryScreen() {
               </View>
             </View>
           }
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.playlistCardRow}
-              onPress={() => openPlaylist(item)}
-              activeOpacity={0.7}
-            >
-              {item.preview_artwork ? (
-                <Image
-                  source={{ uri: item.preview_artwork }}
-                  style={styles.playlistRowThumb}
-                />
-              ) : (
-                <View style={[styles.playlistRowThumb, styles.playlistRowThumbFallback]}>
-                  <Ionicons name="musical-notes" size={24} color={colors.primary} />
+          renderItem={({ item }) => {
+            const playlistCover =
+              item.cover_url ||
+              item.preview_artwork ||
+              item.tracks?.[0]?.artwork_url ||
+              item.tracks?.[0]?.thumbnail ||
+              "";
+            const trackCount = Array.isArray(item.tracks) ? item.tracks.length : (item.track_count || 0);
+
+            return (
+              <TouchableOpacity
+                style={styles.playlistCardRow}
+                onPress={() => openPlaylist(item)}
+                activeOpacity={0.7}
+              >
+                {playlistCover ? (
+                  <Image
+                    source={{ uri: playlistCover }}
+                    style={styles.playlistRowThumb}
+                  />
+                ) : (
+                  <View style={[styles.playlistRowThumb, styles.playlistRowThumbFallback]}>
+                    <Ionicons name="musical-notes" size={24} color={colors.primary} />
+                  </View>
+                )}
+                <View style={styles.playlistRowInfo}>
+                  <Text style={styles.playlistRowTitle} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text style={styles.playlistRowCount}>
+                    {trackCount} {trackCount === 1 ? "track" : "tracks"}
+                    {item.description ? ` • ${item.description}` : ""}
+                  </Text>
                 </View>
-              )}
-              <View style={styles.playlistRowInfo}>
-                <Text style={styles.playlistRowTitle} numberOfLines={1}>
-                  {item.name}
-                </Text>
-                <Text style={styles.playlistRowCount}>
-                  {Array.isArray(item.tracks) ? item.tracks.length : (item.track_count || 0)} {(Array.isArray(item.tracks) ? item.tracks.length : (item.track_count || 0)) === 1 ? "track" : "tracks"}
-                  {item.description ? ` • ${item.description}` : ""}
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-            </TouchableOpacity>
-          )}
+                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+              </TouchableOpacity>
+            );
+          }}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Ionicons name="folder-open-outline" size={44} color={colors.textMuted} />

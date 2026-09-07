@@ -163,7 +163,12 @@ export default function PlaylistModal({
 
   const tracks = playlistData?.tracks || [];
   const trackCount = tracks.length || playlistData?.track_count || 0;
-  const artwork = playlistData?.preview_artwork || playlistData?.cover_url;
+  const firstTrackArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
+  const artwork =
+    playlistData?.cover_url ||
+    playlistData?.preview_artwork ||
+    firstTrackArtwork ||
+    null;
 
   return (
     <Modal

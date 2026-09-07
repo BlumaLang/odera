@@ -578,11 +578,14 @@ export const UserProvider = ({ children }) => {
               addedAt: new Date().toISOString(),
             });
           }
+          const firstTrackArtwork = curTracks[0]?.artwork_url || curTracks[0]?.thumbnail || "";
+          const resolvedCover = p.cover_url || p.preview_artwork || firstTrackArtwork || "";
           return {
             ...p,
             tracks: curTracks,
             track_count: curTracks.length,
-            cover_url: p.cover_url || track.artwork_url || track.thumbnail || "",
+            cover_url: resolvedCover,
+            preview_artwork: resolvedCover,
           };
         })
       );
@@ -599,10 +602,14 @@ export const UserProvider = ({ children }) => {
         const curTracks = (p.tracks || []).filter(
           (t) => (t.videoId || t.video_id) !== videoId
         );
+        const firstTrackArtwork = curTracks[0]?.artwork_url || curTracks[0]?.thumbnail || "";
+        const resolvedCover = curTracks.length > 0 ? (firstTrackArtwork || p.cover_url || "") : "";
         return {
           ...p,
           tracks: curTracks,
           track_count: curTracks.length,
+          cover_url: resolvedCover,
+          preview_artwork: resolvedCover,
         };
       })
     );

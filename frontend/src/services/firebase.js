@@ -372,10 +372,14 @@ export function subscribePlaylists(uid, callback) {
       }
       const normalized = list.map((p) => {
         const tracks = Array.isArray(p.tracks) ? p.tracks : [];
+        const firstArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
+        const resolvedCover = p.cover_url || p.preview_artwork || firstArtwork || "";
         return {
           ...p,
           tracks,
           track_count: tracks.length || p.track_count || 0,
+          cover_url: resolvedCover,
+          preview_artwork: resolvedCover,
         };
       });
       callback(normalized);
@@ -941,11 +945,14 @@ export async function createPlaylistRTDB(uid, name, description = "", initialTra
     const playlistsRef = ref(db, `users/${uid}/playlists`);
     const snapshot = await get(playlistsRef);
     const existing = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
+    const firstArtwork = initialTracks[0]?.artwork_url || initialTracks[0]?.thumbnail || "";
+    const resolvedCover = coverUrl || firstArtwork || "";
     const newPlaylist = {
       id: "pl_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4),
       name: name.trim(),
       description: description.trim(),
-      cover_url: coverUrl || (initialTracks[0]?.thumbnail || initialTracks[0]?.artwork_url || ""),
+      cover_url: resolvedCover,
+      preview_artwork: resolvedCover,
       tracks: initialTracks || [],
       track_count: (initialTracks || []).length,
       created_at: new Date().toISOString(),
@@ -985,11 +992,14 @@ export async function addTrackToPlaylistRTDB(uid, playlistId, track) {
         duration_seconds: track.duration_seconds || 0,
         addedAt: new Date().toISOString(),
       });
+      const firstTrackArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
+      const resolvedCover = pl.cover_url || pl.preview_artwork || firstTrackArtwork || "";
       list[idx] = {
         ...pl,
         tracks,
         track_count: tracks.length,
-        cover_url: pl.cover_url || track.artwork_url || track.thumbnail || "",
+        cover_url: resolvedCover,
+        preview_artwork: resolvedCover,
       };
       await set(playlistsRef, list);
     }
@@ -1012,10 +1022,14 @@ export async function removeTrackFromPlaylistRTDB(uid, playlistId, videoId) {
 
     const pl = list[idx];
     const tracks = (pl.tracks || []).filter((t) => (t.videoId || t.video_id) !== videoId);
+    const firstTrackArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
+    const resolvedCover = tracks.length > 0 ? (firstTrackArtwork || pl.cover_url || "") : "";
     list[idx] = {
       ...pl,
       tracks,
       track_count: tracks.length,
+      cover_url: resolvedCover,
+      preview_artwork: resolvedCover,
     };
     await set(playlistsRef, list);
     return true;
