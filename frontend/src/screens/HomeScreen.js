@@ -13,7 +13,6 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import Header from "../components/Header";
 import SectionList from "../components/SectionList";
-import PersonalizedMix from "../components/PersonalizedMix";
 import SongCard from "../components/SongCard";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
@@ -121,7 +120,15 @@ export default function HomeScreen() {
       if (!forceRefresh) {
         const rtdbFeed = await getTrendingFeedRTDB();
         const hasInvalidSection = rtdbFeed?.sections?.some(
-          (s) => s.id === "trending_global" || s.id === "trending_india" || s.title?.toLowerCase().includes("global") || s.title?.toLowerCase().includes("youtube india")
+          (s) => s.id === "trending_global" ||
+                 s.id === "trending_india" ||
+                 s.id?.startsWith("mood_") ||
+                 s.id?.includes("morning") ||
+                 s.id?.includes("chill") ||
+                 s.title?.toLowerCase().includes("global") ||
+                 s.title?.toLowerCase().includes("youtube india") ||
+                 s.title?.toLowerCase().includes("morning energy") ||
+                 s.title?.toLowerCase().includes("chill vibes")
         );
         if (rtdbFeed && Array.isArray(rtdbFeed.sections) && rtdbFeed.sections.length > 0 && !hasInvalidSection) {
           feedRef.current = rtdbFeed;
@@ -142,14 +149,19 @@ export default function HomeScreen() {
       // 2. Fetch fresh 3-month trending Indian feed from backend (zero seed data)
       const data = await api.getHomeFeed(undefined, forceRefresh);
       if (data && Array.isArray(data.sections) && data.sections.length > 0) {
-        // Ensure only clean Indian sections within 3-month fresh range, removing global and trending_india
+        // Ensure only clean Indian sections within 3-month fresh range, removing global, trending_india, and mood sections
         const cleanIndianData = {
           ...data,
           sections: data.sections.filter(
             (s) => s.id !== "trending_global" &&
                    s.id !== "trending_india" &&
+                   !s.id?.startsWith("mood_") &&
+                   !s.id?.includes("morning") &&
+                   !s.id?.includes("chill") &&
                    !s.title?.toLowerCase().includes("global") &&
-                   !s.title?.toLowerCase().includes("youtube india")
+                   !s.title?.toLowerCase().includes("youtube india") &&
+                   !s.title?.toLowerCase().includes("morning energy") &&
+                   !s.title?.toLowerCase().includes("chill vibes")
           ),
         };
         feedRef.current = cleanIndianData;
@@ -184,8 +196,13 @@ export default function HomeScreen() {
           sections: liveFeed.sections.filter(
             (s) => s.id !== "trending_global" &&
                    s.id !== "trending_india" &&
+                   !s.id?.startsWith("mood_") &&
+                   !s.id?.includes("morning") &&
+                   !s.id?.includes("chill") &&
                    !s.title?.toLowerCase().includes("global") &&
-                   !s.title?.toLowerCase().includes("youtube india")
+                   !s.title?.toLowerCase().includes("youtube india") &&
+                   !s.title?.toLowerCase().includes("morning energy") &&
+                   !s.title?.toLowerCase().includes("chill vibes")
           ),
         };
         if (
@@ -349,6 +366,13 @@ export default function HomeScreen() {
         if (!section || tracks.length === 0) return false;
         if (section.id === "trending_global" || section.title?.toLowerCase().includes("global")) return false;
         if (section.id === "trending_india" || section.title?.toLowerCase().includes("youtube india")) return false;
+        if (
+          section.id?.startsWith("mood_") ||
+          section.id?.includes("morning") ||
+          section.id?.includes("chill") ||
+          section.title?.toLowerCase().includes("morning energy") ||
+          section.title?.toLowerCase().includes("chill vibes")
+        ) return false;
         return true;
       })
       .map((section) => ({
@@ -482,7 +506,6 @@ export default function HomeScreen() {
                     })}
                   </View>
                 )}
-                <PersonalizedMix />
                 {allDisplayedSections?.map((section, idx) => (
                   <SectionList key={section.id} section={section} sectionIndex={idx} />
                 ))}

@@ -473,11 +473,12 @@ app.get(['/api/stream/saavn/:id', '/stream/saavn/:id'], async (req, res) => {
 app.get(['/api/home/saavn', '/home/saavn'], async (req, res) => {
   try {
     const trendingQueries = [
-      { id: 'trending_india', title: 'Trending in India', q: 'Trending 2026' },
+      { id: 'trending_now', title: 'Trending Now', q: 'Trending 2026' },
       { id: 'bollywood_hits', title: 'Bollywood Top Hits', q: 'Bollywood Hits' },
       { id: 'romantic_melodies', title: 'Romantic Melodies', q: 'Arijit Singh Romantic' },
       { id: 'punjabi_vibes', title: 'Punjabi Blockbusters', q: 'Punjabi Hits 2026' },
-      { id: 'global_top', title: 'International & English', q: 'English Hits 2026' }
+      { id: 'new_releases', title: 'Fresh New Releases', q: 'New Hindi Songs 2026' },
+      { id: 'indie_pop', title: 'Indie Pop Hits', q: 'Indian Indie Pop 2026' },
     ];
 
     const sections = await Promise.all(
@@ -510,6 +511,11 @@ app.get(['/api/home/saavn', '/home/saavn'], async (req, res) => {
     console.error('Saavn home feed error:', err.message);
     res.status(500).json({ error: 'Failed to generate Saavn home feed', details: err.message, sections: [] });
   }
+});
+
+// 4. Personalized feed — deprecated mood sections removed, return clean empty state
+app.get(['/api/personalized', '/api/personalized/:userId', '/personalized', '/personalized/:userId'], (req, res) => {
+  res.json({ sections: [], personalized: false });
 });
 
 // ─── 3. Search YouTube music videos (/api/search and /search) ─────────────────
@@ -908,9 +914,7 @@ app.get(['/home', '/home/:userId', '/api/home'], async (req, res) => {
       { id: 'party_anthems', title: 'Party Anthems', tracks: get(partyAnthem) },
       { id: 'romantic_vibes', title: 'Romantic Vibes', tracks: get(romanticVibes) },
       { id: 'romantic_english', title: 'Romantic English Songs', tracks: get(romanticEnglish) },
-      { id: 'workout_energy', title: 'Workout Energy', tracks: get(workoutEnergy) },
       { id: 'lofi_chill_hindi', title: 'Lofi Chill Hindi', tracks: get(lofiChillHindi) },
-      { id: 'late_night_chill', title: 'Late Night Chill', tracks: get(lateNightChill) },
       { id: 'devotional', title: 'Devotional & Spiritual', tracks: get(devotional) },
       { id: 'retro_classics', title: 'Retro Classics', tracks: get(retroClassics) },
     ];
@@ -934,14 +938,7 @@ app.get(['/home', '/home/:userId', '/api/home'], async (req, res) => {
       trending: validSections.find(s => s.id === 'trending_now')?.tracks || [],
       recommended: validSections.find(s => s.id === 'top_hindi')?.tracks || [],
       freshPicks: validSections.find(s => s.id === 'new_releases')?.tracks || [],
-      moods: [
-        { id: 'chill', name: 'Chill & Relax', query: 'chill lofi acoustic Hindi English music' },
-        { id: 'workout', name: 'Workout Energy', query: 'workout gym motivation music India' },
-        { id: 'party', name: 'Party Anthems', query: 'party dance club Bollywood English hits' },
-        { id: 'focus', name: 'Deep Focus', query: 'deep focus study ambient lofi music' },
-        { id: 'romantic', name: 'Romantic Mood', query: 'romantic love Hindi English songs' },
-        { id: 'devotional', name: 'Spiritual', query: 'devotional bhajan spiritual songs India' },
-      ],
+      moods: [],
       generated_at: timestamp,
       total_sections: sections.length,
     });

@@ -166,27 +166,8 @@ export const api = {
     return { sections: [] };
   },
 
-  // Personalized "For You" feed based on user listening patterns
-  getPersonalizedFeed: async (userId = "guest") => {
-    try {
-      const data = await request(`/api/personalized/${encodeURIComponent(userId)}`);
-      if (data && Array.isArray(data.sections)) {
-        const norm = (arr) =>
-          (arr || []).map((t) => ({
-            ...t,
-            artwork_url: t.artwork_url || t.thumbnail || "",
-            videoId: t.videoId || t.video_id,
-            video_id: t.videoId || t.video_id,
-          }));
-        const sections = data.sections.map((s) => ({
-          ...s,
-          items: norm(s.tracks || []),
-        }));
-        return { sections, personalized: data.personalized };
-      }
-    } catch (err) {
-      console.warn("Error fetching personalized feed:", err.message);
-    }
+  // Personalized feed — deprecated mood sections removed
+  getPersonalizedFeed: async () => {
     return { sections: [], personalized: false };
   },
 
