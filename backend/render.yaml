@@ -10,3 +10,5 @@ services:
         value: 20
       - key: PORT
         value: 10000
+      - key: SAAVN_API_BASE_URL
+        value: https://staytup-api.onrender.com/api

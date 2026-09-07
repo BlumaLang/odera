@@ -303,8 +303,8 @@ app.get(['/api/suggest', '/suggest', '/suggest/:userId'], async (req, res) => {
 
 // ─── JioSaavn Direct Audio & Search Integration ──────────────────────────────
 const SAAVN_API_PROVIDERS = [
+  process.env.SAAVN_API_BASE_URL || 'https://staytup-api.onrender.com/api',
   'https://saavn.sumit.co/api',
-  'https://api.jiosaavn.com',
 ];
 let currentProviderIndex = 0;
 const saavnStreamCache = new Map(); // id -> { url, expiry }
