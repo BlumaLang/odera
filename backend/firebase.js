@@ -253,3 +253,24 @@ export async function getAppTrendingTracks(limit = 20) {
     return [];
   }
 }
+
+/**
+ * 4-Digit PIN Authentication helpers
+ */
+export async function getPinUser(cleanUser) {
+  try {
+    const snap = await get(ref(rtdb, `pin_users/${cleanUser}`));
+    if (snap.exists()) return snap.val();
+  } catch (_) {}
+  return null;
+}
+
+export async function savePinUser(cleanUser, userData) {
+  try {
+    await set(ref(rtdb, `pin_users/${cleanUser}`), userData);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+

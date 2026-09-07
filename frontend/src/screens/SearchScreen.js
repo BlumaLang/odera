@@ -16,7 +16,7 @@ import {
   LayoutAnimation,
   UIManager,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import SongCard from "../components/SongCard";
 import AddToPlaylistModal from "../components/AddToPlaylistModal";
 import ArtistModal from "../components/ArtistModal";
@@ -437,12 +437,12 @@ export default function SearchScreen() {
           {/* Unified Search Input Bar that smoothly lifts up */}
           <View style={styles.searchRowWrapper}>
             <View style={[styles.inlineSearchBox, styles.flexSearchBox, isSearchActive && styles.liftedSearchBox]}>
-              <Ionicons name="search" size={20} color="#888888" style={{ marginRight: 10 }} />
+              <Ionicons name="search" size={19} color={colors.textMuted} style={{ marginRight: 10 }} />
               <TextInput
                 ref={searchInputRef}
                 style={styles.inlineSearchInput}
                 placeholder="What do you want to listen to?"
-                placeholderTextColor="#888888"
+                placeholderTextColor="#777777"
                 value={query}
                 onChangeText={setQuery}
                 onFocus={handleFocusSearch}
@@ -456,7 +456,7 @@ export default function SearchScreen() {
                 <TouchableOpacity
                   onPress={() => setQuery("")}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  style={{ flexShrink: 0, padding: 4 }}
+                  style={{ flexShrink: 0, padding: 4, marginRight: 8 }}
                 >
                   <Ionicons name="close-circle" size={18} color="#888888" />
                 </TouchableOpacity>
@@ -512,6 +512,7 @@ export default function SearchScreen() {
                   >
                     {artistResults.map((artist, idx) => {
                       const isFav = isFavoriteArtist ? isFavoriteArtist(artist.name) : false;
+                      const resolvedImg = resolveLocalArtistImage(artist.name, artist.thumbnail);
                       return (
                         <TouchableOpacity
                           key={artist.name + "_" + idx}
@@ -525,9 +526,9 @@ export default function SearchScreen() {
                               (isDesktop || isTablet) && styles.desktopArtistAvatarWrap,
                             ]}
                           >
-                            {artist.thumbnail ? (
+                            {resolvedImg ? (
                               <Image
-                                source={{ uri: artist.thumbnail }}
+                                source={{ uri: resolvedImg }}
                                 style={[
                                   styles.artistAvatar,
                                   (isDesktop || isTablet) && styles.desktopArtistAvatar,
@@ -607,7 +608,7 @@ export default function SearchScreen() {
                     </View>
                   )}
                   <View style={styles.desktopTableColAction}>
-                    <Ionicons name="time-outline" size={16} color={colors.textMuted} />
+                    <MaterialCommunityIcons name="playlist-plus" size={18} color={colors.textMuted} />
                   </View>
                 </View>
               )}
@@ -619,6 +620,8 @@ export default function SearchScreen() {
               index={index + 1}
               layout="row"
               isActive={currentTrack?.videoId === (item.videoId || item.video_id)}
+              showDuration={false}
+              showPlayButton={false}
               onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
               onPress={() => handlePlaySong(item, index, results)}
             />
@@ -861,6 +864,7 @@ export default function SearchScreen() {
         visible={!!selectedArtistForModal}
         onClose={() => setSelectedArtistForModal(null)}
         artistName={selectedArtistForModal}
+        onSelectArtist={(name) => setSelectedArtistForModal(name)}
       />
     </View>
   );
@@ -901,13 +905,14 @@ const styles = StyleSheet.create({
       : {}),
   },
   liftedSearchBox: {
-    height: 44,
-    backgroundColor: "rgba(255, 255, 255, 0.12)",
+    height: 48,
+    backgroundColor: "#1c1c1c",
+    borderColor: "rgba(255, 255, 255, 0.12)",
   },
   cancelSearchBtn: {
-    paddingLeft: 12,
-    paddingRight: 2,
-    paddingVertical: 8,
+    marginLeft: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
     justifyContent: "center",
     alignItems: "center",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
@@ -989,19 +994,18 @@ const styles = StyleSheet.create({
   inlineSearchBox: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.09)",
+    backgroundColor: "#161616",
     borderRadius: 999,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     height: 48,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.08)",
-    overflow: "hidden",
+    borderColor: "rgba(255, 255, 255, 0.09)",
   },
   inlineSearchInput: {
     flex: 1,
     fontFamily: fonts.medium,
     color: "#FFFFFF",
-    fontSize: 14,
+    fontSize: 15,
     height: "100%",
     paddingVertical: 0,
     paddingHorizontal: 0,
@@ -1009,7 +1013,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS === "web"
       ? {
           outlineStyle: "none",
-          border: "none",
+          borderWidth: 0,
           backgroundColor: "transparent",
         }
       : {}),

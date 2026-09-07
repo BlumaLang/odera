@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -13,13 +13,14 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import Header from "../components/Header";
 import SectionList from "../components/SectionList";
-import PersonalizedMix from "../components/PersonalizedMix";
 import SongCard from "../components/SongCard";
+import PulseScreen from "./PulseScreen";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
 import { useAudio } from "../context/AudioContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useUser } from "../context/UserContext";
+import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
 import {
   auth,
   getTrendingFeedRTDB,
@@ -93,11 +94,18 @@ function getDaySeed() {
   return now.getFullYear() * 10000 + (now.getMonth() + 1) * 100 + now.getDate();
 }
 
-export default function HomeScreen() {
+export default function HomeScreen({ onNavigate } = {}) {
   const { isDesktop, isTablet, isPhone } = useResponsive();
   const [feed, setFeed] = useState(null);
   const feedRef = useRef(null);
-  const [activeFilter, setActiveFilter] = useState("All");
+  const [activeFilter, setActiveFilter] = useState(() => {
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const p = window.location.pathname.toLowerCase().replace(/^\/+/, "");
+      if (p === "feed" || p === "pulse") return "Feed";
+    }
+    return "All";
+  });
+  const [isPulseComposerOpen, setIsPulseComposerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
@@ -110,6 +118,7 @@ export default function HomeScreen() {
   const [loadingFollowing, setLoadingFollowing] = useState(false);
   const [recentlyPlayed, setRecentlyPlayed] = useState([]);
   const [appTrending, setAppTrending] = useState([]);
+  const [artistImages, setArtistImages] = useState({});
 
   const { currentTrack, isPlaying, togglePlayPause, playTrack } = useAudio();
 
@@ -121,7 +130,15 @@ export default function HomeScreen() {
       if (!forceRefresh) {
         const rtdbFeed = await getTrendingFeedRTDB();
         const hasInvalidSection = rtdbFeed?.sections?.some(
-          (s) => s.id === "trending_global" || s.id === "trending_india" || s.title?.toLowerCase().includes("global") || s.title?.toLowerCase().includes("youtube india")
+          (s) => s.id === "trending_global" ||
+                 s.id === "trending_india" ||
+                 s.id?.startsWith("mood_") ||
+                 s.id?.includes("morning") ||
+                 s.id?.includes("chill") ||
+                 s.title?.toLowerCase().includes("global") ||
+                 s.title?.toLowerCase().includes("youtube india") ||
+                 s.title?.toLowerCase().includes("morning energy") ||
+                 s.title?.toLowerCase().includes("chill vibes")
         );
         if (rtdbFeed && Array.isArray(rtdbFeed.sections) && rtdbFeed.sections.length > 0 && !hasInvalidSection) {
           feedRef.current = rtdbFeed;
@@ -142,14 +159,19 @@ export default function HomeScreen() {
       // 2. Fetch fresh 3-month trending Indian feed from backend (zero seed data)
       const data = await api.getHomeFeed(undefined, forceRefresh);
       if (data && Array.isArray(data.sections) && data.sections.length > 0) {
-        // Ensure only clean Indian sections within 3-month fresh range, removing global and trending_india
+        // Ensure only clean Indian sections within 3-month fresh range, removing global, trending_india, and mood sections
         const cleanIndianData = {
           ...data,
           sections: data.sections.filter(
             (s) => s.id !== "trending_global" &&
                    s.id !== "trending_india" &&
+                   !s.id?.startsWith("mood_") &&
+                   !s.id?.includes("morning") &&
+                   !s.id?.includes("chill") &&
                    !s.title?.toLowerCase().includes("global") &&
-                   !s.title?.toLowerCase().includes("youtube india")
+                   !s.title?.toLowerCase().includes("youtube india") &&
+                   !s.title?.toLowerCase().includes("morning energy") &&
+                   !s.title?.toLowerCase().includes("chill vibes")
           ),
         };
         feedRef.current = cleanIndianData;
@@ -184,8 +206,13 @@ export default function HomeScreen() {
           sections: liveFeed.sections.filter(
             (s) => s.id !== "trending_global" &&
                    s.id !== "trending_india" &&
+                   !s.id?.startsWith("mood_") &&
+                   !s.id?.includes("morning") &&
+                   !s.id?.includes("chill") &&
                    !s.title?.toLowerCase().includes("global") &&
-                   !s.title?.toLowerCase().includes("youtube india")
+                   !s.title?.toLowerCase().includes("youtube india") &&
+                   !s.title?.toLowerCase().includes("morning energy") &&
+                   !s.title?.toLowerCase().includes("chill vibes")
           ),
         };
         if (
@@ -323,6 +350,20 @@ export default function HomeScreen() {
     }
   }, [activeFilter, fetchFollowingSongs]);
 
+  // Fetch artist images for followed artists
+  useEffect(() => {
+    if (favoriteArtists.length === 0) return;
+    const missing = favoriteArtists.filter(
+      (name) => !artistImages[name] && !DEFAULT_ARTIST_IMAGES[name]
+    );
+    if (missing.length === 0) return;
+    api.getBatchArtistImages(missing.slice(0, 6)).then((res) => {
+      if (res && res.images && Object.keys(res.images).length > 0) {
+        setArtistImages((prev) => ({ ...prev, ...res.images }));
+      }
+    }).catch(() => {});
+  }, [favoriteArtists]);
+
   // 1. Personal "Jump Back In" from user's listening history
   const jumpBackInSection = recentlyPlayed.length > 0 ? {
     id: "jump_back_in",
@@ -340,22 +381,30 @@ export default function HomeScreen() {
   } : null;
 
   // 3. Filter & normalize backend sections: map tracks -> items, remove stale/empty sections
-  const backendSections = (feed?.sections || [])
-    .filter((section) => {
-      const tracks = section.tracks || section.items || [];
-      if (!section || tracks.length === 0) return false;
-      if (section.id === "trending_global" || section.title?.toLowerCase().includes("global")) return false;
-      if (section.id === "trending_india" || section.title?.toLowerCase().includes("youtube india")) return false;
-      return true;
-    })
-    .map((section) => ({
-      ...section,
-      items: section.items || section.tracks || [],
-    }));
-
-  // 4. Daily seeded shuffle — sections reorder every day based on date seed
+  // 4. Daily seeded shuffle — sections reorder once per day based on date seed (memoized to prevent render glitch)
   const daySeed = getDaySeed();
-  const shuffledBackendSections = seededShuffle(backendSections, daySeed);
+  const shuffledBackendSections = useMemo(() => {
+    const raw = (feed?.sections || [])
+      .filter((section) => {
+        const tracks = section.tracks || section.items || [];
+        if (!section || tracks.length === 0) return false;
+        if (section.id === "trending_global" || section.title?.toLowerCase().includes("global")) return false;
+        if (section.id === "trending_india" || section.title?.toLowerCase().includes("youtube india")) return false;
+        if (
+          section.id?.startsWith("mood_") ||
+          section.id?.includes("morning") ||
+          section.id?.includes("chill") ||
+          section.title?.toLowerCase().includes("morning energy") ||
+          section.title?.toLowerCase().includes("chill vibes")
+        ) return false;
+        return true;
+      })
+      .map((section) => ({
+        ...section,
+        items: section.items || section.tracks || [],
+      }));
+    return seededShuffle(raw, daySeed);
+  }, [feed?.sections, daySeed]);
 
   const allDisplayedSections = [
     jumpBackInSection,
@@ -369,7 +418,7 @@ export default function HomeScreen() {
     ? recentlyPlayed.slice(0, 6)
     : appTrending.length > 0
     ? appTrending.slice(0, 6)
-    : backendSections?.[0]?.items?.slice(0, 6) || []
+    : shuffledBackendSections?.[0]?.items?.slice(0, 6) || []
   );
 
   return (
@@ -377,12 +426,13 @@ export default function HomeScreen() {
       <Header
         activeFilter={activeFilter}
         onSelectFilter={setActiveFilter}
+        onAddPress={() => setIsPulseComposerOpen(true)}
       />
 
       {isLoading ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Fetching YouTube top charts...</Text>
+          <Text style={styles.loadingText}>Fetching top charts...</Text>
         </View>
       ) : error ? (
         <View style={styles.centerContainer}>
@@ -393,6 +443,13 @@ export default function HomeScreen() {
             <Text style={styles.retryButtonText}>Retry Feed</Text>
           </TouchableOpacity>
         </View>
+      ) : activeFilter === "Feed" || activeFilter === "Pulse" ? (
+        <PulseScreen
+          embedded={true}
+          composerOpen={isPulseComposerOpen}
+          onCloseComposer={() => setIsPulseComposerOpen(false)}
+          onNavigate={onNavigate}
+        />
       ) : (
         <ScrollView
           showsVerticalScrollIndicator={false}
@@ -424,10 +481,54 @@ export default function HomeScreen() {
                   </View>
                 ) : (
                   <>
+                    {favoriteArtists.length > 0 && (
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.followedArtistsRow}
+                        style={styles.followedArtistsScrollView}
+                      >
+                        {favoriteArtists.map((name, idx) => {
+                          const img = resolveLocalArtistImage(name, artistImages[name]);
+                          return (
+                            <TouchableOpacity
+                              key={`fav_artist_${idx}`}
+                              style={styles.followedArtistItem}
+                              onPress={() => {
+                                const section = followingSections.find(
+                                  (s) => s.artistName === name
+                                );
+                                if (section && section.items.length > 0) {
+                                  playTrack(section.items[0], section.items, 0);
+                                } else {
+                                  const track = allFollowingTracks.find((t) =>
+                                    t.artist?.toLowerCase().includes(name.toLowerCase())
+                                  );
+                                  if (track) {
+                                    playTrack(track, allFollowingTracks, 0);
+                                  }
+                                }
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <Image
+                                source={{ uri: img }}
+                                style={styles.followedArtistImg}
+                                resizeMode="cover"
+                              />
+                              <Text style={styles.followedArtistName} numberOfLines={1}>
+                                {name}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    )}
                     {followingQuickItems.length > 0 && (
                       <View style={styles.quickGridContainer}>
                         {followingQuickItems.map((item, index) => {
-                          const thumb = getHighResArtwork(item.artwork_url || item.thumbnail);
+                          const artistImg = resolveLocalArtistImage(item.artist, artistImages[item.artist]);
+                          const thumb = artistImg || getHighResArtwork(item.artwork_url || item.thumbnail);
                           return (
                             <TouchableOpacity
                               key={`following_quick_${item.videoId || item.video_id}_${index}`}
@@ -440,8 +541,8 @@ export default function HomeScreen() {
                             >
                               <Image source={{ uri: thumb }} style={styles.quickCardThumb} resizeMode="cover" />
                               <View style={styles.quickCardInfo}>
-                                <Text style={styles.quickCardTitle} numberOfLines={1}>{cleanTitle(item.title)}</Text>
-                                <Text style={styles.quickCardArtist} numberOfLines={1}>{item.artist || "Followed Artist"}</Text>
+                                <Text style={styles.quickCardTitle} numberOfLines={1}>{item.artist || "Followed Artist"}</Text>
+                                <Text style={styles.quickCardArtist} numberOfLines={1}>{cleanTitle(item.title)}</Text>
                               </View>
                             </TouchableOpacity>
                           );
@@ -481,7 +582,6 @@ export default function HomeScreen() {
                     })}
                   </View>
                 )}
-                <PersonalizedMix />
                 {allDisplayedSections?.map((section, idx) => (
                   <SectionList key={section.id} section={section} sectionIndex={idx} />
                 ))}
@@ -759,6 +859,33 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: 13,
     color: "#A7A7A7",
+  },
+  followedArtistsScrollView: {
+    marginBottom: 6,
+  },
+  followedArtistsRow: {
+    flexDirection: "row",
+    gap: 16,
+    paddingHorizontal: 4,
+    paddingBottom: 14,
+    alignItems: "center",
+  },
+  followedArtistItem: {
+    alignItems: "center",
+    width: 72,
+  },
+  followedArtistImg: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#1a1a1a",
+  },
+  followedArtistName: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: "#FFFFFF",
+    marginTop: 6,
+    textAlign: "center",
   },
   followingEmptyBox: {
     alignItems: "center",

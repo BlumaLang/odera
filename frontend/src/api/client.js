@@ -15,6 +15,11 @@ export function getBackendBase() {
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL.replace(/\/$/, "");
   }
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.location) {
+    if (window.location.port === "3000") {
+      return window.location.origin;
+    }
+  }
   return RENDER_BASE_URL;
 }
 
@@ -96,19 +101,19 @@ export const api = {
   // Health check
   getHealth: () => request("/api/health"),
 
-  // Search songs via https://staytup.onrender.com backend
-  search: async (query, offset = 0, limit = 25) => {
+  // Search songs via Saavn direct audio catalog
+  search: async (query, offset = 0, limit = 30) => {
     if (!query || !query.trim()) {
       return { query: "", count: 0, results: [], tracks: [], has_more: false };
     }
     try {
       const q = encodeURIComponent(query.trim());
-      const data = await request(`/api/search?q=${q}&offset=${offset}&limit=${limit}`);
+      const data = await request(`/api/search/saavn?q=${q}&offset=${offset}&limit=${limit}`);
       const raw = data?.results || data?.tracks || [];
       const list = raw.map((item) => ({
         ...item,
-        artwork_url: item.artwork_url || item.thumbnail || `https://i.ytimg.com/vi/${item.videoId || item.video_id}/mqdefault.jpg`,
-        thumbnail: item.thumbnail || item.artwork_url || `https://i.ytimg.com/vi/${item.videoId || item.video_id}/mqdefault.jpg`,
+        artwork_url: item.artwork_url || item.thumbnail || "",
+        thumbnail: item.thumbnail || item.artwork_url || "",
       }));
       return {
         query,
@@ -118,8 +123,16 @@ export const api = {
         has_more: Boolean(data?.has_more ?? (list.length >= 20)),
       };
     } catch (err) {
-      console.warn("Search request error:", err.message);
-      return { query, count: 0, results: [], tracks: [], has_more: false };
+      console.warn("Saavn search request error:", err.message);
+      // Fallback to standard search if Saavn endpoint fails
+      try {
+        const q = encodeURIComponent(query.trim());
+        const data = await request(`/api/search?q=${q}&offset=${offset}&limit=${limit}`);
+        const raw = data?.results || data?.tracks || [];
+        return { query, count: raw.length, results: raw, tracks: raw, has_more: false };
+      } catch (_) {
+        return { query, count: 0, results: [], tracks: [], has_more: false };
+      }
     }
   },
 
@@ -133,62 +146,28 @@ export const api = {
     }
   },
 
-  // Home feed — structured into sections for HomeScreen
+  // Home feed — direct Saavn rich trending sections
   getHomeFeed: async (userId = DEFAULT_USER_ID, forceRefresh = false) => {
+    try {
+      const data = await request(`/api/home/saavn${forceRefresh ? "?force_refresh=true" : ""}`);
+      if (data && Array.isArray(data.sections) && data.sections.length > 0) {
+        return data;
+      }
+    } catch (err) {
+      console.warn("Error fetching Saavn feed, falling back:", err.message);
+    }
+    // Fallback to legacy /home
     try {
       const data = await request(`/home${forceRefresh ? "?force_refresh=true" : ""}`);
       if (data && Array.isArray(data.sections) && data.sections.length > 0) {
         return data;
       }
-      if (data && (data.trending || data.recommended)) {
-        const norm = (arr = []) =>
-          arr.map((item) => ({
-            ...item,
-            artwork_url: item.artwork_url || item.thumbnail || `https://i.ytimg.com/vi/${item.videoId || item.video_id}/mqdefault.jpg`,
-            thumbnail: item.thumbnail || item.artwork_url || `https://i.ytimg.com/vi/${item.videoId || item.video_id}/mqdefault.jpg`,
-          }));
-        const trending = norm(data.trending || []);
-        const recommended = norm(data.recommended || []);
-        const freshPicks = norm(data.freshPicks || []);
-        return {
-          sections: [
-            { id: "trending_hits", title: "Trending Hits", tracks: trending },
-            { id: "recommended_foryou", title: "Recommended For You", tracks: recommended },
-            { id: "fresh_picks", title: "Fresh Picks", tracks: freshPicks },
-          ],
-          trending,
-          recommended,
-          freshPicks,
-          moods: data.moods || [],
-        };
-      }
-    } catch (err) {
-      console.warn("Error fetching feed:", err.message);
-    }
+    } catch (_) {}
     return { sections: [] };
   },
 
-  // Personalized "For You" feed based on user listening patterns
-  getPersonalizedFeed: async (userId = "guest") => {
-    try {
-      const data = await request(`/api/personalized/${encodeURIComponent(userId)}`);
-      if (data && Array.isArray(data.sections)) {
-        const norm = (arr) =>
-          (arr || []).map((t) => ({
-            ...t,
-            artwork_url: t.artwork_url || t.thumbnail || "",
-            videoId: t.videoId || t.video_id,
-            video_id: t.videoId || t.video_id,
-          }));
-        const sections = data.sections.map((s) => ({
-          ...s,
-          items: norm(s.tracks || []),
-        }));
-        return { sections, personalized: data.personalized };
-      }
-    } catch (err) {
-      console.warn("Error fetching personalized feed:", err.message);
-    }
+  // Personalized feed — deprecated mood sections removed
+  getPersonalizedFeed: async () => {
     return { sections: [], personalized: false };
   },
 
@@ -236,9 +215,65 @@ export const api = {
     return { has_lyrics: false, is_synced: false, synced_lyrics: [], plain_lyrics: "", instrumental: false };
   },
 
-  // Stream — on web and in default app runner, music is played directly via YouTube web player (no yt-dlp)
-  getStream: async (videoId) => {
-    return { stream_url: null, proxy_url: null, videoId };
+  // Stream — resolves fresh direct audio stream URL from Saavn (with retry for rate limits)
+  getStream: async (videoIdOrTrackId, retries = 3) => {
+    if (!videoIdOrTrackId) return { stream_url: null, proxy_url: null };
+    const cleanId = String(videoIdOrTrackId).replace(/^saavn_/, "").trim();
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const data = await request(`/api/stream/saavn/${encodeURIComponent(cleanId)}`);
+        return {
+          ...data,
+          stream_url: data?.stream_url || null,
+          videoId: cleanId,
+          id: `saavn_${cleanId}`,
+        };
+      } catch (err) {
+        const is429 = err.message?.includes("429");
+        const is502 = err.message?.includes("502");
+        if ((is429 || is502) && attempt < retries) {
+          const delay = Math.min(1500 * Math.pow(2, attempt), 6000);
+          console.warn(`[API] Stream resolve ${is429 ? "429 rate limited" : "502"} for ${cleanId}, retry ${attempt + 1}/${retries} after ${delay}ms`);
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+        console.warn(`[API] Backend failed to resolve Saavn stream for ${cleanId}, trying direct provider fallback:`, err.message);
+        try {
+          const directUrls = [
+            `https://staytup-api.onrender.com/api/songs/${encodeURIComponent(cleanId)}`,
+            `https://saavn.sumit.co/api/songs/${encodeURIComponent(cleanId)}`,
+          ];
+          for (const dUrl of directUrls) {
+            try {
+              const res = await fetch(dUrl, { signal: AbortSignal.timeout(6000) });
+              if (res.ok) {
+                const sData = await res.json();
+                const song = Array.isArray(sData?.data) ? sData.data[0] : sData?.data;
+                const dList = song?.downloadUrl;
+                if (Array.isArray(dList) && dList.length > 0) {
+                  const sorted = [...dList].sort((a, b) => {
+                    const qa = parseInt(a.quality || 0, 10);
+                    const qb = parseInt(b.quality || 0, 10);
+                    return qb - qa;
+                  });
+                  return {
+                    stream_url: sorted[0]?.url || dList[dList.length - 1]?.url,
+                    videoId: cleanId,
+                    id: `saavn_${cleanId}`,
+                    duration: song?.duration ? parseInt(song.duration, 10) : undefined,
+                  };
+                }
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+        throw err;
+      }
+    }
+  },
+
+  getSaavnStream: async (id) => {
+    return api.getStream(id);
   },
 
   // Track info via oEmbed on backend
@@ -251,7 +286,7 @@ export const api = {
       const list = data?.results || data?.artists || [];
       return {
         artists: list.map((a) => ({
-          name: a.artist || a.title || a.name || "",
+          name: a.name || a.artist || a.title || "",
           thumbnail: a.thumbnail || a.artwork_url || null,
         })),
         results: list,
@@ -283,25 +318,54 @@ export const api = {
     }
   },
 
-  // Get related/similar artists by searching for similar names
+  // Get related/similar artists via dedicated backend endpoint
   getRelatedArtists: async (artistName) => {
     try {
-      const data = await request(`/artists/search?q=${encodeURIComponent(artistName)}&limit=6`);
-      const results = data?.results || [];
-      const related = results
-        .filter((a) => (a.artist || a.title || "").toLowerCase() !== artistName.toLowerCase())
+      const data = await request(`/artists/similar?q=${encodeURIComponent(artistName)}&limit=6`);
+      const list = data?.artists || data?.results || [];
+      const related = list
+        .filter((a) => {
+          const name = a.name || a.artist || a.title || "";
+          return name && name.toLowerCase() !== artistName.toLowerCase();
+        })
         .slice(0, 5)
         .map((a) => ({
-          name: a.artist || a.title || a.name || "",
+          name: a.name || a.artist || a.title || "",
           thumbnail: a.thumbnail || a.artwork_url || null,
         }));
-      return { artists: related };
+      return { artists: related, related };
     } catch (_) {
-      return { artists: [] };
+      return { artists: [], related: [] };
     }
   },
 
-  getBatchArtistImages: () => Promise.resolve({ images: {} }),
+  // Batch fetch artist images from API
+  getBatchArtistImages: async (artistNames) => {
+    if (!Array.isArray(artistNames) || artistNames.length === 0) {
+      return { images: {} };
+    }
+    try {
+      const results = await Promise.allSettled(
+        artistNames.map(async (name) => {
+          const data = await request(`/artists/search?q=${encodeURIComponent(name)}&limit=1`);
+          const list = data?.results || data?.artists || [];
+          if (list.length > 0 && (list[0].thumbnail || list[0].artwork_url)) {
+            return { name, thumbnail: list[0].thumbnail || list[0].artwork_url };
+          }
+          return null;
+        })
+      );
+      const images = {};
+      results.forEach((r) => {
+        if (r.status === "fulfilled" && r.value) {
+          images[r.value.name] = r.value.thumbnail;
+        }
+      });
+      return { images };
+    } catch (_) {
+      return { images: {} };
+    }
+  },
   getUserPlaylists: () => Promise.resolve([]),
   createPlaylist: () => Promise.resolve({}),
   getPlaylistDetails: () => Promise.resolve({}),
@@ -311,13 +375,34 @@ export const api = {
   deletePlaylist: () => Promise.resolve({}),
   savePremiumSubscription: () => Promise.resolve({}),
 
-  // QR Login (Device Linking)
-  createQRSession: () => request("/api/qr-login/create", { method: "POST" }),
+  // QR Login (Device Linking) & 4-Digit PIN Authentication
+  createQRSession: (user = null) =>
+    request("/api/qr-login/create", {
+      method: "POST",
+      body: user ? JSON.stringify({ user }) : undefined,
+    }),
   pollQRSession: (sid) => request(`/api/qr-login/status/${encodeURIComponent(sid)}`),
-  claimQRSession: (sid, user) =>
+  claimQRSession: (target, user = null) => {
+    const payload = typeof target === "object" ? { ...target, ...(user ? { user } : {}) } : { sid: target, ...(user ? { user } : {}) };
+    return request("/api/qr-login/claim", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  claimQRSessionWithPin: (pin, user = null) =>
     request("/api/qr-login/claim", {
       method: "POST",
-      body: JSON.stringify({ sid, user }),
+      body: JSON.stringify({ pin, ...(user ? { user } : {}) }),
+    }),
+  loginPhoneWithCode: (code) =>
+    request("/api/qr-login/phone-login", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+  loginWithPin: (username, pin) =>
+    request("/api/auth/pin-login", {
+      method: "POST",
+      body: JSON.stringify({ username, pin }),
     }),
 
   // Referral System

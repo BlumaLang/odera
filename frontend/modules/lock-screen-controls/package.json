@@ -1,0 +1,6 @@
+{
+  "name": "lock-screen-controls",
+  "version": "1.0.0",
+  "main": "src/index.ts",
+  "expo-module-config": "expo-module.config.json"
+}

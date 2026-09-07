@@ -1,5 +1,5 @@
 // UserContext - Manages user profile, onboarding state, and preferences persistence via Firebase
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { api, DEFAULT_USER_ID } from "../api/client";
 import {
   auth,
@@ -19,15 +19,42 @@ import {
   addTrackToPlaylistRTDB,
   removeTrackFromPlaylistRTDB,
   subscribeRecentlyPlayed,
+  subscribeUserStreamCount,
+  recordUserStream,
+  subscribeFriends,
+  subscribeFriendRequests,
+  sendFriendRequestRTDB,
+  acceptFriendRequestRTDB,
+  declineFriendRequestRTDB,
+  cancelFriendRequestRTDB,
+  removeFriendRTDB,
+  searchUsersRTDB,
+  loginOrCreatePinUser,
+  getLocalSession,
+  saveLocalSession,
+  removeLocalSession,
 } from "../services/firebase";
 
 const UserContext = createContext(null);
 
 export const STORAGE_ARTIST_PHOTOS_KEY = "@staytup_artist_photos_cache";
+export const ONBOARDING_COMPLETED_KEY = "@staytup_onboarding_completed";
 
 export const UserProvider = ({ children }) => {
+  const isFreshLoginRef = useRef(false);
   const [currentUser, setCurrentUser] = useState(null);
-  const [isOnboardingCompleted, setIsOnboardingCompleted] = useState(false);
+  const [isOnboardingCompleted, setIsOnboardingCompleted] = useState(() => {
+    if (typeof window !== "undefined") {
+      if (window.sessionStorage?.getItem("@staytup_retuning") === "true") {
+        return false;
+      }
+      const localVal = window.localStorage?.getItem(ONBOARDING_COMPLETED_KEY);
+      if (localVal === "false") return false;
+      // Default to true so existing/restored users never see an onboarding flash
+      return true;
+    }
+    return true;
+  });
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loginProvider, setLoginProvider] = useState(null);
   const [userProfile, setUserProfile] = useState({
@@ -40,6 +67,9 @@ export const UserProvider = ({ children }) => {
   const [likedSongs, setLikedSongs] = useState([]);
   const [playlists, setPlaylists] = useState([]);
   const [recentlyPlayed, setRecentlyPlayed] = useState([]);
+  const [streamCount, setStreamCount] = useState(0);
+  const [friends, setFriends] = useState([]);
+  const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
   const [isLoadingUser, setIsLoadingUser] = useState(true);
   const [isPremium, setIsPremium] = useState(false);
   const [premiumPlan, setPremiumPlan] = useState("Free");
@@ -51,6 +81,9 @@ export const UserProvider = ({ children }) => {
     let unsubscribeLiked = null;
     let unsubscribePls = null;
     let unsubscribeRecents = null;
+    let unsubscribeStreams = null;
+    let unsubscribeFriends = null;
+    let unsubscribeRequests = null;
 
     // Safety timeout: Ensure app never stays stuck on loading screen on startup
     const safetyTimer = setTimeout(() => {
@@ -76,6 +109,18 @@ export const UserProvider = ({ children }) => {
         unsubscribeRecents();
         unsubscribeRecents = null;
       }
+      if (unsubscribeStreams) {
+        unsubscribeStreams();
+        unsubscribeStreams = null;
+      }
+      if (unsubscribeFriends) {
+        unsubscribeFriends();
+        unsubscribeFriends = null;
+      }
+      if (unsubscribeRequests) {
+        unsubscribeRequests();
+        unsubscribeRequests = null;
+      }
 
       if (firebaseUser) {
         setCurrentUser(firebaseUser);
@@ -85,6 +130,17 @@ export const UserProvider = ({ children }) => {
           ? "guest"
           : firebaseUser.providerData?.[0]?.providerId || "google";
         setLoginProvider(providerId.includes("google") ? "google" : providerId);
+
+        const isFresh = isFreshLoginRef.current;
+        const isExplicitRetune =
+          typeof window !== "undefined" &&
+          window.sessionStorage?.getItem("@staytup_retuning") === "true";
+
+        // Returning user on app launch / refresh: immediately guarantee onboarding is completed
+        if (!isFresh && !isExplicitRetune) {
+          setIsOnboardingCompleted(true);
+          saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
+        }
 
         // Pre-populate initial profile so UI has basic info (Zero dummy seed data)
         const initialProfile = {
@@ -116,17 +172,37 @@ export const UserProvider = ({ children }) => {
                 ...data.profile,
               }));
             }
-            if (typeof data.onboardingCompleted === "boolean") {
-              setIsOnboardingCompleted(data.onboardingCompleted);
+            if (isExplicitRetune) {
+              setIsOnboardingCompleted(false);
+            } else if (!isFresh) {
+              // Returning user: NEVER show onboarding screen
+              setIsOnboardingCompleted(true);
+              saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
+            } else {
+              // Fresh login from LoginScreen: check if this account already has taste or was completed
+              const hasTaste =
+                (data.profile?.favoriteArtists && data.profile.favoriteArtists.length > 0) ||
+                (data.profile?.languages && data.profile.languages.length > 0);
+
+              if (data.onboardingCompleted === true || hasTaste) {
+                setIsOnboardingCompleted(true);
+                saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
+              } else {
+                setIsOnboardingCompleted(false);
+              }
             }
+
             if (typeof data.isPremium === "boolean") {
               setIsPremium(data.isPremium);
               setPremiumPlan(data.premiumPlan || "Free");
             }
           } else {
-            // First time login - initialize clean node in Firebase RTDB without seed data
+            if (!isFresh && !isExplicitRetune) {
+              setIsOnboardingCompleted(true);
+              saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
+            }
             fbSaveUserProfile(firebaseUser.uid, initialProfile);
-            fbSaveOnboardingState(firebaseUser.uid, false);
+            fbSaveOnboardingState(firebaseUser.uid, !isFresh && !isExplicitRetune);
             fbSaveUserPremium(firebaseUser.uid, false, "Free");
           }
 
@@ -137,7 +213,7 @@ export const UserProvider = ({ children }) => {
           }
         });
 
-        // Realtime sync for Liked Songs, Playlists, and Recently Played
+        // Realtime sync for Liked Songs, Playlists, Recently Played and Streams
         unsubscribeLiked = subscribeLikedSongs(firebaseUser.uid, (songs) => {
           setLikedSongs(songs || []);
         });
@@ -149,7 +225,62 @@ export const UserProvider = ({ children }) => {
         unsubscribeRecents = subscribeRecentlyPlayed(firebaseUser.uid, (recents) => {
           setRecentlyPlayed(recents || []);
         });
+
+        unsubscribeStreams = subscribeUserStreamCount(firebaseUser.uid, (count) => {
+          setStreamCount(count || 0);
+        });
+
+        unsubscribeFriends = subscribeFriends(firebaseUser.uid, (list) => {
+          setFriends(list || []);
+        });
+
+        unsubscribeRequests = subscribeFriendRequests(firebaseUser.uid, (reqs) => {
+          setFriendRequests(reqs || { incoming: [], outgoing: [] });
+        });
       } else {
+        // Check for active local PIN or QR session before clearing state
+        let storedSession = null;
+        try {
+          storedSession = (await getLocalSession("@staytup_pin_user")) || (await getLocalSession("@staytup_qr_user"));
+        } catch (_) {}
+
+        if (storedSession && storedSession.uid) {
+          const restoredUser = {
+            uid: storedSession.uid,
+            displayName: storedSession.displayName || storedSession.username || "Staytup Listener",
+            isAnonymous: false,
+          };
+          setCurrentUser(restoredUser);
+          setIsLoggedIn(true);
+          setLoginProvider(storedSession.pin ? "pin" : "qr");
+          setIsOnboardingCompleted(true);
+          setIsLoadingUser(false);
+          setUserProfile((prev) => ({
+            ...prev,
+            username: restoredUser.displayName,
+          }));
+
+          unsubscribeLiked = subscribeLikedSongs(restoredUser.uid, (songs) => {
+            setLikedSongs(songs || []);
+          });
+          unsubscribePls = subscribePlaylists(restoredUser.uid, (pls) => {
+            setPlaylists(pls || []);
+          });
+          unsubscribeRecents = subscribeRecentlyPlayed(restoredUser.uid, (recents) => {
+            setRecentlyPlayed(recents || []);
+          });
+          unsubscribeStreams = subscribeUserStreamCount(restoredUser.uid, (count) => {
+            setStreamCount(count || 0);
+          });
+          unsubscribeFriends = subscribeFriends(restoredUser.uid, (list) => {
+            setFriends(list || []);
+          });
+          unsubscribeRequests = subscribeFriendRequests(restoredUser.uid, (reqs) => {
+            setFriendRequests(reqs || { incoming: [], outgoing: [] });
+          });
+          return;
+        }
+
         // User logged out or unauthenticated
         setCurrentUser(null);
         setIsLoggedIn(false);
@@ -160,6 +291,9 @@ export const UserProvider = ({ children }) => {
         setLikedSongs([]);
         setPlaylists([]);
         setRecentlyPlayed([]);
+        setStreamCount(0);
+        setFriends([]);
+        setFriendRequests({ incoming: [], outgoing: [] });
         setIsLoadingUser(false);
       }
     });
@@ -171,13 +305,39 @@ export const UserProvider = ({ children }) => {
       if (unsubscribeLiked) unsubscribeLiked();
       if (unsubscribePls) unsubscribePls();
       if (unsubscribeRecents) unsubscribeRecents();
+      if (unsubscribeStreams) unsubscribeStreams();
+      if (unsubscribeFriends) unsubscribeFriends();
+      if (unsubscribeRequests) unsubscribeRequests();
     };
   }, []);
 
   // Login handler - keeps LoginScreen interactive with its own button spinner
   const loginUser = async (info = {}) => {
+    isFreshLoginRef.current = true;
     const provider = info.provider || "guest";
     try {
+      if (provider === "pin") {
+        const res = await loginOrCreatePinUser(info.username, info.pin);
+        if (res && res.success && res.user) {
+          const pinUser = {
+            uid: res.user.uid,
+            displayName: res.user.displayName || info.username,
+            username: info.username,
+            isAnonymous: false,
+          };
+          setCurrentUser(pinUser);
+          setIsLoggedIn(true);
+          setLoginProvider("pin");
+          setIsOnboardingCompleted(true);
+          setIsLoadingUser(false);
+          setUserProfile((prev) => ({
+            ...prev,
+            username: pinUser.displayName,
+          }));
+          return { success: true, user: pinUser, isNewUser: res.isNewUser };
+        }
+        return res || { success: false, error: "PIN authentication failed" };
+      }
       if (provider === "qr") {
         // QR login — user confirmed on another device, user data from backend
         const qrUser = info.qrUser || {};
@@ -188,6 +348,7 @@ export const UserProvider = ({ children }) => {
           photoURL: qrUser.photoURL || null,
           email: qrUser.email || null,
         };
+        await saveLocalSession("@staytup_qr_user", fallbackUser);
         setCurrentUser(fallbackUser);
         setIsLoggedIn(true);
         setLoginProvider("qr");
@@ -237,6 +398,13 @@ export const UserProvider = ({ children }) => {
   // Logout handler
   const logoutUser = async () => {
     try {
+      isFreshLoginRef.current = false;
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        window.sessionStorage.removeItem("@staytup_retuning");
+      }
+      await removeLocalSession("@staytup_pin_user");
+      await removeLocalSession("@staytup_qr_user");
+      await removeLocalSession(ONBOARDING_COMPLETED_KEY);
       await fbLogout();
     } catch (err) {
       console.warn("Logout error:", err);
@@ -245,6 +413,10 @@ export const UserProvider = ({ children }) => {
 
   // Complete onboarding and save to Firebase Realtime Database
   const completeOnboarding = async (profileData) => {
+    isFreshLoginRef.current = false;
+    if (typeof window !== "undefined" && window.sessionStorage) {
+      window.sessionStorage.removeItem("@staytup_retuning");
+    }
     const favs = profileData.favoriteArtists || profileData.favorite_artists || [];
     const fullProfile = {
       username: profileData.username?.trim() || "Staytup Listener",
@@ -255,6 +427,7 @@ export const UserProvider = ({ children }) => {
 
     setUserProfile((prev) => ({ ...prev, ...fullProfile }));
     setIsOnboardingCompleted(true);
+    await saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
 
     const uid = currentUser?.uid || DEFAULT_USER_ID;
     try {
@@ -278,6 +451,11 @@ export const UserProvider = ({ children }) => {
   const resetOnboarding = async () => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
     try {
+      isFreshLoginRef.current = true;
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        window.sessionStorage.setItem("@staytup_retuning", "true");
+      }
+      await removeLocalSession(ONBOARDING_COMPLETED_KEY).catch(() => {});
       await fbSaveOnboardingState(uid, false);
       setIsOnboardingCompleted(false);
     } catch (err) {
@@ -405,25 +583,116 @@ export const UserProvider = ({ children }) => {
     return await fbToggleLikedSong(uid, track);
   };
 
-  // Playlists helpers
+  // Playlists helpers with immediate optimistic state update & RTDB sync
   const createPlaylist = async (name, description = "", initialTracks = [], coverUrl = "") => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
-    return await createPlaylistRTDB(uid, name, description, initialTracks, coverUrl);
+    const res = await createPlaylistRTDB(uid, name, description, initialTracks, coverUrl);
+    if (res) {
+      setPlaylists((prev) => [res, ...(prev || [])]);
+    }
+    return res;
   };
 
   const deletePlaylist = async (playlistId) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
+    setPlaylists((prev) => (prev || []).filter((p) => p.id !== playlistId));
     return await deletePlaylistRTDB(uid, playlistId);
   };
 
   const addTrackToPlaylist = async (playlistId, track) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
-    return await addTrackToPlaylistRTDB(uid, playlistId, track);
+    const ok = await addTrackToPlaylistRTDB(uid, playlistId, track);
+    if (ok) {
+      setPlaylists((prev) =>
+        (prev || []).map((p) => {
+          if (p.id !== playlistId) return p;
+          const curTracks = Array.isArray(p.tracks) ? [...p.tracks] : [];
+          const vid = track.videoId || track.video_id;
+          if (!curTracks.some((t) => (t.videoId || t.video_id) === vid)) {
+            curTracks.push({
+              ...track,
+              videoId: vid,
+              video_id: vid,
+              addedAt: new Date().toISOString(),
+            });
+          }
+          const firstTrackArtwork = curTracks[0]?.artwork_url || curTracks[0]?.thumbnail || "";
+          const resolvedCover = p.cover_url || p.preview_artwork || firstTrackArtwork || "";
+          return {
+            ...p,
+            tracks: curTracks,
+            track_count: curTracks.length,
+            cover_url: resolvedCover,
+            preview_artwork: resolvedCover,
+          };
+        })
+      );
+    }
+    return ok;
   };
 
   const removeTrackFromPlaylist = async (playlistId, videoId) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
-    return await removeTrackFromPlaylistRTDB(uid, playlistId, videoId);
+    const ok = await removeTrackFromPlaylistRTDB(uid, playlistId, videoId);
+    setPlaylists((prev) =>
+      (prev || []).map((p) => {
+        if (p.id !== playlistId) return p;
+        const curTracks = (p.tracks || []).filter(
+          (t) => (t.videoId || t.video_id) !== videoId
+        );
+        const firstTrackArtwork = curTracks[0]?.artwork_url || curTracks[0]?.thumbnail || "";
+        const resolvedCover = curTracks.length > 0 ? (firstTrackArtwork || p.cover_url || "") : "";
+        return {
+          ...p,
+          tracks: curTracks,
+          track_count: curTracks.length,
+          cover_url: resolvedCover,
+          preview_artwork: resolvedCover,
+        };
+      })
+    );
+    return ok;
+  };
+
+  // Friend System helpers
+  const sendFriendRequest = async (recipientUid, recipientUser) => {
+    const sender = {
+      uid: currentUser?.uid || DEFAULT_USER_ID,
+      username: userProfile?.username || currentUser?.displayName || "Staytup Listener",
+      avatar: userProfile?.avatar || "initial",
+      avatarColor: userProfile?.avatarColor || "#1DB954",
+    };
+    return await sendFriendRequestRTDB(sender, recipientUid, recipientUser);
+  };
+
+  const acceptFriendRequest = async (requestUser) => {
+    const me = {
+      uid: currentUser?.uid || DEFAULT_USER_ID,
+      username: userProfile?.username || currentUser?.displayName || "Staytup Listener",
+      avatar: userProfile?.avatar || "initial",
+      avatarColor: userProfile?.avatarColor || "#1DB954",
+    };
+    return await acceptFriendRequestRTDB(me, requestUser);
+  };
+
+  const declineFriendRequest = async (senderUid) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    return await declineFriendRequestRTDB(uid, senderUid);
+  };
+
+  const cancelFriendRequest = async (recipientUid) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    return await cancelFriendRequestRTDB(uid, recipientUid);
+  };
+
+  const removeFriend = async (friendUid) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    return await removeFriendRTDB(uid, friendUid);
+  };
+
+  const searchUsers = async (query) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    return await searchUsersRTDB(query, uid);
   };
 
   return (
@@ -451,16 +720,28 @@ export const UserProvider = ({ children }) => {
         closeProfile,
         updateProfile,
         updateUsername,
-        // RTDB Liked Songs, Playlists & Recently Played
+        // RTDB Liked Songs, Playlists, Streams & Recently Played
         likedSongs,
         isSongLiked,
         toggleLikeSong,
         playlists,
+        setPlaylists,
         createPlaylist,
         deletePlaylist,
         addTrackToPlaylist,
         removeTrackFromPlaylist,
         recentlyPlayed,
+        streamCount,
+        recordUserStream,
+        // Friend System
+        friends,
+        friendRequests,
+        sendFriendRequest,
+        acceptFriendRequest,
+        declineFriendRequest,
+        cancelFriendRequest,
+        removeFriend,
+        searchUsers,
       }}
     >
       {children}
@@ -474,6 +755,20 @@ const defaultUserContext = {
   isOnboardingCompleted: true,
   isLoadingUser: false,
   favorites: [],
+  likedSongs: [],
+  playlists: [],
+  setPlaylists: () => {},
+  recentlyPlayed: [],
+  streamCount: 0,
+  recordUserStream: () => {},
+  friends: [],
+  friendRequests: { incoming: [], outgoing: [] },
+  sendFriendRequest: () => Promise.resolve(false),
+  acceptFriendRequest: () => Promise.resolve(false),
+  declineFriendRequest: () => Promise.resolve(false),
+  cancelFriendRequest: () => Promise.resolve(false),
+  removeFriend: () => Promise.resolve(false),
+  searchUsers: () => Promise.resolve([]),
   isFavoriteArtist: () => false,
   toggleFavoriteArtist: () => {},
   isProfileOpen: false,

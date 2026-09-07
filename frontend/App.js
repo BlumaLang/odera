@@ -78,214 +78,23 @@ class ErrorBoundary extends Component {
   }
 }
 
-// ─── QR Login Confirmation Screen (shown when mobile user opens /qr-login?sid=xxx) ───
-function QRLoginScreen({ sid, onConfirm, onCancel }) {
-  const [loading, setLoading] = useState(true);
-  const [success, setSuccess] = useState(false);
-  const [error, setError] = useState("");
-  const [autoAttempted, setAutoAttempted] = useState(false);
-
-  const handleClaim = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const { api } = require("./src/api/client");
-      const { auth } = require("./src/services/firebase");
-      const user = auth?.currentUser;
-      if (!user) {
-        setError("Please login first on this device, then scan the QR code again.");
-        setLoading(false);
-        return;
-      }
-      const res = await api.claimQRSession(sid, {
-        uid: user.uid,
-        displayName: user.displayName || "Staytup Listener",
-        email: user.email || null,
-        photoURL: user.photoURL || null,
-      });
-      if (res && res.success) {
-        setSuccess(true);
-        if (onConfirm) setTimeout(() => onConfirm(), 1500);
-      } else {
-        setError(res?.error || "Failed. Session may have expired.");
-      }
-    } catch (err) {
-      setError("Network error. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  }, [sid, onConfirm]);
-
-  // Auto-claim if user is already logged in
-  useEffect(() => {
-    if (autoAttempted) return;
-    setAutoAttempted(true);
-    const tryAutoClaim = async () => {
-      try {
-        const { auth } = require("./src/services/firebase");
-        const user = auth?.currentUser;
-        if (user) {
-          await handleClaim();
-        } else {
-          setLoading(false);
-        }
-      } catch (_) {
-        setLoading(false);
-      }
-    };
-    tryAutoClaim();
-  }, [autoAttempted, handleClaim]);
-
-  if (success) {
-    return (
-      <View style={qrStyles.screen}>
-        <StatusBar style="light" />
-        <View style={qrStyles.center}>
-          <View style={qrStyles.successCircle}>
-            <Ionicons name="checkmark" size={64} color="#1DB954" />
-          </View>
-          <Text style={qrStyles.successTitle}>Login Confirmed!</Text>
-          <Text style={qrStyles.successSub}>
-            You can now close this tab and continue on your other device.
-          </Text>
-        </View>
-      </View>
-    );
-  }
-
-  return (
-    <View style={qrStyles.screen}>
-      <StatusBar style="light" />
-      <View style={qrStyles.center}>
-        <View style={qrStyles.iconCircle}>
-          <Ionicons name="qr-code" size={48} color="#1DB954" />
-        </View>
-        <Text style={qrStyles.title}>Confirm Login</Text>
-        <Text style={qrStyles.sub}>
-          Someone wants to log into Staytup on another device using your account.
-        </Text>
-
-        {error ? (
-          <View style={qrStyles.errorBox}>
-            <Ionicons name="alert-circle" size={16} color="#FF5C5C" />
-            <Text style={qrStyles.errorText}>{error}</Text>
-          </View>
-        ) : null}
-
-        <TouchableOpacity
-          style={[qrStyles.confirmBtn, loading && qrStyles.confirmBtnDisabled]}
-          onPress={handleClaim}
-          disabled={loading || success}
-          activeOpacity={0.85}
-        >
-          {loading ? (
-            <ActivityIndicator size="small" color="#000000" />
-          ) : (
-            <>
-              <Ionicons name="checkmark-circle" size={20} color="#000000" style={{ marginRight: 8 }} />
-              <Text style={qrStyles.confirmBtnText}>Yes, Confirm Login</Text>
-            </>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity style={qrStyles.cancelBtn} onPress={onCancel} activeOpacity={0.85}>
-          <Text style={qrStyles.cancelBtnText}>Cancel</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
-
-const qrStyles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#000000" },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
-  iconCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: "rgba(29,185,84,0.12)",
-    borderWidth: 2,
-    borderColor: "rgba(29,185,84,0.3)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 24,
-  },
-  title: { fontFamily: "Poppins_700Bold", fontSize: 22, color: "#FFFFFF", marginBottom: 8 },
-  sub: {
-    fontFamily: "Poppins_400Regular",
-    fontSize: 14,
-    color: "rgba(255,255,255,0.6)",
-    textAlign: "center",
-    lineHeight: 20,
-    marginBottom: 32,
-    paddingHorizontal: 16,
-  },
-  confirmBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#1DB954",
-    height: 50,
-    borderRadius: 25,
-    paddingHorizontal: 32,
-    width: "100%",
-    maxWidth: 300,
-    marginBottom: 14,
-  },
-  confirmBtnDisabled: { opacity: 0.6 },
-  confirmBtnText: { fontFamily: "Poppins_700Bold", fontSize: 15, color: "#000000", letterSpacing: 0.2 },
-  cancelBtn: { paddingVertical: 12, paddingHorizontal: 24 },
-  cancelBtnText: { fontFamily: "Poppins_500Medium", fontSize: 14, color: "rgba(255,255,255,0.4)" },
-  errorBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "rgba(255,92,92,0.1)",
-    borderWidth: 1,
-    borderColor: "rgba(255,92,92,0.3)",
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    marginBottom: 20,
-    width: "100%",
-    maxWidth: 300,
-  },
-  errorText: { fontFamily: "Poppins_500Medium", fontSize: 12, color: "#FF5C5C", flex: 1 },
-  successCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: "rgba(29,185,84,0.12)",
-    borderWidth: 2,
-    borderColor: "#1DB954",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 24,
-  },
-  successTitle: { fontFamily: "Poppins_700Bold", fontSize: 22, color: "#1DB954", marginBottom: 8 },
-  successSub: {
-    fontFamily: "Poppins_400Regular",
-    fontSize: 14,
-    color: "rgba(255,255,255,0.6)",
-    textAlign: "center",
-    lineHeight: 20,
-    paddingHorizontal: 16,
-  },
-});
-
 // Valid routes allowed after "/" in the URL
 const VALID_ROUTES = {
   home: "Home",
   search: "Search",
   library: "Library",
   friends: "Friends",
+  friend: "Friends",
   premium: "Premium",
+  pulse: "Home",
+  feed: "Home",
 };
 
 // Parse and validate page from browser URL (cannot open any other pages)
 function getRouteFromPathname() {
   if (Platform.OS === "web" && typeof window !== "undefined") {
-    const raw = window.location.pathname.replace(/^\/+/, "").split("/")[0].toLowerCase();
+    const segments = window.location.pathname.replace(/^\/+/, "").split("/");
+    const raw = segments[0].toLowerCase();
     if (!raw || raw === "") {
       return "Home";
     }
@@ -301,18 +110,14 @@ function getRouteFromPathname() {
   return "Home";
 }
 
-// Detect QR login route from URL params
-function getQRLoginSid() {
-  if (Platform.OS === "web" && typeof window !== "undefined") {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("sid") || null;
-  }
-  return null;
-}
-
 // Push page name to browser URL address bar
 function updateBrowserPathname(page) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.history) {
+    const curPath = window.location.pathname.toLowerCase();
+    // Preserve /friend/{username} when navigating to Friends tab
+    if (page.toLowerCase() === "friends" && (curPath.startsWith("/friend/") || curPath.startsWith("/friends/"))) {
+      return;
+    }
     const targetPath = `/${page.toLowerCase()}`;
     if (window.location.pathname !== targetPath) {
       window.history.pushState({ page }, "", targetPath);
@@ -326,7 +131,7 @@ function SpotifyBottomTabBar({ activeTab, onSelectTab, fixedTabBarHeight, bottom
     { id: "Home", label: "Home", icon: "home", iconOutline: "home-outline" },
     { id: "Search", label: "Search", icon: "search", iconOutline: "search-outline" },
     { id: "Friends", label: "Friends", icon: "people", iconOutline: "people-outline" },
-    { id: "Library", label: "Your Library", icon: "library", iconOutline: "library-outline" },
+    { id: "Library", label: "Library", icon: "library", iconOutline: "library-outline" },
     { id: "Premium", label: "Premium", icon: "diamond", iconOutline: "diamond-outline" },
   ];
 
@@ -502,33 +307,6 @@ function AppContent() {
     closeProfile,
   } = useUser();
 
-  const [qrLoginSid, setQrLoginSid] = useState(() => getQRLoginSid());
-
-  useEffect(() => {
-    if (Platform.OS === "web" && typeof window !== "undefined") {
-      const handleQRRoute = () => {
-        const sid = getQRLoginSid();
-        if (sid) setQrLoginSid(sid);
-      };
-      window.addEventListener("popstate", handleQRRoute);
-      return () => window.removeEventListener("popstate", handleQRRoute);
-    }
-  }, []);
-
-  const handleQRLoginConfirm = useCallback(() => {
-    if (Platform.OS === "web" && typeof window !== "undefined") {
-      window.history.replaceState({}, "", "/home");
-    }
-    setQrLoginSid(null);
-  }, []);
-
-  const handleQRLoginCancel = useCallback(() => {
-    if (Platform.OS === "web" && typeof window !== "undefined") {
-      window.history.replaceState({}, "", "/home");
-    }
-    setQrLoginSid(null);
-  }, []);
-
   // Enforce pure black PWA theme-color and status bar on Web and Mobile browsers
   useEffect(() => {
     if (Platform.OS === "web" && typeof document !== "undefined") {
@@ -570,18 +348,7 @@ function AppContent() {
     );
   }
 
-  // QR Login Confirmation — intercepts /qr-login?sid=xxx before normal login check
-  if (qrLoginSid) {
-    return (
-      <QRLoginScreen
-        sid={qrLoginSid}
-        onConfirm={handleQRLoginConfirm}
-        onCancel={handleQRLoginCancel}
-      />
-    );
-  }
-
-  // Dummy login screen with Google and Guest options
+  // Login screen with Google and Guest options
   if (!isLoggedIn) {
     return <LoginScreen onLoginSuccess={loginUser} />;
   }

@@ -97,6 +97,48 @@
         to   { opacity: 1; transform: scale(1); }
       }
     </style>
+    <!-- Early Console & Error Filter: Suppresses browser quirks and external third-party script warnings -->
+    <script>
+      (function() {
+        var IGNORE = [
+          'Banner not shown', 'beforeinstallprompt', 'powerPreference', 'requestAdapter',
+          '369219127', 'postMessage', 'DOMWindow', 'target origin', 'www-widgetapi',
+          'Failed to convert value to \'Response\'', 'FetchEvent for', 'network error response',
+          'doubleclick', 'googleads', 'ytimg', 'innertube'
+        ];
+        function shouldIgnore(args) {
+          try {
+            var str = Array.prototype.slice.call(args).map(function(x) {
+              return typeof x === 'string' ? x : (x && typeof x === 'object' ? (x.message || '') + (x.stack || '') : String(x || ''));
+            }).join(' ');
+            return IGNORE.some(function(term) { return str.indexOf(term) !== -1; });
+          } catch (_) { return false; }
+        }
+        if (typeof console !== 'undefined') {
+          var _w = console.warn, _e = console.error, _i = console.info;
+          console.warn = function() { if (!shouldIgnore(arguments)) _w.apply(console, arguments); };
+          console.error = function() { if (!shouldIgnore(arguments)) _e.apply(console, arguments); };
+          console.info = function() { if (!shouldIgnore(arguments)) _i.apply(console, arguments); };
+        }
+        window.addEventListener('error', function(e) {
+          var m = (e && e.message) || '';
+          if (IGNORE.some(function(term) { return m.indexOf(term) !== -1; })) {
+            e.preventDefault();
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+            return false;
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function(e) {
+          var r = (e && e.reason) || '';
+          var m = r && typeof r === 'object' ? (r.message || String(r)) : String(r || '');
+          if (IGNORE.some(function(term) { return m.indexOf(term) !== -1; })) {
+            e.preventDefault();
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+            return false;
+          }
+        }, true);
+      })();
+    </script>
   </head>
 
   <body>
@@ -126,7 +168,11 @@
 
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function() {
-          navigator.serviceWorker.register('/sw.js').catch(function() {});
+          navigator.serviceWorker.register('/sw.js').then(function(reg) {
+            if (reg) {
+              reg.update();
+            }
+          }).catch(function() {});
         });
       }
 

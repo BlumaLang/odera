@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { View, Text, Image, TouchableOpacity, StyleSheet, Platform } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useAudio } from "../context/AudioContext";
@@ -33,6 +33,9 @@ export default function SongCard({
   showRank = true,
   index,
   onAddToPlaylist,
+  showPlayButton = true,
+  showDuration = true,
+  onRemove,
   style,
 }) {
   const [isHovered, setIsHovered] = useState(false);
@@ -196,8 +199,8 @@ export default function SongCard({
           </View>
         )}
 
-        <View style={styles.rowAction}>
-          {formatCardDuration(track) ? (
+        <View style={[styles.rowAction, !showPlayButton && !showDuration && { minWidth: "auto" }]}>
+          {showDuration && formatCardDuration(track) ? (
             <Text style={styles.durationText}>{formatCardDuration(track)}</Text>
           ) : null}
           {onAddToPlaylist && (
@@ -208,28 +211,48 @@ export default function SongCard({
                 e?.stopPropagation?.();
                 onAddToPlaylist(track);
               }}
+              accessibilityLabel="Add to playlist"
             >
-              <Ionicons
-                name="add-circle-outline"
-                size={20}
+              <MaterialCommunityIcons
+                name="playlist-plus"
+                size={22}
                 color={isHovered ? "#FFFFFF" : colors.textSecondary}
               />
             </TouchableOpacity>
           )}
-          <TouchableOpacity
-            style={{ padding: 4 }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            onPress={(e) => {
-              e?.stopPropagation?.();
-              handlePress(e);
-            }}
-          >
-            <Ionicons
-              name={isThisPlaying ? "pause" : "play"}
-              size={20}
-              color={isCurrent ? colors.primary : isHovered ? "#FFFFFF" : colors.textSecondary}
-            />
-          </TouchableOpacity>
+          {onRemove && (
+            <TouchableOpacity
+              style={styles.actionIconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              onPress={(e) => {
+                e?.stopPropagation?.();
+                onRemove(track);
+              }}
+              accessibilityLabel="Remove"
+            >
+              <Ionicons
+                name="close"
+                size={20}
+                color={isHovered ? "#FFFFFF" : "rgba(255, 255, 255, 0.45)"}
+              />
+            </TouchableOpacity>
+          )}
+          {showPlayButton && (
+            <TouchableOpacity
+              style={{ padding: 4 }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              onPress={(e) => {
+                e?.stopPropagation?.();
+                handlePress(e);
+              }}
+            >
+              <Ionicons
+                name={isThisPlaying ? "pause" : "play"}
+                size={20}
+                color={isCurrent ? colors.primary : isHovered ? "#FFFFFF" : colors.textSecondary}
+              />
+            </TouchableOpacity>
+          )}
         </View>
       </TouchableOpacity>
     );
@@ -326,7 +349,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 255, 255, 0.07)",
   },
   activeRow: {
-    backgroundColor: "rgba(29, 185, 84, 0.15)",
+    backgroundColor: "transparent",
   },
   rankContainer: {
     width: 34,

@@ -100,6 +100,9 @@ export default function ProfileScreen({ visible, onClose }) {
     activatePremium,
     cancelPremium,
     logoutUser,
+    likedSongs,
+    recentlyPlayed,
+    streamCount,
   } = useUser();
   const { playTrack, currentTrack } = useAudio();
 
@@ -120,104 +123,19 @@ export default function ProfileScreen({ visible, onClose }) {
   // Artist Discography Modal
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
 
-  // QR Code Modal
-  const [showQRModal, setShowQRModal] = useState(false);
-  const [qrSessionId, setQrSessionId] = useState(null);
-  const [qrLoading, setQrLoading] = useState(false);
-  const [qrPolling, setQrPolling] = useState(false);
-  const qrPollRef = useRef(null);
-  const qrRefreshRef = useRef(null);
-
   // Referral Modal
   const [showReferralModal, setShowReferralModal] = useState(false);
   const [referralCount, setReferralCount] = useState(0);
+  const [copiedReferralCode, setCopiedReferralCode] = useState(false);
+  const [copiedFullInvite, setCopiedFullInvite] = useState(false);
 
-  // Official Channels Bottom Sheet
+  // Official Channels Modal
   const [showChannelsModal, setShowChannelsModal] = useState(false);
 
-  // Legal Pages Modal (separate for each)
+  // Legal Modals
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
-
-  // QR session management
-  const generateQRSession = useCallback(async () => {
-    try {
-      const res = await api.createQRSession();
-      if (res && res.sid) {
-        setQrSessionId(res.sid);
-        setQrLoading(false);
-        return res.sid;
-      }
-    } catch (_) {}
-    setQrLoading(false);
-    return null;
-  }, []);
-
-  const startQRSession = useCallback(async () => {
-    setQrLoading(true);
-    setQrPolling(true);
-    const sid = await generateQRSession();
-    if (!sid) return;
-
-    // Poll for scan every 2.5s
-    qrPollRef.current = setInterval(async () => {
-      try {
-        const res = await api.pollQRSession(sid);
-        if (res && res.status === "claimed" && res.user) {
-          clearInterval(qrPollRef.current);
-          clearInterval(qrRefreshRef.current);
-          setQrPolling(false);
-          setShowQRModal(false);
-        } else if (res && res.status === "expired") {
-          // Auto-refresh on expiry
-          const newSid = await generateQRSession();
-          if (newSid) {
-            // Update poll interval to new sid
-            clearInterval(qrPollRef.current);
-            qrPollRef.current = setInterval(async () => {
-              try {
-                const r2 = await api.pollQRSession(newSid);
-                if (r2 && r2.status === "claimed") {
-                  clearInterval(qrPollRef.current);
-                  clearInterval(qrRefreshRef.current);
-                  setQrPolling(false);
-                  setShowQRModal(false);
-                } else if (r2 && r2.status === "expired") {
-                  const ns = await generateQRSession();
-                  if (ns) {
-                    clearInterval(qrPollRef.current);
-                    // Restart with new sid (recursive pattern)
-                  }
-                }
-              } catch (_) {}
-            }, 2500);
-          }
-        }
-      } catch (_) {}
-    }, 2500);
-
-    // Auto-refresh QR every 60 seconds
-    qrRefreshRef.current = setInterval(async () => {
-      await generateQRSession();
-    }, 60000);
-  }, [generateQRSession]);
-
-  const stopQRSession = useCallback(() => {
-    if (qrPollRef.current) clearInterval(qrPollRef.current);
-    if (qrRefreshRef.current) clearInterval(qrRefreshRef.current);
-    setQrSessionId(null);
-    setQrPolling(false);
-  }, []);
-
-  useEffect(() => {
-    if (showQRModal) {
-      startQRSession();
-    } else {
-      stopQRSession();
-    }
-    return () => stopQRSession();
-  }, [showQRModal, startQRSession, stopQRSession]);
 
   // Settings state
   const [audioQuality, setAudioQuality] = useState("Lossless (320 kbps)");
@@ -328,10 +246,10 @@ export default function ProfileScreen({ visible, onClose }) {
     if (historyData?.stats?.total_time_minutes) {
       return (historyData.stats.total_time_minutes / 60).toFixed(1);
     }
-    const raw = historyData?.recent || [];
+    const raw = (recentlyPlayed && recentlyPlayed.length > 0) ? recentlyPlayed : (historyData?.recent || []);
     const sec = raw.reduce((sum, item) => sum + (Number(item.duration_seconds) || 180), 0);
     return (sec / 3600).toFixed(1);
-  }, [historyData]);
+  }, [historyData, recentlyPlayed]);
 
   if (!visible) return null;
 
@@ -340,6 +258,16 @@ export default function ProfileScreen({ visible, onClose }) {
     unique_artists: 0,
     unique_tracks: 0,
   };
+
+  const totalStreams = Math.max(
+    Number(streamCount) || 0,
+    Number(stats.total_plays) || 0,
+    (recentlyPlayed || []).length
+  );
+
+  const totalLikedSongs = (Array.isArray(likedSongs) && likedSongs.length > 0)
+    ? likedSongs.length
+    : (favoritesCount || 0);
 
   const handleOpenLink = (url) => {
     if (!url) return;
@@ -427,18 +355,51 @@ export default function ProfileScreen({ visible, onClose }) {
     }
   };
 
+  const getHostedBaseUrl = () => {
+    if (Platform.OS === "web" && typeof window !== "undefined" && window.location?.origin) {
+      return window.location.origin;
+    }
+    return "https://staytup.odireca.com";
+  };
+
+  const getVipCode = () => {
+    const raw = (userProfile?.username || username || "USER").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    return `STAYTUP-${raw || "VIP"}`;
+  };
+
+  const getVipInviteMessage = () => {
+    const vipCode = getVipCode();
+    const baseUrl = getHostedBaseUrl();
+    const referralUrl = `${baseUrl}?ref=${vipCode}`;
+
+    return (
+      `You’re Invited to Staytup\n` +
+      `Staytup is a music streaming app where you can listen to your favorite songs, discover new music, and enjoy a high-quality, ad-free listening experience.\n\n` +
+      `Exclusive VIP Offer\n` +
+      `Join Staytup using my VIP invite code and get 1 Month of VIP Pro Access FREE.\n\n` +
+      `VIP Code: ${vipCode}\n\n` +
+      `Claim your free VIP Pro Access:\n` +
+      `${referralUrl}\n\n` +
+      `Listen to more. Discover your vibe. Staytup.`
+    );
+  };
+
   const handleShareProfile = async () => {
     try {
+      const inviteMsg = getVipInviteMessage();
+      const baseUrl = getHostedBaseUrl();
+      const referralUrl = `${baseUrl}?ref=${getVipCode()}`;
+
       if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.share) {
         await navigator.share({
-          title: `${username}'s Staytup Profile`,
-          text: `Check out ${username}'s music profile on Staytup!`,
-          url: window.location.href,
+          title: "You’re Invited to Staytup",
+          text: inviteMsg,
+          url: referralUrl,
         });
       } else {
         await Share.share({
-          title: `${username}'s Staytup Profile`,
-          message: `Check out ${username}'s music profile on Staytup! https://staytup.in`,
+          title: "You’re Invited to Staytup",
+          message: inviteMsg,
         });
       }
     } catch (_) {}
@@ -479,8 +440,7 @@ export default function ProfileScreen({ visible, onClose }) {
               <Text style={styles.usernameText} numberOfLines={1}>
                 {username}
               </Text>
-              <Ionicons name="checkmark-circle" size={17} color="rgba(255,255,255,0.4)" />
-              <Ionicons name="pencil" size={14} color="rgba(255,255,255,0.4)" style={{ marginLeft: 2 }} />
+              <Ionicons name="pencil" size={14} color="rgba(255,255,255,0.4)" style={{ marginLeft: 6 }} />
             </TouchableOpacity>
 
             <View style={styles.badgeRow}>
@@ -506,31 +466,15 @@ export default function ProfileScreen({ visible, onClose }) {
             {/* Clean Stream Metrics */}
             <View style={styles.metricsRow}>
               <Text style={styles.metricsText}>
-                <Text style={styles.metricsBold}>{stats.total_plays || 0}</Text> Streams
+                <Text style={styles.metricsBold}>{totalStreams}</Text> Streams
               </Text>
               <Text style={styles.metricsDot}>•</Text>
               <Text style={styles.metricsText}>
-                <Text style={styles.metricsBold}>{favoritesCount}</Text> Liked Songs
+                <Text style={styles.metricsBold}>{totalLikedSongs}</Text> Liked Songs
               </Text>
             </View>
           </View>
         </View>
-
-        {/* Share QR Code */}
-        <TouchableOpacity
-          style={styles.qrCodeBtn}
-          onPress={() => setShowQRModal(true)}
-          activeOpacity={0.85}
-        >
-          <View style={[styles.qrCodeIconWrap, { backgroundColor: "rgba(29, 185, 84, 0.15)" }]}>
-            <Ionicons name="qr-code" size={22} color={colors.primary} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.qrCodeTitle}>Share QR Code</Text>
-            <Text style={styles.qrCodeSub}>Let others scan to open Staytup</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.3)" />
-        </TouchableOpacity>
 
         {/* Referral */}
         <TouchableOpacity
@@ -721,6 +665,7 @@ export default function ProfileScreen({ visible, onClose }) {
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
+              style={{ flexGrow: 0 }}
               contentContainerStyle={styles.avatarPickerRow}
             >
               {avatarOptions.map((item) => {
@@ -825,97 +770,6 @@ export default function ProfileScreen({ visible, onClose }) {
         initialPhoto={selectedArtistForModal ? artistPhotos[selectedArtistForModal] : null}
       />
 
-      {/* QR Code Modal — Fullscreen */}
-      <Modal
-        visible={showQRModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowQRModal(false)}
-      >
-        <View style={styles.qrFullscreen}>
-          <View style={styles.qrFullscreenHeader}>
-            <TouchableOpacity onPress={() => setShowQRModal(false)} style={styles.qrCloseArea}>
-              <Ionicons name="close" size={28} color="#FFFFFF" />
-            </TouchableOpacity>
-            <Text style={styles.qrFullscreenTitle}>Your QR Code</Text>
-            <View style={{ width: 40 }} />
-          </View>
-
-          <View style={styles.qrFullscreenBody}>
-            <Text style={styles.qrFullscreenSub}>
-              Scan this code on another device to log in to your Staytup account. Code refreshes every 60 seconds.
-            </Text>
-
-            {qrLoading ? (
-              <View style={styles.qrFullscreenCodeWrap}>
-                <ActivityIndicator size="large" color={colors.primary} />
-              </View>
-            ) : qrSessionId ? (
-              <>
-                <View style={styles.qrFullscreenCodeWrap}>
-                  <Image
-                    source={{
-                      uri: `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(
-                        `${Platform.OS === "web" && typeof window !== "undefined" ? window.location.origin : "https://staytup.in"}/qr-login?sid=${qrSessionId}`
-                      )}&bgcolor=000000&color=FFFFFF&t=${Date.now()}`,
-                    }}
-                    style={styles.qrFullscreenCode}
-                    resizeMode="contain"
-                  />
-                </View>
-
-                {qrPolling && (
-                  <View style={styles.qrPollStatus}>
-                    <View style={styles.qrPollDot} />
-                    <Text style={styles.qrPollText}>Waiting for scan...</Text>
-                  </View>
-                )}
-
-                <Text style={styles.qrFullscreenUrl}>
-                  {qrSessionId}
-                </Text>
-              </>
-            ) : (
-              <View style={styles.qrFullscreenCodeWrap}>
-                <Text style={{ color: "rgba(255,255,255,0.4)", fontFamily: fonts.medium, fontSize: 13 }}>Failed to generate QR</Text>
-              </View>
-            )}
-
-            {/* How it works steps */}
-            <View style={styles.qrStepsRow}>
-              <View style={styles.qrStepItem}>
-                <View style={styles.qrStepNum}><Text style={styles.qrStepNumText}>1</Text></View>
-                <Text style={styles.qrStepLabel}>Open{"\n"}Staytup App</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" style={{ marginTop: -10 }} />
-              <View style={styles.qrStepItem}>
-                <View style={styles.qrStepNum}><Text style={styles.qrStepNumText}>2</Text></View>
-                <Text style={styles.qrStepLabel}>Tap{"\n"}Scan QR</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" style={{ marginTop: -10 }} />
-              <View style={styles.qrStepItem}>
-                <View style={styles.qrStepNum}><Text style={styles.qrStepNumText}>3</Text></View>
-                <Text style={styles.qrStepLabel}>Point at{"\n"}this code</Text>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={styles.qrShareBtn}
-              onPress={() => {
-                const url = Platform.OS === "web" && typeof window !== "undefined" ? window.location.origin : "https://staytup.in";
-                if (Platform.OS === "web" && navigator.share) {
-                  navigator.share({ title: "Login to Staytup", url }).catch(() => {});
-                }
-              }}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="refresh-outline" size={18} color="#000000" style={{ marginRight: 8 }} />
-              <Text style={styles.qrShareBtnText}>Refresh Code</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
       {/* Referral Full Page Modal */}
       <Modal
         visible={showReferralModal}
@@ -927,88 +781,125 @@ export default function ProfileScreen({ visible, onClose }) {
           <View style={styles.legalContainer}>
             <View style={styles.legalHeader}>
               <TouchableOpacity onPress={() => setShowReferralModal(false)} style={styles.legalCloseBtn}>
-                <Ionicons name="close" size={24} color="rgba(255,255,255,0.6)" />
+                <Ionicons name="close" size={24} color="rgba(255,255,255,0.7)" />
               </TouchableOpacity>
-              <Text style={styles.legalTitle}>Invite Friends</Text>
+              <Text style={styles.legalTitle}>Referral Program</Text>
               <View style={{ width: 32 }} />
             </View>
-            <ScrollView contentContainerStyle={styles.legalContent} showsVerticalScrollIndicator={false}>
+
+            <ScrollView contentContainerStyle={styles.referralScrollContent} showsVerticalScrollIndicator={false}>
+              {/* Hero Section */}
               <View style={styles.referralHero}>
                 <View style={styles.referralIconCircle}>
-                  <Ionicons name="gift-outline" size={48} color={colors.primary} />
+                  <Ionicons name="gift" size={38} color={colors.primary} />
                 </View>
-                <Text style={styles.referralHeroTitle}>Share Staytup</Text>
+                <Text style={styles.referralHeroTitle}>You’re Invited to Staytup</Text>
                 <Text style={styles.referralHeroSub}>
-                  Invite your friends to Staytup. When they sign up using your link, you both earn rewards.
+                  Give your friends 1 Month of VIP Pro Access FREE. When they sign up using your VIP invite code, you both unlock exclusive listening perks.
                 </Text>
               </View>
 
-              <View style={styles.referralStatsRow}>
-                <View style={styles.referralStatCard}>
-                  <Text style={styles.referralStatNum}>{referralCount}</Text>
-                  <Text style={styles.referralStatLabel}>Friends Invited</Text>
-                </View>
-                <View style={styles.referralStatCard}>
-                  <Text style={styles.referralStatNum}>{referralCount * 10}</Text>
-                  <Text style={styles.referralStatLabel}>Points Earned</Text>
-                </View>
-              </View>
+              {/* VIP Code Showcase Card */}
+              <View style={styles.referralCard}>
 
-              {/* Referral Code */}
-              <View style={styles.referralCodeSection}>
-                <Text style={styles.referralCodeLabel}>Your Referral Code</Text>
+                <Text style={styles.referralCodeLabel}>YOUR VIP INVITE CODE</Text>
                 <View style={styles.referralCodeRow}>
                   <View style={styles.referralCodeBox}>
-                    <Text style={styles.referralCodeText}>
-                      {(userProfile?.username || "user").replace(/[^a-zA-Z0-9]/g, "").toUpperCase()}
+                    <Text style={styles.referralCodeText} numberOfLines={1}>
+                      {getVipCode()}
                     </Text>
                   </View>
                   <TouchableOpacity
-                    style={styles.referralCopyBtn}
+                    style={[styles.referralCopyBtn, copiedReferralCode && styles.referralCopyBtnSuccess]}
                     onPress={() => {
-                      const code = (userProfile?.username || "user").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+                      const code = getVipCode();
                       if (Platform.OS === "web" && navigator.clipboard) {
                         navigator.clipboard.writeText(code).catch(() => {});
                       }
+                      setCopiedReferralCode(true);
+                      setTimeout(() => setCopiedReferralCode(false), 2200);
                     }}
-                    activeOpacity={0.7}
+                    activeOpacity={0.75}
                   >
-                    <Ionicons name="copy-outline" size={16} color={colors.primary} />
-                    <Text style={styles.referralCopyText}>Copy</Text>
+                    <Ionicons
+                      name={copiedReferralCode ? "checkmark" : "copy-outline"}
+                      size={16}
+                      color={copiedReferralCode ? "#FFFFFF" : colors.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.referralCopyText,
+                        copiedReferralCode && { color: "#FFFFFF" },
+                      ]}
+                    >
+                      {copiedReferralCode ? "Copied!" : "Copy"}
+                    </Text>
                   </TouchableOpacity>
                 </View>
-                <Text style={styles.referralCodeHint}>Share this code with friends to earn rewards</Text>
+                <Text style={styles.referralCodeHint}>
+                  Share this code with friends so they can unlock 1 Month of VIP Pro Access instantly.
+                </Text>
               </View>
 
+              {/* VIP Pro Benefits Breakdown */}
+              <View style={styles.vipPerksContainer}>
+                <Text style={styles.vipPerksTitle}>VIP Pro Benefits Included</Text>
+                <View style={styles.vipPerkRow}>
+                  <View style={styles.vipPerkIconCircle}>
+                    <Ionicons name="volume-high" size={15} color={colors.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.vipPerkHeading}>Ad-Free & Lossless Audio</Text>
+                    <Text style={styles.vipPerkSub}>High-fidelity 320 kbps streaming with zero commercial interruptions.</Text>
+                  </View>
+                </View>
+                <View style={styles.vipPerkRow}>
+                  <View style={styles.vipPerkIconCircle}>
+                    <Ionicons name="people" size={15} color={colors.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.vipPerkHeading}>Social Live Listening</Text>
+                    <Text style={styles.vipPerkSub}>Stream songs together in real-time sync with your friends.</Text>
+                  </View>
+                </View>
+                <View style={styles.vipPerkRow}>
+                  <View style={styles.vipPerkIconCircle}>
+                    <Ionicons name="infinite" size={15} color={colors.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.vipPerkHeading}>Unlimited Music & Skips</Text>
+                    <Text style={styles.vipPerkSub}>Play any track on demand and build custom playlists without limits.</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Referral Stats */}
+              <View style={styles.referralStatsRow}>
+                <View style={styles.referralStatCard}>
+                  <Text style={styles.referralStatNum}>{referralCount}</Text>
+                  <Text style={styles.referralStatLabel}>Friends Joined</Text>
+                </View>
+                <View style={styles.referralStatCard}>
+                  <Text style={styles.referralStatNum}>{referralCount * 10}</Text>
+                  <Text style={styles.referralStatLabel}>VIP Points</Text>
+                </View>
+              </View>
+
+              {/* Action Buttons */}
               <TouchableOpacity
                 style={styles.whatsappShareBtn}
                 onPress={() => {
-                  const url = `https://staytup.in/qr-login?ref=${userProfile?.username || "user"}`;
-                  const msg = `Check out Staytup - the best Indian music streaming app! Use my link to sign up: ${url}`;
+                  const msg = getVipInviteMessage();
                   if (Platform.OS === "web") {
                     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+                  } else {
+                    Share.share({ message: msg }).catch(() => {});
                   }
                 }}
                 activeOpacity={0.85}
               >
                 <Ionicons name="logo-whatsapp" size={20} color="#FFFFFF" style={{ marginRight: 10 }} />
                 <Text style={styles.whatsappShareText}>Share on WhatsApp</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.genericShareBtn}
-                onPress={() => {
-                  const url = `https://staytup.in/qr-login?ref=${userProfile?.username || "user"}`;
-                  if (Platform.OS === "web" && navigator.share) {
-                    navigator.share({ title: "Join Staytup", url, message: `Use my link: ${url}` }).catch(() => {});
-                  } else {
-                    Share.share({ title: "Join Staytup", message: url }).catch(() => {});
-                  }
-                }}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="share-outline" size={18} color={colors.primary} style={{ marginRight: 10 }} />
-                <Text style={styles.genericShareText}>Share Link</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -2254,6 +2145,77 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "rgba(255,255,255,0.5)",
   },
+  qrPinContainer: {
+    backgroundColor: "#111111",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    width: "100%",
+    maxWidth: 320,
+    marginTop: 4,
+    marginBottom: 20,
+  },
+  qrPinHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 10,
+    gap: 6,
+  },
+  qrPinHeaderTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    color: "rgba(255,255,255,0.6)",
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+  },
+  qrPinBoxesRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 10,
+  },
+  qrPinDigitBox: {
+    width: 48,
+    height: 52,
+    borderRadius: 8,
+    backgroundColor: "#181818",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  qrPinDigitText: {
+    fontFamily: fonts.bold,
+    fontSize: 24,
+    color: "#FFFFFF",
+    letterSpacing: 0.5,
+  },
+  qrPinInstructionText: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: "rgba(255,255,255,0.55)",
+    textAlign: "center",
+    lineHeight: 16,
+  },
+  qrSuccessBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(29, 185, 84, 0.15)",
+    borderColor: "#1DB954",
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    gap: 10,
+  },
+  qrSuccessText: {
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    color: "#1DB954",
+  },
   qrShareBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -2301,44 +2263,202 @@ const styles = StyleSheet.create({
     lineHeight: 13,
   },
   // Referral styles
+  referralScrollContent: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 60,
+    maxWidth: 600,
+    width: "100%",
+    alignSelf: "center",
+  },
+  vipHeaderPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  vipHeaderPillText: {
+    fontFamily: fonts.bold,
+    fontSize: 10,
+    color: "#000000",
+    letterSpacing: 0.5,
+  },
   referralHero: {
     alignItems: "center",
-    paddingVertical: 24,
-    marginBottom: 20,
+    paddingVertical: 18,
+    marginBottom: 16,
   },
   referralIconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: "rgba(29, 185, 84, 0.12)",
     borderWidth: 2,
-    borderColor: "rgba(29, 185, 84, 0.3)",
+    borderColor: "rgba(29, 185, 84, 0.35)",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 16,
+    marginBottom: 14,
   },
   referralHeroTitle: {
     fontFamily: fonts.bold,
     fontSize: 22,
     color: "#FFFFFF",
     marginBottom: 8,
+    textAlign: "center",
+    letterSpacing: -0.3,
   },
   referralHeroSub: {
     fontFamily: fonts.regular,
-    fontSize: 14,
-    color: colors.textSecondary,
+    fontSize: 13,
+    color: "rgba(255,255,255,0.7)",
     textAlign: "center",
     lineHeight: 20,
+    maxWidth: 440,
+  },
+  referralCard: {
+    backgroundColor: "#0D0D0D",
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    marginBottom: 16,
+  },
+  referralCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  vipPillRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  vipCardTagText: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    color: colors.primary,
+    letterSpacing: 0.6,
+  },
+  freeMonthTag: {
+    backgroundColor: "rgba(29, 185, 84, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.35)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  freeMonthTagText: {
+    fontFamily: fonts.bold,
+    fontSize: 10,
+    color: colors.primary,
+    letterSpacing: 0.4,
+  },
+  referralCodeLabel: {
+    fontFamily: fonts.semiBold,
+    fontSize: 11,
+    color: "rgba(255,255,255,0.5)",
+    marginBottom: 8,
+    letterSpacing: 0.8,
+  },
+  referralCodeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 8,
+  },
+  referralCodeBox: {
+    flex: 1,
+    backgroundColor: "#111111",
+    borderRadius: 12,
     paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  referralCodeText: {
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: "#FFFFFF",
+    letterSpacing: 1.5,
+  },
+  referralCopyBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+  },
+  referralCopyBtnSuccess: {
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderColor: "rgba(255,255,255,0.3)",
+  },
+  referralCopyText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: "#FFFFFF",
+  },
+  referralCodeHint: {
+    fontFamily: fonts.regular,
+    fontSize: 11,
+    color: colors.textMuted,
+    lineHeight: 16,
+  },
+  vipPerksContainer: {
+    backgroundColor: "#0D0D0D",
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+    marginBottom: 16,
+  },
+  vipPerksTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    color: "#FFFFFF",
+    marginBottom: 14,
+    letterSpacing: -0.2,
+  },
+  vipPerkRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 12,
+  },
+  vipPerkIconCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "rgba(29, 185, 84, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+  vipPerkHeading: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: "#FFFFFF",
+    marginBottom: 2,
+  },
+  vipPerkSub: {
+    fontFamily: fonts.regular,
+    fontSize: 11,
+    color: colors.textSecondary,
+    lineHeight: 16,
   },
   referralStatsRow: {
     flexDirection: "row",
     gap: 12,
-    marginBottom: 24,
+    marginBottom: 18,
   },
   referralStatCard: {
     flex: 1,
-    backgroundColor: "#0A0A0A",
+    backgroundColor: "#0D0D0D",
     borderRadius: 14,
     padding: 16,
     alignItems: "center",
@@ -2347,7 +2467,7 @@ const styles = StyleSheet.create({
   },
   referralStatNum: {
     fontFamily: fonts.bold,
-    fontSize: 28,
+    fontSize: 26,
     color: "#FFFFFF",
     marginBottom: 4,
   },
@@ -2356,69 +2476,18 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textSecondary,
   },
-  referralCodeSection: {
-    marginBottom: 20,
-  },
-  referralCodeLabel: {
-    fontFamily: fonts.semiBold,
-    fontSize: 13,
-    color: "rgba(255,255,255,0.5)",
-    marginBottom: 8,
-  },
-  referralCodeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 6,
-  },
-  referralCodeBox: {
-    flex: 1,
-    backgroundColor: "#0A0A0A",
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.3)",
-  },
-  referralCodeText: {
-    fontFamily: fonts.bold,
-    fontSize: 20,
-    color: colors.primary,
-    letterSpacing: 3,
-  },
-  referralCopyBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(29, 185, 84, 0.12)",
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.25)",
-  },
-  referralCopyText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 13,
-    color: colors.primary,
-  },
-  referralCodeHint: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: colors.textMuted,
-  },
   whatsappShareBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#25D366",
-    height: 50,
-    borderRadius: 25,
-    marginBottom: 12,
+    height: 48,
+    borderRadius: 24,
+    marginBottom: 10,
   },
   whatsappShareText: {
     fontFamily: fonts.bold,
-    fontSize: 15,
+    fontSize: 14,
     color: "#FFFFFF",
   },
   genericShareBtn: {
@@ -2428,13 +2497,25 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.1)",
-    height: 50,
-    borderRadius: 25,
+    height: 48,
+    borderRadius: 24,
+    marginBottom: 8,
   },
   genericShareText: {
     fontFamily: fonts.semiBold,
-    fontSize: 15,
+    fontSize: 14,
     color: "#FFFFFF",
+  },
+  copyFullInviteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+  },
+  copyFullInviteText: {
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    color: "rgba(255,255,255,0.6)",
   },
   // Bottom sheet styles
   bottomSheetOverlay: {

@@ -8,6 +8,7 @@ import { useUser } from "../context/UserContext";
 export default function Header({
   activeFilter = "All",
   onSelectFilter,
+  onAddPress,
 }) {
   const { isDesktop, isTablet } = useResponsive();
   const { userProfile, openProfile } = useUser() || {};
@@ -18,6 +19,7 @@ export default function Header({
   const filters = [
     { id: "All", label: "All" },
     { id: "Following", label: "Following" },
+    { id: "Feed", label: "Feed" },
   ];
 
   return (
@@ -39,24 +41,38 @@ export default function Header({
             ))}
           </View>
 
-          <TouchableOpacity
-            style={[styles.profileAvatar, { backgroundColor: avatarBg }]}
-            onPress={() => openProfile && openProfile()}
-            activeOpacity={0.75}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            {avatarIcon && avatarIcon.startsWith("http") ? (
-              <Image
-                source={{ uri: avatarIcon }}
-                style={styles.profileAvatarImage}
-                resizeMode="cover"
-              />
-            ) : avatarIcon ? (
-              <Ionicons name={avatarIcon} size={16} color="#000000" />
-            ) : (
-              <Text style={styles.profileAvatarText}>{userInitial}</Text>
+          <View style={styles.topRightGroup}>
+            {activeFilter === "Feed" && onAddPress && (
+              <TouchableOpacity
+                style={styles.addCircleBtn}
+                onPress={onAddPress}
+                activeOpacity={0.8}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Share a song"
+              >
+                <Ionicons name="add" size={22} color="#000000" />
+              </TouchableOpacity>
             )}
-          </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.profileAvatar, { backgroundColor: avatarBg }]}
+              onPress={() => openProfile && openProfile()}
+              activeOpacity={0.75}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              {avatarIcon && avatarIcon.startsWith("http") ? (
+                <Image
+                  source={{ uri: avatarIcon }}
+                  style={styles.profileAvatarImage}
+                  resizeMode="cover"
+                />
+              ) : avatarIcon ? (
+                <Ionicons name={avatarIcon} size={16} color="#000000" />
+              ) : (
+                <Text style={styles.profileAvatarText}>{userInitial}</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </View>
@@ -112,6 +128,20 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     color: "#000000",
   },
+  topRightGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  addCircleBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
   profileAvatar: {
     width: 34,
     height: 34,
@@ -121,8 +151,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
     flexShrink: 0,
-    marginLeft: 8,
-    marginTop: -2,
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   profileAvatarImage: {

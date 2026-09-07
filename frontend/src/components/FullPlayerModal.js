@@ -89,7 +89,9 @@ export default function FullPlayerModal() {
   const [scrubPercent, setScrubPercent] = useState(0);
   const isScrubbingRef = useRef(false);
   const scrubPercentRef = useRef(0);
-  const progressBarTrackRef = useRef(null);
+  const desktopProgressBarRef = useRef(null);
+  const mobileProgressBarRef = useRef(null);
+  const [isScrubberHovered, setIsScrubberHovered] = useState(false);
   const barLayoutRef = useRef({ pageX: 0, width: 0 });
 
   const [showQueue, setShowQueue] = useState(false);
@@ -252,41 +254,146 @@ export default function FullPlayerModal() {
   // ⚠️ panResponder useRef MUST be before any early return (Rules of Hooks)
   // Use a ref for duration so the closure always reads the latest value
   const durationRef = useRef(0);
+
+  const getTargetFromClientX = (clientX, barRef) => {
+    const dur = durationRef.current || 0;
+    if (!dur || !barRef?.current) return 0;
+    const rect = barRef.current.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0) return 0;
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return ratio * dur;
+  };
+
+  const startScrub = (e, barRef) => {
+    const dur = durationRef.current || 0;
+    if (!dur) return;
+
+    const isTouch = Boolean(e.touches && e.touches.length > 0);
+    const startX = isTouch
+      ? e.touches[0].clientX
+      : (e.nativeEvent?.clientX ?? e.clientX ?? 0);
+    const initialTarget = getTargetFromClientX(startX, barRef);
+    const initialPercent = dur > 0 ? (initialTarget / dur) * 100 : 0;
+
+    isScrubbingRef.current = true;
+    scrubPercentRef.current = initialPercent;
+    setIsScrubbing(true);
+    setScrubPercent(initialPercent);
+
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      let lastClientX = startX;
+
+      const onMouseMove = (moveEvt) => {
+        lastClientX = moveEvt.clientX;
+        const target = getTargetFromClientX(moveEvt.clientX, barRef);
+        const percent = dur > 0 ? (target / dur) * 100 : 0;
+        scrubPercentRef.current = percent;
+        setScrubPercent(percent);
+      };
+
+      const onMouseUp = (upEvt) => {
+        window.removeEventListener("mousemove", onMouseMove);
+        window.removeEventListener("mouseup", onMouseUp);
+        const finalClientX = upEvt.clientX ?? lastClientX;
+        const finalTarget = getTargetFromClientX(finalClientX, barRef);
+        const finalPercent = dur > 0 ? (finalTarget / dur) * 100 : 0;
+
+        if (finalPercent >= 99 && dur > 0) {
+          playNext();
+        } else {
+          seekTo(finalTarget);
+        }
+
+        setTimeout(() => {
+          isScrubbingRef.current = false;
+          setIsScrubbing(false);
+        }, 120);
+      };
+
+      const onTouchMove = (touchEvt) => {
+        if (touchEvt.touches && touchEvt.touches[0]) {
+          lastClientX = touchEvt.touches[0].clientX;
+          const target = getTargetFromClientX(lastClientX, barRef);
+          const percent = dur > 0 ? (target / dur) * 100 : 0;
+          scrubPercentRef.current = percent;
+          setScrubPercent(percent);
+        }
+      };
+
+      const onTouchEnd = (touchEndEvt) => {
+        window.removeEventListener("touchmove", onTouchMove);
+        window.removeEventListener("touchend", onTouchEnd);
+        const t = touchEndEvt.changedTouches?.[0];
+        const finalClientX = t ? t.clientX : lastClientX;
+        const finalTarget = getTargetFromClientX(finalClientX, barRef);
+        const finalPercent = dur > 0 ? (finalTarget / dur) * 100 : 0;
+
+        if (finalPercent >= 99 && dur > 0) {
+          playNext();
+        } else {
+          seekTo(finalTarget);
+        }
+
+        setTimeout(() => {
+          isScrubbingRef.current = false;
+          setIsScrubbing(false);
+        }, 120);
+      };
+
+      if (isTouch) {
+        window.addEventListener("touchmove", onTouchMove, { passive: true });
+        window.addEventListener("touchend", onTouchEnd, { passive: true });
+      } else {
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp);
+      }
+    }
+  };
+
+  const handlePressSeek = (e, barRef) => {
+    const dur = durationRef.current || 0;
+    if (!dur) return;
+    if (Platform.OS === "web") {
+      const clientX = e.nativeEvent?.clientX ?? e.clientX ?? 0;
+      const target = getTargetFromClientX(clientX, barRef);
+      const ratio = target / dur;
+      if (ratio >= 0.99) {
+        playNext();
+      } else {
+        seekTo(target);
+      }
+      return;
+    }
+    const locX = e.nativeEvent?.locationX ?? 0;
+    const barW = barLayoutRef.current.width > 0 ? barLayoutRef.current.width : (width - 56);
+    const ratio = Math.max(0, Math.min(1, locX / barW));
+    if (ratio >= 0.985) {
+      playNext();
+    } else {
+      seekTo(Math.floor(ratio * dur));
+    }
+  };
+
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onStartShouldSetPanResponderCapture: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponderCapture: () => true,
-      onPanResponderGrant: (evt) => {
+      onStartShouldSetPanResponder: () => Platform.OS !== "web",
+      onMoveShouldSetPanResponder: () => Platform.OS !== "web",
+      onPanResponderGrant: (evt, gestureState) => {
         isScrubbingRef.current = true;
         setIsScrubbing(true);
-        if (progressBarTrackRef.current?.measure) {
-          progressBarTrackRef.current.measure((x, y, w, h, pageX) => {
-            if (w > 0) barLayoutRef.current = { pageX, width: w };
-          });
-        }
-        const clientX =
-          evt.nativeEvent.pageX !== undefined
-            ? evt.nativeEvent.pageX
-            : evt.nativeEvent.locationX;
-        const layout = barLayoutRef.current;
-        const barW = layout.width > 0 ? layout.width : width - 56;
-        const barX = layout.pageX || 0;
-        const clampedRatio = Math.max(0, Math.min(1, (clientX - barX) / barW));
+        const barW = barLayoutRef.current.width > 0 ? barLayoutRef.current.width : (width - 56);
+        const barX = barLayoutRef.current.pageX || 0;
+        const pageX = evt.nativeEvent.pageX ?? gestureState.x0;
+        const clampedRatio = Math.max(0, Math.min(1, (pageX - barX) / barW));
         const percent = clampedRatio * 100;
         scrubPercentRef.current = percent;
         setScrubPercent(percent);
       },
       onPanResponderMove: (evt, gestureState) => {
-        const clientX =
-          evt.nativeEvent.pageX !== undefined
-            ? evt.nativeEvent.pageX
-            : gestureState.x0 + gestureState.dx;
-        const layout = barLayoutRef.current;
-        const barW = layout.width > 0 ? layout.width : width - 56;
-        const barX = layout.pageX || 0;
-        const clampedRatio = Math.max(0, Math.min(1, (clientX - barX) / barW));
+        const barW = barLayoutRef.current.width > 0 ? barLayoutRef.current.width : (width - 56);
+        const barX = barLayoutRef.current.pageX || 0;
+        const pageX = evt.nativeEvent.pageX ?? (gestureState.x0 + gestureState.dx);
+        const clampedRatio = Math.max(0, Math.min(1, (pageX - barX) / barW));
         const percent = clampedRatio * 100;
         scrubPercentRef.current = percent;
         setScrubPercent(percent);
@@ -297,17 +404,12 @@ export default function FullPlayerModal() {
 
         if (finalPercent >= 98.5 && dur > 0) {
           playNext();
-          setTimeout(() => {
-            isScrubbingRef.current = false;
-            setIsScrubbing(false);
-          }, 150);
-          return;
+        } else {
+          const targetMillis = Math.floor((finalPercent / 100) * dur);
+          try {
+            await seekTo(targetMillis);
+          } catch (_) {}
         }
-
-        const targetMillis = Math.floor((finalPercent / 100) * dur);
-        try {
-          await seekTo(targetMillis);
-        } catch (_) {}
         setTimeout(() => {
           isScrubbingRef.current = false;
           setIsScrubbing(false);
@@ -403,17 +505,11 @@ export default function FullPlayerModal() {
     if (lines[1]) overlayLines.push(lines[1]);
   }
 
-  const handleSeekPress = (event) => {
-    const { locationX } = event.nativeEvent;
-    const barWidth = progressBarWidth > 0 ? progressBarWidth : width - 56;
-    const ratio = Math.max(0, Math.min(1, locationX / barWidth));
-    if (ratio >= 0.985) {
-      playNext();
-      return;
-    }
-    const targetMillis = Math.floor(ratio * durationRef.current);
-    seekTo(targetMillis);
-  };
+  const isSliderActive = isScrubbing || isScrubberHovered;
+  const currentDisplayPercent = isScrubbing ? scrubPercent : progressPercent;
+  const currentDisplayTime = isScrubbing
+    ? Math.floor((scrubPercent / 100) * (effectiveDuration || 1))
+    : (positionMillis || 0);
 
   const handleToggleFavorite = async () => {
     if (!currentTrack) return;
@@ -741,58 +837,57 @@ export default function FullPlayerModal() {
         <View style={styles.desktopControlDeck}>
           {/* Full-width Scrubber Bar */}
           <View style={styles.desktopScrubberRow}>
-            <Text style={[styles.desktopTimeText, isScrubbing && styles.timeTextActive]}>
-              {formatTime(
-                isScrubbing
-                  ? Math.floor((scrubPercent / 100) * (effectiveDuration || 1))
-                  : positionMillis
-              )}
+            <Text style={[styles.desktopTimeText, isSliderActive && styles.timeTextActive]}>
+              {formatTime(currentDisplayTime)}
             </Text>
 
             <TouchableOpacity
-              {...panResponder.panHandlers}
-              onPress={handleSeekPress}
+              ref={desktopProgressBarRef}
+              {...(Platform.OS !== "web" ? panResponder.panHandlers : {})}
+              onPress={(e) => handlePressSeek(e, desktopProgressBarRef)}
               activeOpacity={1}
+              {...(Platform.OS === "web"
+                ? {
+                    onMouseEnter: () => setIsScrubberHovered(true),
+                    onMouseLeave: () => setIsScrubberHovered(false),
+                    onMouseDown: (e) => startScrub(e, desktopProgressBarRef),
+                    onTouchStart: (e) => startScrub(e, desktopProgressBarRef),
+                  }
+                : {})}
               onLayout={(e) => {
                 const layoutWidth = e.nativeEvent.layout.width;
                 setProgressBarWidth(layoutWidth);
                 barLayoutRef.current.width = layoutWidth;
-                if (progressBarTrackRef.current?.measure) {
-                  progressBarTrackRef.current.measure((x, y, w, h, pageX) => {
-                    if (w > 0) barLayoutRef.current = { pageX, width: w };
-                  });
-                }
+                e.target?.measure?.((x, y, w, h, pageX) => {
+                  if (w > 0) barLayoutRef.current = { pageX, width: w };
+                });
               }}
               style={styles.desktopSeekTouchArea}
             >
               <View
-                ref={progressBarTrackRef}
                 style={[
                   styles.progressBarTrack,
-                  isScrubbing && styles.progressBarTrackActive,
+                  isSliderActive && styles.progressBarTrackActive,
+                  { pointerEvents: "none" },
                 ]}
               >
                 <View
                   style={[
                     styles.progressBarFilled,
-                    isScrubbing && styles.progressBarFilledActive,
+                    isSliderActive && styles.progressBarFilledActive,
                     {
-                      width: `${Math.min(
-                        100,
-                        Math.max(0, isScrubbing ? scrubPercent : progressPercent)
-                      )}%`,
+                      width: `${Math.min(100, Math.max(0, currentDisplayPercent))}%`,
+                      pointerEvents: "none",
                     },
                   ]}
                 />
                 <View
                   style={[
                     styles.progressKnob,
-                    isScrubbing && styles.progressKnobActive,
+                    isSliderActive && styles.progressKnobActive,
                     {
-                      left: `${Math.min(
-                        100,
-                        Math.max(0, isScrubbing ? scrubPercent : progressPercent)
-                      )}%`,
+                      left: `${Math.min(100, Math.max(0, currentDisplayPercent))}%`,
+                      pointerEvents: "none",
                     },
                   ]}
                 />
@@ -1147,49 +1242,52 @@ export default function FullPlayerModal() {
           {/* Progress Slider with Smooth Drag & Skip */}
           <View style={styles.progressSection}>
             <TouchableOpacity
-              {...panResponder.panHandlers}
-              onPress={handleSeekPress}
+              ref={mobileProgressBarRef}
+              {...(Platform.OS !== "web" ? panResponder.panHandlers : {})}
+              onPress={(e) => handlePressSeek(e, mobileProgressBarRef)}
               activeOpacity={1}
+              {...(Platform.OS === "web"
+                ? {
+                    onMouseEnter: () => setIsScrubberHovered(true),
+                    onMouseLeave: () => setIsScrubberHovered(false),
+                    onMouseDown: (e) => startScrub(e, mobileProgressBarRef),
+                    onTouchStart: (e) => startScrub(e, mobileProgressBarRef),
+                  }
+                : {})}
               onLayout={(e) => {
                 const layoutWidth = e.nativeEvent.layout.width;
                 setProgressBarWidth(layoutWidth);
                 barLayoutRef.current.width = layoutWidth;
-                if (progressBarTrackRef.current?.measure) {
-                  progressBarTrackRef.current.measure((x, y, w, h, pageX) => {
-                    if (w > 0) barLayoutRef.current = { pageX, width: w };
-                  });
-                }
+                e.target?.measure?.((x, y, w, h, pageX) => {
+                  if (w > 0) barLayoutRef.current = { pageX, width: w };
+                });
               }}
               style={styles.seekTouchArea}
             >
               <View
-                ref={progressBarTrackRef}
                 style={[
                   styles.progressBarTrack,
-                  isScrubbing && styles.progressBarTrackActive,
+                  isSliderActive && styles.progressBarTrackActive,
+                  { pointerEvents: "none" },
                 ]}
               >
                 <View
                   style={[
                     styles.progressBarFilled,
-                    isScrubbing && styles.progressBarFilledActive,
+                    isSliderActive && styles.progressBarFilledActive,
                     {
-                      width: `${Math.min(
-                        100,
-                        Math.max(0, isScrubbing ? scrubPercent : progressPercent)
-                      )}%`,
+                      width: `${Math.min(100, Math.max(0, currentDisplayPercent))}%`,
+                      pointerEvents: "none",
                     },
                   ]}
                 />
                 <View
                   style={[
                     styles.progressKnob,
-                    isScrubbing && styles.progressKnobActive,
+                    isSliderActive && styles.progressKnobActive,
                     {
-                      left: `${Math.min(
-                        100,
-                        Math.max(0, isScrubbing ? scrubPercent : progressPercent)
-                      )}%`,
+                      left: `${Math.min(100, Math.max(0, currentDisplayPercent))}%`,
+                      pointerEvents: "none",
                     },
                   ]}
                 />
@@ -1197,12 +1295,8 @@ export default function FullPlayerModal() {
             </TouchableOpacity>
 
             <View style={styles.timeRow}>
-              <Text style={[styles.timeText, isScrubbing && styles.timeTextActive]}>
-                {formatTime(
-                  isScrubbing
-                    ? Math.floor((scrubPercent / 100) * (effectiveDuration || 1))
-                    : positionMillis
-                )}
+              <Text style={[styles.timeText, isSliderActive && styles.timeTextActive]}>
+                {formatTime(currentDisplayTime)}
               </Text>
               <Text style={styles.timeText}>{formatTime(effectiveDuration)}</Text>
             </View>
@@ -1901,6 +1995,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 24,
     justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   desktopDeckRow: {
     flexDirection: "row",
@@ -2151,6 +2246,7 @@ const styles = StyleSheet.create({
   seekTouchArea: {
     height: 32,
     justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   progressBarTrack: {
     height: 4,

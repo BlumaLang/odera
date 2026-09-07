@@ -11,11 +11,12 @@ import {
   Platform,
   FlatList,
   StatusBar,
+  ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
-import { useAudio } from "../context/AudioContext";
+import { useAudio, fisherYatesShuffle } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
@@ -51,9 +52,9 @@ const ArtistSongRow = React.memo(function ArtistSongRow({
   );
 });
 
-export default function ArtistModal({ visible, onClose, artistName, initialPhoto }) {
+export default function ArtistModal({ visible, onClose, artistName, initialPhoto, onSelectArtist }) {
   const { isDesktop, isTablet } = useResponsive();
-  const { currentTrack, playTrack } = useAudio();
+  const { currentTrack, playTrack, setShuffle } = useAudio();
   const { isFavoriteArtist, toggleFavoriteArtist } = useUser();
 
   const cleanName = (artistName || "").trim();
@@ -200,9 +201,10 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
   // Shuffle and play all songs
   const handleShuffle = useCallback(() => {
     if (songs.length === 0) return;
-    const shuffled = [...songs].sort(() => Math.random() - 0.5);
+    const shuffled = fisherYatesShuffle(songs);
+    if (setShuffle) setShuffle(true);
     playTrack(shuffled[0], shuffled, 0);
-  }, [songs, playTrack]);
+  }, [songs, playTrack, setShuffle]);
 
   // Memoized Header: Prevents header remount on playback ticks
   const headerComponent = useMemo(() => (
@@ -235,7 +237,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
         </View>
       </View>
 
-      {/* Action Row: Follow/Favorite, Play All, Shuffle */}
+      {/* Action Row: Follow/Favorite, Shuffle */}
       <View style={styles.actionsRow}>
         {/* Follow / Favorite Button */}
         <TouchableOpacity
@@ -263,15 +265,6 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
             activeOpacity={0.8}
           >
             <Ionicons name="shuffle" size={22} color="#AAAAAA" />
-          </TouchableOpacity>
-
-          {/* Big Play Button */}
-          <TouchableOpacity
-            style={styles.mainPlayButton}
-            onPress={handlePlayAll}
-            activeOpacity={0.85}
-          >
-            <Ionicons name="play" size={28} color="#000000" style={{ marginLeft: 3 }} />
           </TouchableOpacity>
         </View>
       </View>
@@ -610,5 +603,34 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 12,
     color: "rgba(255, 255, 255, 0.4)",
+  },
+  similarSection: {
+    marginTop: 20,
+    paddingHorizontal: 0,
+  },
+  similarScroll: {
+    paddingHorizontal: 12,
+    gap: 14,
+  },
+  similarCard: {
+    alignItems: "center",
+    width: 72,
+  },
+  similarAvatar: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#1a1a1a",
+  },
+  similarAvatarFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  similarName: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: "#FFFFFF",
+    marginTop: 6,
+    textAlign: "center",
   },
 });

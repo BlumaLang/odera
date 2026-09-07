@@ -70,11 +70,120 @@ export async function loginAsGuest() {
  */
 export async function logoutUser() {
   try {
+    await removeLocalSession("@staytup_pin_user");
     await signOut(auth);
     return { success: true };
   } catch (error) {
     console.warn("Sign-Out Error:", error.message);
     return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Local Session Helpers for Persistent PIN & Device Sessions
+ */
+export async function saveLocalSession(key, data) {
+  try {
+    const val = JSON.stringify(data);
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.setItem(key, val);
+    }
+  } catch (_) {}
+}
+
+export async function getLocalSession(key) {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      const v = window.localStorage.getItem(key);
+      if (v) return JSON.parse(v);
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+export async function removeLocalSession(key) {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.removeItem(key);
+    }
+  } catch (_) {}
+}
+
+/**
+ * 4-Digit PIN Authentication (Instant Create or Login)
+ */
+export async function loginOrCreatePinUser(username, pin) {
+  if (!username || !pin) {
+    return { success: false, error: "Username and 4-digit PIN required" };
+  }
+  const clean = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+  const cleanPin = pin.toString().trim();
+  if (clean.length < 2) {
+    return { success: false, error: "Username must be at least 2 characters" };
+  }
+  if (!/^\d{4}$/.test(cleanPin)) {
+    return { success: false, error: "PIN must be exactly 4 digits" };
+  }
+
+  try {
+    // 1. Try backend API first
+    const { api } = await import("../api/client");
+    const res = await api.loginWithPin(clean, cleanPin);
+    if (res && res.success && res.user) {
+      await saveLocalSession("@staytup_pin_user", {
+        ...res.user,
+        username: username.trim(),
+        pin: cleanPin,
+      });
+      return { success: true, user: res.user, isNewUser: res.isNewUser };
+    } else if (res && res.error) {
+      return { success: false, error: res.error };
+    }
+  } catch (_) {}
+
+  // 2. Direct Firebase RTDB fallback
+  try {
+    const userRef = ref(db, `pin_users/${clean}`);
+    const snap = await get(userRef);
+    if (snap.exists()) {
+      const existing = snap.val();
+      if (existing.pin !== cleanPin) {
+        return { success: false, error: "Incorrect 4-digit PIN. Please try again." };
+      }
+      const user = {
+        uid: existing.uid,
+        displayName: existing.displayName || username.trim(),
+        username: existing.username || username.trim(),
+      };
+      await saveLocalSession("@staytup_pin_user", { ...user, pin: cleanPin });
+      return { success: true, user, isNewUser: false };
+    } else {
+      // Create new user with 4-digit PIN
+      const newUser = {
+        uid: `pin_${clean}_${Date.now().toString(36)}`,
+        displayName: username.trim(),
+        username: username.trim(),
+        cleanUser: clean,
+        pin: cleanPin,
+        createdAt: Date.now(),
+      };
+      await set(userRef, newUser);
+      await saveLocalSession("@staytup_pin_user", { ...newUser, pin: cleanPin });
+      return { success: true, user: newUser, isNewUser: true };
+    }
+  } catch (err) {
+    // Offline local fallback
+    const offlineUser = {
+      uid: `pin_${clean}`,
+      displayName: username.trim(),
+      username: username.trim(),
+      cleanUser: clean,
+      pin: cleanPin,
+    };
+    await saveLocalSession("@staytup_pin_user", offlineUser);
+    return { success: true, user: offlineUser, isNewUser: true };
   }
 }
 
@@ -170,6 +279,19 @@ export async function saveUserProfile(uid, profileData) {
       ...profileData,
       updatedAt: new Date().toISOString(),
     });
+
+    // Public directory index for friend search & discovery
+    const cleanUsername = profileData.username || "Staytup Listener";
+    const friendCode = cleanUsername.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    const publicRef = ref(db, `publicUsers/${uid}`);
+    await update(publicRef, {
+      uid,
+      username: cleanUsername,
+      avatar: profileData.avatar || "initial",
+      avatarColor: profileData.avatarColor || "#1DB954",
+      friendCode,
+      updatedAt: Date.now(),
+    });
   } catch (error) {
     console.warn("Failed to save profile to RTDB:", error.message);
   }
@@ -254,7 +376,26 @@ export function subscribePlaylists(uid, callback) {
   const listener = onValue(
     playlistsRef,
     (snapshot) => {
-      callback(snapshot.val() || []);
+      const val = snapshot.val();
+      let list = [];
+      if (Array.isArray(val)) {
+        list = val;
+      } else if (val && typeof val === "object") {
+        list = Object.values(val);
+      }
+      const normalized = list.map((p) => {
+        const tracks = Array.isArray(p.tracks) ? p.tracks : [];
+        const firstArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
+        const resolvedCover = p.cover_url || p.preview_artwork || firstArtwork || "";
+        return {
+          ...p,
+          tracks,
+          track_count: tracks.length || p.track_count || 0,
+          cover_url: resolvedCover,
+          preview_artwork: resolvedCover,
+        };
+      });
+      callback(normalized);
     },
     (error) => {
       console.warn("RTDB playlists subscription error:", error.message);
@@ -499,6 +640,9 @@ export async function addRecentlyPlayed(uid, track) {
   } catch (error) {
     console.warn("Failed to save recently played track to RTDB:", error.message);
   }
+
+  // Also record user stream count
+  recordUserStream(safeUid).catch(() => {});
 }
 
 export async function getRecentlyPlayed(uid) {
@@ -598,6 +742,137 @@ export async function removeRecentlyPlayed(uid, videoId) {
 }
 
 // ----------------------------------------------------
+// User Streams & Play Statistics
+// ----------------------------------------------------
+
+const localStreamCounts = new Map();
+const localStreamListeners = new Set();
+
+function getLocalStreamCount(uid) {
+  const safeUid = uid || "guest";
+  if (localStreamCounts.has(safeUid)) {
+    return localStreamCounts.get(safeUid);
+  }
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      const raw = window.localStorage.getItem(`@staytup_stream_count_${safeUid}`);
+      if (raw) {
+        const parsed = parseInt(raw, 10);
+        if (!isNaN(parsed)) {
+          localStreamCounts.set(safeUid, parsed);
+          return parsed;
+        }
+      }
+    } catch (_) {}
+  }
+  return 0;
+}
+
+function setLocalStreamCount(uid, count) {
+  const safeUid = uid || "guest";
+  const num = Math.max(0, parseInt(count, 10) || 0);
+  localStreamCounts.set(safeUid, num);
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      window.localStorage.setItem(`@staytup_stream_count_${safeUid}`, String(num));
+    } catch (_) {}
+  }
+  localStreamListeners.forEach((fn) => {
+    try {
+      fn(num, safeUid);
+    } catch (_) {}
+  });
+}
+
+/**
+ * Record a user stream / playback increment
+ */
+export async function recordUserStream(uid) {
+  const safeUid = uid || "guest";
+  const currentLocal = getLocalStreamCount(safeUid);
+  const updatedLocal = currentLocal + 1;
+  setLocalStreamCount(safeUid, updatedLocal);
+
+  try {
+    const streamRef = ref(db, `users/${safeUid}/streamCount`);
+    const snapshot = await get(streamRef);
+    const existing = snapshot.exists() && typeof snapshot.val() === "number" ? snapshot.val() : 0;
+    const nextCount = Math.max(existing + 1, updatedLocal);
+    await set(streamRef, nextCount);
+    setLocalStreamCount(safeUid, nextCount);
+  } catch (err) {
+    console.warn("Failed to record user stream in RTDB:", err.message);
+  }
+}
+
+/**
+ * Get current user stream count
+ */
+export async function getUserStreamCount(uid) {
+  const safeUid = uid || "guest";
+  const local = getLocalStreamCount(safeUid);
+  try {
+    const streamRef = ref(db, `users/${safeUid}/streamCount`);
+    const snapshot = await get(streamRef);
+    if (snapshot.exists()) {
+      const val = parseInt(snapshot.val(), 10);
+      if (!isNaN(val)) {
+        setLocalStreamCount(safeUid, Math.max(val, local));
+        return Math.max(val, local);
+      }
+    }
+  } catch (_) {}
+  return local;
+}
+
+/**
+ * Subscribe to real-time user stream count
+ */
+export function subscribeUserStreamCount(uid, callback) {
+  const safeUid = uid || "guest";
+  if (!callback) return () => {};
+
+  // Immediate local callback
+  const local = getLocalStreamCount(safeUid);
+  if (local > 0) {
+    callback(local);
+  }
+
+  const localListener = (count, listenerUid) => {
+    if (listenerUid === safeUid) {
+      callback(count);
+    }
+  };
+  localStreamListeners.add(localListener);
+
+  const streamRef = ref(db, `users/${safeUid}/streamCount`);
+  const listener = onValue(
+    streamRef,
+    (snapshot) => {
+      if (snapshot.exists()) {
+        const val = parseInt(snapshot.val(), 10);
+        if (!isNaN(val)) {
+          setLocalStreamCount(safeUid, val);
+          callback(val);
+          return;
+        }
+      }
+      callback(getLocalStreamCount(safeUid));
+    },
+    (error) => {
+      console.warn("RTDB stream count subscription error:", error.message);
+    }
+  );
+
+  return () => {
+    localStreamListeners.delete(localListener);
+    try {
+      off(streamRef, "value", listener);
+    } catch (_) {}
+  };
+}
+
+// ----------------------------------------------------
 // Liked Songs (Favorites) in RTDB
 // ----------------------------------------------------
 
@@ -683,11 +958,14 @@ export async function createPlaylistRTDB(uid, name, description = "", initialTra
     const playlistsRef = ref(db, `users/${uid}/playlists`);
     const snapshot = await get(playlistsRef);
     const existing = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
+    const firstArtwork = initialTracks[0]?.artwork_url || initialTracks[0]?.thumbnail || "";
+    const resolvedCover = coverUrl || firstArtwork || "";
     const newPlaylist = {
       id: "pl_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4),
       name: name.trim(),
       description: description.trim(),
-      cover_url: coverUrl || (initialTracks[0]?.thumbnail || initialTracks[0]?.artwork_url || ""),
+      cover_url: resolvedCover,
+      preview_artwork: resolvedCover,
       tracks: initialTracks || [],
       track_count: (initialTracks || []).length,
       created_at: new Date().toISOString(),
@@ -727,7 +1005,15 @@ export async function addTrackToPlaylistRTDB(uid, playlistId, track) {
         duration_seconds: track.duration_seconds || 0,
         addedAt: new Date().toISOString(),
       });
-      list[idx] = { ...pl, tracks, cover_url: pl.cover_url || track.artwork_url || track.thumbnail || "" };
+      const firstTrackArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
+      const resolvedCover = pl.cover_url || pl.preview_artwork || firstTrackArtwork || "";
+      list[idx] = {
+        ...pl,
+        tracks,
+        track_count: tracks.length,
+        cover_url: resolvedCover,
+        preview_artwork: resolvedCover,
+      };
       await set(playlistsRef, list);
     }
     return true;
@@ -749,7 +1035,15 @@ export async function removeTrackFromPlaylistRTDB(uid, playlistId, videoId) {
 
     const pl = list[idx];
     const tracks = (pl.tracks || []).filter((t) => (t.videoId || t.video_id) !== videoId);
-    list[idx] = { ...pl, tracks };
+    const firstTrackArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
+    const resolvedCover = tracks.length > 0 ? (firstTrackArtwork || pl.cover_url || "") : "";
+    list[idx] = {
+      ...pl,
+      tracks,
+      track_count: tracks.length,
+      cover_url: resolvedCover,
+      preview_artwork: resolvedCover,
+    };
     await set(playlistsRef, list);
     return true;
   } catch (error) {
@@ -969,3 +1263,448 @@ export async function clearRecentSearches(uid) {
   } catch (_) {}
 }
 
+// ----------------------------------------------------
+// Realtime Database Friend System
+// ----------------------------------------------------
+
+/**
+ * Subscribe to user friends in RTDB
+ */
+export function subscribeFriends(uid, callback) {
+  if (!uid || !callback) return () => {};
+  const safeUid = uid || "guest";
+  const friendsRef = ref(db, `users/${safeUid}/friends`);
+  const listener = onValue(
+    friendsRef,
+    (snapshot) => {
+      const val = snapshot.val();
+      const list = val && typeof val === "object" ? Object.values(val) : [];
+      callback(list);
+    },
+    (error) => {
+      console.warn("RTDB friends subscription error:", error.message);
+    }
+  );
+  return () => off(friendsRef, "value", listener);
+}
+
+/**
+ * Subscribe to incoming and outgoing friend requests
+ */
+export function subscribeFriendRequests(uid, callback) {
+  if (!uid || !callback) return () => {};
+  const safeUid = uid || "guest";
+  const requestsRef = ref(db, `users/${safeUid}/friendRequests`);
+  const listener = onValue(
+    requestsRef,
+    (snapshot) => {
+      const val = snapshot.val() || {};
+      const incoming = val.incoming && typeof val.incoming === "object" ? Object.values(val.incoming) : [];
+      const outgoing = val.outgoing && typeof val.outgoing === "object" ? Object.values(val.outgoing) : [];
+      callback({ incoming, outgoing });
+    },
+    (error) => {
+      console.warn("RTDB friend requests subscription error:", error.message);
+    }
+  );
+  return () => off(requestsRef, "value", listener);
+}
+
+/**
+ * Send a friend request to another user
+ */
+export async function sendFriendRequestRTDB(senderUser, recipientUid, recipientUser) {
+  if (!senderUser?.uid || !recipientUid) return false;
+  if (senderUser.uid === recipientUid) return false;
+
+  try {
+    const senderData = {
+      uid: senderUser.uid,
+      username: senderUser.username || senderUser.displayName || "Staytup Listener",
+      avatar: senderUser.avatar || senderUser.photoURL || "initial",
+      avatarColor: senderUser.avatarColor || "#1DB954",
+      sentAt: Date.now(),
+    };
+
+    const recipientData = {
+      uid: recipientUid,
+      username: recipientUser?.username || "Staytup Friend",
+      avatar: recipientUser?.avatar || "initial",
+      avatarColor: recipientUser?.avatarColor || "#1DB954",
+      sentAt: Date.now(),
+    };
+
+    const incomingRef = ref(db, `users/${recipientUid}/friendRequests/incoming/${senderUser.uid}`);
+    const outgoingRef = ref(db, `users/${senderUser.uid}/friendRequests/outgoing/${recipientUid}`);
+
+    await Promise.all([
+      set(incomingRef, senderData),
+      set(outgoingRef, recipientData),
+    ]);
+    return true;
+  } catch (error) {
+    console.warn("Failed to send friend request:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Accept an incoming friend request
+ */
+export async function acceptFriendRequestRTDB(currentUser, requestUser) {
+  if (!currentUser?.uid || !requestUser?.uid) return false;
+  try {
+    const curUid = currentUser.uid;
+    const reqUid = requestUser.uid;
+
+    const myFriendData = {
+      uid: reqUid,
+      username: requestUser.username || "Friend",
+      avatar: requestUser.avatar || "initial",
+      avatarColor: requestUser.avatarColor || "#1DB954",
+      addedAt: Date.now(),
+    };
+
+    const theirFriendData = {
+      uid: curUid,
+      username: currentUser.username || currentUser.displayName || "Friend",
+      avatar: currentUser.avatar || currentUser.photoURL || "initial",
+      avatarColor: currentUser.avatarColor || "#1DB954",
+      addedAt: Date.now(),
+    };
+
+    await Promise.all([
+      set(ref(db, `users/${curUid}/friends/${reqUid}`), myFriendData),
+      set(ref(db, `users/${reqUid}/friends/${curUid}`), theirFriendData),
+      set(ref(db, `users/${curUid}/friendRequests/incoming/${reqUid}`), null),
+      set(ref(db, `users/${reqUid}/friendRequests/outgoing/${curUid}`), null),
+    ]);
+    return true;
+  } catch (error) {
+    console.warn("Failed to accept friend request:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Decline an incoming friend request
+ */
+export async function declineFriendRequestRTDB(currentUid, senderUid) {
+  if (!currentUid || !senderUid) return false;
+  try {
+    await Promise.all([
+      set(ref(db, `users/${currentUid}/friendRequests/incoming/${senderUid}`), null),
+      set(ref(db, `users/${senderUid}/friendRequests/outgoing/${currentUid}`), null),
+    ]);
+    return true;
+  } catch (error) {
+    console.warn("Failed to decline friend request:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Cancel an outgoing friend request
+ */
+export async function cancelFriendRequestRTDB(currentUid, recipientUid) {
+  if (!currentUid || !recipientUid) return false;
+  try {
+    await Promise.all([
+      set(ref(db, `users/${currentUid}/friendRequests/outgoing/${recipientUid}`), null),
+      set(ref(db, `users/${recipientUid}/friendRequests/incoming/${currentUid}`), null),
+    ]);
+    return true;
+  } catch (error) {
+    console.warn("Failed to cancel friend request:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Remove a friend from both sides
+ */
+export async function removeFriendRTDB(currentUid, friendUid) {
+  if (!currentUid || !friendUid) return false;
+  try {
+    await Promise.all([
+      set(ref(db, `users/${currentUid}/friends/${friendUid}`), null),
+      set(ref(db, `users/${friendUid}/friends/${currentUid}`), null),
+    ]);
+    return true;
+  } catch (error) {
+    console.warn("Failed to remove friend:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Search public users by username or friendCode
+ */
+export async function searchUsersRTDB(query, currentUid) {
+  const cleanQ = (query || "").trim().toLowerCase().replace(/^@/, "");
+  try {
+    const publicRef = ref(db, "publicUsers");
+    const snapshot = await get(publicRef);
+    let list = [];
+    if (snapshot.exists()) {
+      const val = snapshot.val();
+      list = Object.values(val || {}).filter((u) => u && u.uid && u.uid !== currentUid);
+    }
+    if (cleanQ) {
+      list = list.filter((u) =>
+        (u.username && u.username.toLowerCase().includes(cleanQ)) ||
+        (u.friendCode && u.friendCode.toLowerCase().includes(cleanQ)) ||
+        (u.uid && u.uid.toLowerCase() === cleanQ)
+      );
+    }
+    return list.slice(0, 20);
+  } catch (error) {
+    console.warn("Failed to search users in RTDB:", error.message);
+    return [];
+  }
+}
+
+/**
+ * Subscribe to a friend's live playback status
+ */
+export function subscribeFriendActivity(friendUid, callback) {
+  if (!friendUid || !callback) return () => {};
+
+  const playbackRef = ref(db, `users/${friendUid}/lastPlayback`);
+  const sessionRef = ref(db, `users/${friendUid}/playbackSession`);
+
+  let currentPlayback = null;
+  let currentSession = null;
+
+  const emit = () => {
+    const isPlaying = Boolean(currentSession?.isPlaying);
+    const sessionAge = currentSession?.updatedAt ? Date.now() - currentSession.updatedAt : Infinity;
+    const isLive = isPlaying && sessionAge < 1000 * 60 * 30; // Within 30 minutes
+    callback({
+      track: currentPlayback?.track || null,
+      isPlaying: isLive,
+      updatedAt: currentPlayback?.updatedAt || currentSession?.updatedAt || null,
+    });
+  };
+
+  const pbListener = onValue(playbackRef, (snap) => {
+    currentPlayback = snap.val();
+    emit();
+  });
+
+  const sessListener = onValue(sessionRef, (snap) => {
+    currentSession = snap.val();
+    emit();
+  });
+
+  return () => {
+    try {
+      off(playbackRef, "value", pbListener);
+      off(sessionRef, "value", sessListener);
+    } catch (_) {}
+  };
+}
+
+
+// ─── PULSE (Social Music Feed) ────────────────────────────────────────────────
+
+/**
+ * Create a new Pulse post
+ * post = { track: { videoId, title, artist, artwork_url }, caption, mood, uid, username, avatar, avatarColor }
+ */
+export async function createPulsePost(post) {
+  try {
+    const postId = `post_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 5)}`;
+    const postData = {
+      ...post,
+      postId,
+      timestamp: Date.now(),
+      likes: 0,
+      comments: 0,
+      reshares: 0,
+    };
+    await set(ref(db, `pulse/posts/${postId}`), postData);
+    await set(ref(db, `pulse/userPosts/${post.uid}/${postId}`), postData.timestamp);
+    return { success: true, postId, post: postData };
+  } catch (err) {
+    console.warn('createPulsePost error:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Subscribe to recent global Pulse posts (realtime)
+ */
+export function subscribePulseFeed(callback, limitCount = 30) {
+  const postsRef = ref(db, 'pulse/posts');
+  const listener = onValue(postsRef, (snap) => {
+    if (!snap.exists()) { callback([]); return; }
+    const data = snap.val();
+    const posts = Object.values(data)
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, limitCount);
+    callback(posts);
+  });
+  return () => { try { off(postsRef, 'value', listener); } catch (_) {} };
+}
+
+/**
+ * Toggle like on a post
+ */
+export async function togglePulseLike(postId, uid, currentLikes, isLiked) {
+  try {
+    const likeRef = ref(db, `pulse/likes/${postId}/${uid}`);
+    const postRef = ref(db, `pulse/posts/${postId}/likes`);
+    if (isLiked) {
+      await set(likeRef, null);
+      await set(postRef, Math.max(0, currentLikes - 1));
+    } else {
+      await set(likeRef, true);
+      await set(postRef, currentLikes + 1);
+    }
+    return true;
+  } catch (err) {
+    console.warn('togglePulseLike error:', err);
+    return false;
+  }
+}
+
+/**
+ * Toggle a specific reaction on a post (fire, love, funny, sad)
+ */
+export async function togglePulseReaction(postId, uid, reactionType, currentCounts = {}, userCurrentReaction = null) {
+  try {
+    const userReactionRef = ref(db, `pulse/reactions/${postId}/${uid}`);
+    const postReactionsRef = ref(db, `pulse/posts/${postId}/reactions`);
+
+    const updatedCounts = { ...currentCounts };
+
+    if (userCurrentReaction === reactionType) {
+      // User tapped the same reaction -> remove it
+      await set(userReactionRef, null);
+      updatedCounts[reactionType] = Math.max(0, (updatedCounts[reactionType] || 1) - 1);
+    } else {
+      // User tapped a different reaction (or first reaction)
+      if (userCurrentReaction && updatedCounts[userCurrentReaction]) {
+        updatedCounts[userCurrentReaction] = Math.max(0, updatedCounts[userCurrentReaction] - 1);
+      }
+      await set(userReactionRef, reactionType);
+      updatedCounts[reactionType] = (updatedCounts[reactionType] || 0) + 1;
+    }
+
+    // Also update total likes for backwards compatibility
+    const totalLikes = Object.values(updatedCounts).reduce((a, b) => a + (b || 0), 0);
+    await set(postReactionsRef, updatedCounts);
+    await set(ref(db, `pulse/posts/${postId}/likes`), totalLikes);
+
+    return true;
+  } catch (err) {
+    console.warn('togglePulseReaction error:', err);
+    return false;
+  }
+}
+
+/**
+ * Subscribe to user reactions for a post
+ */
+export function subscribePulseReactions(postId, callback) {
+  const reactionsRef = ref(db, `pulse/reactions/${postId}`);
+  const listener = onValue(reactionsRef, (snap) => {
+    callback(snap.exists() ? snap.val() : {});
+  });
+  return () => { try { off(reactionsRef, 'value', listener); } catch (_) {} };
+}
+
+/**
+ * Subscribe to all user reactions across all posts (realtime)
+ */
+export function subscribeAllPulseReactions(callback) {
+  const reactionsRef = ref(db, 'pulse/reactions');
+  const listener = onValue(reactionsRef, (snap) => {
+    callback(snap.exists() ? snap.val() : {});
+  });
+  return () => { try { off(reactionsRef, 'value', listener); } catch (_) {} };
+}
+
+/**
+ * Check if uid has liked a post
+ */
+export async function checkPulseLiked(postId, uid) {
+  try {
+    const snap = await get(ref(db, `pulse/likes/${postId}/${uid}`));
+    return snap.exists();
+  } catch (_) { return false; }
+}
+
+/**
+ * Subscribe to likes for a post to get liked user ids
+ */
+export function subscribePulseLikes(postId, callback) {
+  const likesRef = ref(db, `pulse/likes/${postId}`);
+  const listener = onValue(likesRef, (snap) => {
+    callback(snap.exists() ? snap.val() : {});
+  });
+  return () => { try { off(likesRef, 'value', listener); } catch (_) {} };
+}
+
+/**
+ * Add a comment to a post
+ */
+export async function addPulseComment(postId, comment) {
+  try {
+    const commentId = `c_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 4)}`;
+    await set(ref(db, `pulse/comments/${postId}/${commentId}`), {
+      ...comment,
+      commentId,
+      timestamp: Date.now(),
+    });
+    const snap = await get(ref(db, `pulse/posts/${postId}/comments`));
+    await set(ref(db, `pulse/posts/${postId}/comments`), (snap.val() || 0) + 1);
+    return true;
+  } catch (err) {
+    console.warn('addPulseComment error:', err);
+    return false;
+  }
+}
+
+/**
+ * Subscribe to comments for a post
+ */
+export function subscribePulseComments(postId, callback) {
+  const commentsRef = ref(db, `pulse/comments/${postId}`);
+  const listener = onValue(commentsRef, (snap) => {
+    if (!snap.exists()) { callback([]); return; }
+    const data = snap.val();
+    const comments = Object.values(data).sort((a, b) => a.timestamp - b.timestamp);
+    callback(comments);
+  });
+  return () => { try { off(commentsRef, 'value', listener); } catch (_) {} };
+}
+
+/**
+ * Reshare a post
+ */
+export async function resharePost(originalPost, resharer) {
+  try {
+    const postId = `post_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 5)}`;
+    const reshareData = {
+      ...originalPost,
+      postId,
+      isReshare: true,
+      resharedBy: resharer,
+      resharedFrom: { uid: originalPost.uid, username: originalPost.username },
+      timestamp: Date.now(),
+      likes: 0,
+      comments: 0,
+      reshares: 0,
+    };
+    await set(ref(db, `pulse/posts/${postId}`), reshareData);
+    await set(ref(db, `pulse/userPosts/${resharer.uid}/${postId}`), reshareData.timestamp);
+    const snap = await get(ref(db, `pulse/posts/${originalPost.postId}/reshares`));
+    await set(ref(db, `pulse/posts/${originalPost.postId}/reshares`), (snap.val() || 0) + 1);
+    return true;
+  } catch (err) {
+    console.warn('resharePost error:', err);
+    return false;
+  }
+}
