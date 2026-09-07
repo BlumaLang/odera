@@ -302,33 +302,60 @@ app.get(['/api/suggest', '/suggest', '/suggest/:userId'], async (req, res) => {
 });
 
 // ─── JioSaavn Direct Audio & Search Integration ──────────────────────────────
-const SAAVN_BASE_URL = 'https://saavn.sumit.co/api';
+const SAAVN_API_PROVIDERS = [
+  'https://saavn.sumit.co/api',
+  'https://api.jiosaavn.com',
+];
+let currentProviderIndex = 0;
+const saavnStreamCache = new Map(); // id -> { url, expiry }
+const SAAVN_STREAM_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
-async function fetchSaavnJson(endpoint, retries = 1, timeoutMs = 12000) {
-  const url = endpoint.startsWith('http') ? endpoint : `${SAAVN_BASE_URL}${endpoint}`;
-  try {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Staytup/2.0 (Windows NT 10.0; Win64; x64)',
-        'Accept': 'application/json'
-      },
-      signal: AbortSignal.timeout(timeoutMs)
-    });
-    if (!res.ok) {
-      if (retries > 0 && (res.status === 408 || res.status >= 500)) {
-        await new Promise(r => setTimeout(r, 1000));
-        return fetchSaavnJson(endpoint, retries - 1, timeoutMs);
+function getSaavnBaseUrl() {
+  return SAAVN_API_PROVIDERS[currentProviderIndex];
+}
+
+function rotateProvider() {
+  currentProviderIndex = (currentProviderIndex + 1) % SAAVN_API_PROVIDERS.length;
+  console.log(`Switched to Saavn provider: ${getSaavnBaseUrl()}`);
+}
+
+async function fetchSaavnJson(endpoint, retries = 2, timeoutMs = 10000) {
+  const lastError = new Error('All Saavn providers failed');
+  for (let providerAttempt = 0; providerAttempt < SAAVN_API_PROVIDERS.length; providerAttempt++) {
+    const baseUrl = getSaavnBaseUrl();
+    const url = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const res = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Accept': 'application/json'
+          },
+          signal: AbortSignal.timeout(timeoutMs)
+        });
+        if (res.status === 429 || res.status === 503) {
+          const delay = Math.min(1500 * Math.pow(2, attempt), 6000);
+          console.warn(`Saavn ${res.status} on ${baseUrl}, retry ${attempt + 1}/${retries} after ${delay}ms`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        if (!res.ok) {
+          throw new Error(`Saavn API HTTP ${res.status}`);
+        }
+        return await res.json();
+      } catch (err) {
+        lastError.message = err.message;
+        if (attempt < retries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
       }
-      throw new Error(`Saavn API HTTP ${res.status}`);
     }
-    return await res.json();
-  } catch (err) {
-    if (retries > 0) {
-      await new Promise(r => setTimeout(r, 1000));
-      return fetchSaavnJson(endpoint, retries - 1, timeoutMs);
-    }
-    throw err;
+    // All retries on this provider failed, rotate to next
+    rotateProvider();
   }
+  throw lastError;
 }
 
 function normalizeSaavnSong(song, streamUrl = null) {
@@ -425,11 +452,17 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
   }
 });
 
-// 2. Saavn Stream URL Resolution Route (Called on every play - never cached)
+// 2. Saavn Stream URL Resolution Route (with in-memory cache & YouTube fallback)
 app.get(['/api/stream/saavn/:id', '/stream/saavn/:id'], async (req, res) => {
   const rawId = req.params.id ? String(req.params.id).replace(/^saavn_/, '').trim() : '';
   if (!rawId) {
     return res.status(400).json({ error: 'Saavn song ID required' });
+  }
+
+  // Check cache first
+  const cached = saavnStreamCache.get(rawId);
+  if (cached && cached.expiry > Date.now()) {
+    return res.json(cached.data);
   }
 
   try {
@@ -457,14 +490,65 @@ app.get(['/api/stream/saavn/:id', '/stream/saavn/:id'], async (req, res) => {
     }
 
     const normalized = normalizeSaavnSong(song, streamUrl);
-    res.json({
+    const responseData = {
       ...normalized,
       stream_url: streamUrl,
       bitrate,
       contentType: 'audio/mp4'
-    });
+    };
+
+    // Cache the result
+    saavnStreamCache.set(rawId, { data: responseData, expiry: Date.now() + SAAVN_STREAM_CACHE_TTL });
+
+    // Prune old entries periodically
+    if (saavnStreamCache.size > 500) {
+      for (const [key, val] of saavnStreamCache) {
+        if (val.expiry <= Date.now()) saavnStreamCache.delete(key);
+      }
+    }
+
+    res.json(responseData);
   } catch (err) {
-    console.error(`Saavn stream resolution error for ${rawId}:`, err.message);
+    const isRateLimited = err.message?.includes('429');
+    console.error(`Saavn stream resolution error for ${rawId} (${isRateLimited ? 'RATE LIMITED' : err.message}):`);
+
+    // Fallback: try YouTube search using song metadata
+    if (isRateLimited) {
+      try {
+        const songTitle = song?.name || song?.title || rawId;
+        const songArtist = song?.artists?.primary?.[0]?.name || song?.primaryArtists || '';
+        const searchQuery = `${songArtist} ${songTitle} official audio`.trim();
+        console.log(`YouTube fallback search: "${searchQuery}"`);
+        const ytResults = await scrapeYouTubeSearch(searchQuery);
+        if (ytResults && ytResults.length > 0) {
+          const bestResult = ytResults[0];
+          const ytStream = await extractAudioStream(bestResult.videoId);
+          if (ytStream && ytStream.url) {
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+            const host = req.get('host') || `localhost:${PORT}`;
+            const artwork = song?.image?.find?.(img => img.quality === '500x500')?.url || bestResult.thumbnail || '';
+            const fallbackData = {
+              id: `saavn_${rawId}`,
+              videoId: rawId,
+              title: songTitle,
+              artist: songArtist,
+              artwork_url: artwork,
+              thumbnail: artwork,
+              stream_url: ytStream.url,
+              proxy_url: `${protocol}://${host}/stream/${bestResult.videoId}/audio`,
+              bitrate: '320kbps',
+              contentType: ytStream.contentType || 'audio/webm',
+              source: 'yt-dlp-fallback'
+            };
+            saavnStreamCache.set(rawId, { data: fallbackData, expiry: Date.now() + SAAVN_STREAM_CACHE_TTL });
+            return res.json(fallbackData);
+          }
+        }
+      } catch (ytErr) {
+        console.error(`YouTube fallback also failed for ${rawId}:`, ytErr.message);
+      }
+    }
+
     res.status(502).json({ error: 'Failed to resolve Saavn audio stream', details: err.message, id: rawId });
   }
 });
@@ -1440,8 +1524,181 @@ app.get(['/api/referral/stats/:code', '/referral/stats/:code'], (req, res) => {
 
 app.get('/artists/search', async (req, res) => {
   const q = req.query.q ? String(req.query.q).trim() : '';
-  const list = await scrapeYouTubeSearch(`${q} artist music`);
-  res.json({ results: list.slice(0, 10) });
+  const limit = Math.min(parseInt(req.query.limit) || 10, 20);
+  if (!q) return res.json({ results: [], artists: [] });
+
+  const list = await scrapeYouTubeSearch(`${q} artist official channel`);
+
+  const labelKeywords = [
+    'records', 'music', 'label', 'entertainment', 'studios', 'audio',
+    'official video', 'vevo', 'topic', 'tv', 'films', 'production',
+    'network', 'distribution', 'publishing', 'media', 'tunes',
+  ];
+
+  const cleaned = list
+    .filter((item) => {
+      const title = (item.title || '').toLowerCase();
+      const channel = (item.artist || '').toLowerCase();
+      const combined = title + ' ' + channel;
+
+      if (combined.includes('official video') || combined.includes('official audio')) return false;
+      if (combined.includes('lyrics') && !combined.includes('artist')) return false;
+      if (combined.includes('compilation') || combined.includes('mix')) return false;
+
+      const isLabel = labelKeywords.some((kw) => {
+        const regex = new RegExp(`\\b${kw}\\b`, 'i');
+        return regex.test(channel) && !regex.test(title);
+      });
+      if (isLabel) return false;
+
+      return true;
+    })
+    .map((item) => {
+      let artistName = item.artist || '';
+      artistName = artistName
+        .replace(/\s*-\s*Topic$/i, '')
+        .replace(/\s*-\s*Topic Music$/i, '')
+        .replace(/\s*VEVO$/i, '')
+        .trim();
+
+      if (!artistName) {
+        artistName = item.title
+          .replace(/\s*[-–]\s*(Official|Audio|Video|Lyric|Lyrics|HD|4K).*$/i, '')
+          .trim();
+      }
+
+      return {
+        name: artistName,
+        thumbnail: item.thumbnail || null,
+        videoId: item.videoId,
+      };
+    })
+    .filter((a) => a.name && a.name.length > 1 && a.name.length < 60);
+
+  const seen = new Set();
+  const unique = cleaned.filter((a) => {
+    const key = a.name.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  res.json({ results: unique.slice(0, limit), artists: unique.slice(0, limit) });
+});
+
+// ─── Similar Artists Endpoint ──────────────────────────────────────────────────
+const ARTIST_SIMILARITY_MAP = {
+  'Arijit Singh': ['Atif Aslam', 'Mohit Chauhan', 'Armaan Malik', 'Darshan Raval', 'Jubin Nautiyal', 'Tulsi Kumar'],
+  'Shreya Ghoshal': ['Sunidhi Chauhan', 'Neha Kakkar', 'Palak Muchhal', 'Jonita Gandhi', 'Asees Kaur'],
+  'Diljit Dosanjh': ['Karan Aujla', 'AP Dhillon', 'Ammy Virk', 'Shubh', 'Guru Randhawa', 'Badshah'],
+  'Karan Aujla': ['Diljit Dosanjh', 'AP Dhillon', 'Sidhu Moose Wala', 'Ammy Virk', 'Guru Randhawa'],
+  'AP Dhillon': ['Diljit Dosanjh', 'Karan Aujla', 'Shubh', 'Sidhu Moose Wala', 'Guru Randhawa'],
+  'Taylor Swift': ['Ed Sheeran', 'Billie Eilish', 'Olivia Rodrigo', 'Ariana Grande', 'Dua Lipa'],
+  'The Weeknd': ['Drake', 'Post Malone', 'Bruno Mars', 'The Kid LAROI', 'Doja Cat'],
+  'Drake': ['The Weeknd', 'Travis Scott', 'Post Malone', 'Kendrick Lamar', 'J. Cole'],
+  'Ed Sheeran': ['Taylor Swift', 'Shawn Mendes', 'Lewis Capaldi', 'Justin Bieber', 'Dean Lewis'],
+  'Billie Eilish': ['Taylor Swift', 'Olivia Rodrigo', 'Lana Del Rey', 'Dua Lipa', 'Ariana Grande'],
+  'Bad Bunny': ['J Balvin', 'Rauw Alejandro', 'Ozuna', 'Daddy Yankee', 'Karol G'],
+  'BTS': ['BLACKPINK', 'Stray Kids', 'NewJeans', 'EXO', 'TWICE'],
+  'BLACKPINK': ['BTS', 'NewJeans', 'TWICE', 'aespa', 'IVE'],
+  'Anirudh Ravichander': ['Devi Sri Prasad', 'Thaman S', 'Sid Sriram', 'Yuvan Shankar Raja', 'AR Rahman'],
+  'AR Rahman': ['Ilaiyaraaja', 'Anirudh Ravichander', 'Yuvan Shankar Raja', 'Devi Sri Prasad', 'Harris Jayaraj'],
+  'Pritam': ['Arijit Singh', 'Vishal-Shekhar', 'Salim-Sulaiman', 'Amit Trivedi', 'Shankar-Ehsaan-Loy'],
+  'Atif Aslam': ['Arijit Singh', 'Rahat Fateh Ali Khan', 'Mohit Chauhan', 'Armaan Malik', 'Jubin Nautiyal'],
+  'Anuv Jain': ['Prateek Kuhad', 'The Local Train', 'Jubin Nautiyal', 'Arijit Singh', 'Darshan Raval'],
+  'Sidhu Moose Wala': ['Karan Aujla', 'Diljit Dosanjh', 'AP Dhillon', 'Shubh', 'Ammy Virk'],
+  'Rahat Fateh Ali Khan': ['Atif Aslam', 'Arijit Singh', 'Mika Singh', 'Sonu Nigam', 'Shafqat Amanat Ali'],
+  'Neha Kakkar': ['Sunidhi Chauhan', 'Shreya Ghoshal', 'Tulsi Kumar', 'Badshah', 'Honey Singh'],
+  'Badshah': ['Diljit Dosanjh', 'Neha Kakkar', 'Yo Yo Honey Singh', 'Raftaar', 'DIVINE'],
+  'Yo Yo Honey Singh': ['Badshah', 'Raftaar', 'DIVINE', 'Badshah', 'Emiway Bantai'],
+  'Prateek Kuhad': ['Anuv Jain', 'The Local Train', 'Jubin Nautiyal', 'Arijit Singh', 'Darshan Raval'],
+  'Olivia Rodrigo': ['Taylor Swift', 'Billie Eilish', 'Doja Cat', 'Dua Lipa', 'Lana Del Rey'],
+  'Bruno Mars': ['The Weeknd', 'Post Malone', 'Ed Sheeran', 'Charlie Puth', 'Justin Timberlake'],
+  'Ariana Grande': ['Taylor Swift', 'Billie Eilish', 'Dua Lipa', 'Doja Cat', 'Selena Gomez'],
+  'Dua Lipa': ['Doja Cat', 'Ariana Grande', 'Billie Eilish', 'The Weeknd', 'Harry Styles'],
+  'Doja Cat': ['Dua Lipa', 'Megan Thee Stallion', 'Cardi B', 'SZA', 'Lizzo'],
+  'Post Malone': ['The Weeknd', 'Drake', 'Juice WRLD', 'Travis Scott', 'The Kid LAROI'],
+  'J Balvin': ['Bad Bunny', 'Rauw Alejandro', 'Ozuna', 'Nicky Jam', 'Maluma'],
+  'Sid Sriram': ['Anirudh Ravichander', 'Sid Sriram', 'Devi Sri Prasad', 'Thaman S', 'Yuvan Shankar Raja'],
+  'Darshan Raval': ['Armaan Malik', 'Jubin Nautiyal', 'Arijit Singh', 'Tony Kakkar', 'Stebin Ben'],
+  'Jubin Nautiyal': ['Arijit Singh', 'Darshan Raval', 'Armaan Malik', 'Atif Aslam', 'Tulsi Kumar'],
+  'Armaan Malik': ['Darshan Raval', 'Jubin Nautiyal', 'Arijit Singh', 'Salim Merchant', 'Shashwat Sachdev'],
+  'Hans Zimmer': ['John Williams', 'Howard Shore', 'Danny Elfman', 'Ennio Morricone', 'Ramin Djawadi'],
+  'Adele': ['Sam Smith', 'Lewis Capaldi', 'Dua Lipa', 'Ed Sheeran', 'Amy Winehouse'],
+  'Coldplay': ['Maroon 5', 'OneRepublic', 'The Script', 'Snow Patrol', 'Keane'],
+  'Imagine Dragons': ['OneRepublic', 'Maroon 5', 'The Script', 'X Ambassadors', 'AJR'],
+  'Eminem': ['Drake', 'Kendrick Lamar', 'J. Cole', 'Lil Wayne', 'NF'],
+  'Kendrick Lamar': ['J. Cole', 'Drake', 'Eminem', 'Travis Scott', 'Baby Keem'],
+  'Travis Scott': ['Drake', 'Kendrick Lamar', 'Future', 'Playboi Carti', 'Don Toliver'],
+  'Shawn Mendes': ['Ed Sheeran', 'Justin Bieber', 'Charlie Puth', 'Jon Bellion', 'Dean Lewis'],
+  'Justin Bieber': ['Ed Sheeran', 'Shawn Mendes', 'The Weeknd', 'Charlie Puth', 'Jon Bellion'],
+  'AR Rahman': ['Ilaiyaraaja', 'Anirudh Ravichander', 'Yuvan Shankar Raja', 'Devi Sri Prasad', 'Harris Jayaraj'],
+  'Harris Jayaraj': ['Anirudh Ravichander', 'Yuvan Shankar Raja', 'Devi Sri Prasad', 'AR Rahman', 'Thaman S'],
+  'Devi Sri Prasad': ['Anirudh Ravichander', 'Thaman S', 'Yuvan Shankar Raja', 'AR Rahman', 'Harris Jayaraj'],
+  'Thaman S': ['Anirudh Ravichander', 'Devi Sri Prasad', 'Yuvan Shankar Raja', 'DSP', 'Harris Jayaraj'],
+  'Yuvan Shankar Raja': ['Anirudh Ravichander', 'Devi Sri Prasad', 'AR Rahman', 'Harris Jayaraj', 'Ilaiyaraaja'],
+};
+
+app.get(['/artists/similar', '/api/artists/similar'], async (req, res) => {
+  const q = req.query.q ? String(req.query.q).trim() : '';
+  const limit = Math.min(parseInt(req.query.limit) || 6, 10);
+  if (!q) return res.json({ artists: [] });
+
+  const normalizedQuery = q.trim();
+  const mapped = ARTIST_SIMILARITY_MAP[normalizedQuery];
+
+  if (mapped && mapped.length > 0) {
+    const results = await Promise.all(
+      mapped.slice(0, limit).map(async (name) => {
+        try {
+          const searchResults = await scrapeYouTubeSearch(`${name} artist official channel`);
+          const item = searchResults[0];
+          return {
+            name,
+            thumbnail: item?.thumbnail || null,
+          };
+        } catch (_) {
+          return { name, thumbnail: null };
+        }
+      })
+    );
+    return res.json({ artists: results.filter(Boolean) });
+  }
+
+  const list = await scrapeYouTubeSearch(`${normalizedQuery} similar artists`);
+  const labelKeywords = [
+    'records', 'music', 'label', 'entertainment', 'studios', 'official video',
+    'vevo', 'topic', 'tv', 'films', 'production', 'lyrics',
+  ];
+
+  const filtered = list
+    .filter((item) => {
+      const channel = (item.artist || '').toLowerCase();
+      return !labelKeywords.some((kw) => channel.includes(kw));
+    })
+    .map((item) => {
+      let artistName = (item.artist || '')
+        .replace(/\s*-\s*Topic$/i, '')
+        .replace(/\s*VEVO$/i, '')
+        .trim();
+      if (!artistName) {
+        artistName = item.title
+          .replace(/\s*[-–]\s*(Official|Audio|Video|Lyric|Lyrics|HD|4K).*$/i, '')
+          .trim();
+      }
+      return { name: artistName, thumbnail: item.thumbnail || null };
+    })
+    .filter((a) => a.name && a.name.toLowerCase() !== normalizedQuery.toLowerCase());
+
+  const seen = new Set();
+  const unique = filtered.filter((a) => {
+    const key = a.name.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  res.json({ artists: unique.slice(0, limit) });
 });
 
 // ─── 10. Start Server ─────────────────────────────────────────────────────────
