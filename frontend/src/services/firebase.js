@@ -363,7 +363,22 @@ export function subscribePlaylists(uid, callback) {
   const listener = onValue(
     playlistsRef,
     (snapshot) => {
-      callback(snapshot.val() || []);
+      const val = snapshot.val();
+      let list = [];
+      if (Array.isArray(val)) {
+        list = val;
+      } else if (val && typeof val === "object") {
+        list = Object.values(val);
+      }
+      const normalized = list.map((p) => {
+        const tracks = Array.isArray(p.tracks) ? p.tracks : [];
+        return {
+          ...p,
+          tracks,
+          track_count: tracks.length || p.track_count || 0,
+        };
+      });
+      callback(normalized);
     },
     (error) => {
       console.warn("RTDB playlists subscription error:", error.message);
@@ -608,6 +623,9 @@ export async function addRecentlyPlayed(uid, track) {
   } catch (error) {
     console.warn("Failed to save recently played track to RTDB:", error.message);
   }
+
+  // Also record user stream count
+  recordUserStream(safeUid).catch(() => {});
 }
 
 export async function getRecentlyPlayed(uid) {
@@ -704,6 +722,137 @@ export async function removeRecentlyPlayed(uid, videoId) {
   } catch (error) {
     console.warn("Failed to remove recently played track:", error.message);
   }
+}
+
+// ----------------------------------------------------
+// User Streams & Play Statistics
+// ----------------------------------------------------
+
+const localStreamCounts = new Map();
+const localStreamListeners = new Set();
+
+function getLocalStreamCount(uid) {
+  const safeUid = uid || "guest";
+  if (localStreamCounts.has(safeUid)) {
+    return localStreamCounts.get(safeUid);
+  }
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      const raw = window.localStorage.getItem(`@staytup_stream_count_${safeUid}`);
+      if (raw) {
+        const parsed = parseInt(raw, 10);
+        if (!isNaN(parsed)) {
+          localStreamCounts.set(safeUid, parsed);
+          return parsed;
+        }
+      }
+    } catch (_) {}
+  }
+  return 0;
+}
+
+function setLocalStreamCount(uid, count) {
+  const safeUid = uid || "guest";
+  const num = Math.max(0, parseInt(count, 10) || 0);
+  localStreamCounts.set(safeUid, num);
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      window.localStorage.setItem(`@staytup_stream_count_${safeUid}`, String(num));
+    } catch (_) {}
+  }
+  localStreamListeners.forEach((fn) => {
+    try {
+      fn(num, safeUid);
+    } catch (_) {}
+  });
+}
+
+/**
+ * Record a user stream / playback increment
+ */
+export async function recordUserStream(uid) {
+  const safeUid = uid || "guest";
+  const currentLocal = getLocalStreamCount(safeUid);
+  const updatedLocal = currentLocal + 1;
+  setLocalStreamCount(safeUid, updatedLocal);
+
+  try {
+    const streamRef = ref(db, `users/${safeUid}/streamCount`);
+    const snapshot = await get(streamRef);
+    const existing = snapshot.exists() && typeof snapshot.val() === "number" ? snapshot.val() : 0;
+    const nextCount = Math.max(existing + 1, updatedLocal);
+    await set(streamRef, nextCount);
+    setLocalStreamCount(safeUid, nextCount);
+  } catch (err) {
+    console.warn("Failed to record user stream in RTDB:", err.message);
+  }
+}
+
+/**
+ * Get current user stream count
+ */
+export async function getUserStreamCount(uid) {
+  const safeUid = uid || "guest";
+  const local = getLocalStreamCount(safeUid);
+  try {
+    const streamRef = ref(db, `users/${safeUid}/streamCount`);
+    const snapshot = await get(streamRef);
+    if (snapshot.exists()) {
+      const val = parseInt(snapshot.val(), 10);
+      if (!isNaN(val)) {
+        setLocalStreamCount(safeUid, Math.max(val, local));
+        return Math.max(val, local);
+      }
+    }
+  } catch (_) {}
+  return local;
+}
+
+/**
+ * Subscribe to real-time user stream count
+ */
+export function subscribeUserStreamCount(uid, callback) {
+  const safeUid = uid || "guest";
+  if (!callback) return () => {};
+
+  // Immediate local callback
+  const local = getLocalStreamCount(safeUid);
+  if (local > 0) {
+    callback(local);
+  }
+
+  const localListener = (count, listenerUid) => {
+    if (listenerUid === safeUid) {
+      callback(count);
+    }
+  };
+  localStreamListeners.add(localListener);
+
+  const streamRef = ref(db, `users/${safeUid}/streamCount`);
+  const listener = onValue(
+    streamRef,
+    (snapshot) => {
+      if (snapshot.exists()) {
+        const val = parseInt(snapshot.val(), 10);
+        if (!isNaN(val)) {
+          setLocalStreamCount(safeUid, val);
+          callback(val);
+          return;
+        }
+      }
+      callback(getLocalStreamCount(safeUid));
+    },
+    (error) => {
+      console.warn("RTDB stream count subscription error:", error.message);
+    }
+  );
+
+  return () => {
+    localStreamListeners.delete(localListener);
+    try {
+      off(streamRef, "value", listener);
+    } catch (_) {}
+  };
 }
 
 // ----------------------------------------------------
@@ -836,7 +985,12 @@ export async function addTrackToPlaylistRTDB(uid, playlistId, track) {
         duration_seconds: track.duration_seconds || 0,
         addedAt: new Date().toISOString(),
       });
-      list[idx] = { ...pl, tracks, cover_url: pl.cover_url || track.artwork_url || track.thumbnail || "" };
+      list[idx] = {
+        ...pl,
+        tracks,
+        track_count: tracks.length,
+        cover_url: pl.cover_url || track.artwork_url || track.thumbnail || "",
+      };
       await set(playlistsRef, list);
     }
     return true;
@@ -858,7 +1012,11 @@ export async function removeTrackFromPlaylistRTDB(uid, playlistId, videoId) {
 
     const pl = list[idx];
     const tracks = (pl.tracks || []).filter((t) => (t.videoId || t.video_id) !== videoId);
-    list[idx] = { ...pl, tracks };
+    list[idx] = {
+      ...pl,
+      tracks,
+      track_count: tracks.length,
+    };
     await set(playlistsRef, list);
     return true;
   } catch (error) {

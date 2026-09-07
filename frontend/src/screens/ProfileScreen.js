@@ -100,6 +100,9 @@ export default function ProfileScreen({ visible, onClose }) {
     activatePremium,
     cancelPremium,
     logoutUser,
+    likedSongs,
+    recentlyPlayed,
+    streamCount,
   } = useUser();
   const { playTrack, currentTrack } = useAudio();
 
@@ -241,10 +244,10 @@ export default function ProfileScreen({ visible, onClose }) {
     if (historyData?.stats?.total_time_minutes) {
       return (historyData.stats.total_time_minutes / 60).toFixed(1);
     }
-    const raw = historyData?.recent || [];
+    const raw = (recentlyPlayed && recentlyPlayed.length > 0) ? recentlyPlayed : (historyData?.recent || []);
     const sec = raw.reduce((sum, item) => sum + (Number(item.duration_seconds) || 180), 0);
     return (sec / 3600).toFixed(1);
-  }, [historyData]);
+  }, [historyData, recentlyPlayed]);
 
   if (!visible) return null;
 
@@ -253,6 +256,16 @@ export default function ProfileScreen({ visible, onClose }) {
     unique_artists: 0,
     unique_tracks: 0,
   };
+
+  const totalStreams = Math.max(
+    Number(streamCount) || 0,
+    Number(stats.total_plays) || 0,
+    (recentlyPlayed || []).length
+  );
+
+  const totalLikedSongs = (Array.isArray(likedSongs) && likedSongs.length > 0)
+    ? likedSongs.length
+    : (favoritesCount || 0);
 
   const handleOpenLink = (url) => {
     if (!url) return;
@@ -419,11 +432,11 @@ export default function ProfileScreen({ visible, onClose }) {
             {/* Clean Stream Metrics */}
             <View style={styles.metricsRow}>
               <Text style={styles.metricsText}>
-                <Text style={styles.metricsBold}>{stats.total_plays || 0}</Text> Streams
+                <Text style={styles.metricsBold}>{totalStreams}</Text> Streams
               </Text>
               <Text style={styles.metricsDot}>•</Text>
               <Text style={styles.metricsText}>
-                <Text style={styles.metricsBold}>{favoritesCount}</Text> Liked Songs
+                <Text style={styles.metricsBold}>{totalLikedSongs}</Text> Liked Songs
               </Text>
             </View>
           </View>

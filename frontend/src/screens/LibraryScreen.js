@@ -31,10 +31,12 @@ export default function LibraryScreen() {
   const navigation = useNavigation();
   const { isDesktop, isTablet, isPhone } = useResponsive();
   const {
+    currentUser,
     userProfile,
     openProfile,
     likedSongs,
     playlists: rtdbPlaylists,
+    setPlaylists,
     recentlyPlayed: rtdbRecentlyPlayed,
     createPlaylist,
     deletePlaylist,
@@ -48,8 +50,6 @@ export default function LibraryScreen() {
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
   const [localRecentlyPlayed, setLocalRecentlyPlayed] = useState([]);
-
-  const { currentUser } = useUser();
 
   // Subscribe to real-time listening history from Firebase Realtime Database
   useEffect(() => {
@@ -335,7 +335,7 @@ export default function LibraryScreen() {
                   {item.name}
                 </Text>
                 <Text style={styles.playlistRowCount}>
-                  {item.track_count || 0} {item.track_count === 1 ? "track" : "tracks"}
+                  {Array.isArray(item.tracks) ? item.tracks.length : (item.track_count || 0)} {(Array.isArray(item.tracks) ? item.tracks.length : (item.track_count || 0)) === 1 ? "track" : "tracks"}
                   {item.description ? ` • ${item.description}` : ""}
                 </Text>
               </View>
@@ -507,7 +507,7 @@ export default function LibraryScreen() {
         visible={!!addToPlaylistTrack}
         onClose={() => setAddToPlaylistTrack(null)}
         track={addToPlaylistTrack}
-        onSuccess={() => loadLibrary()}
+        onSuccess={() => {}}
       />
 
       {/* Artist Profile & Discography Modal */}
@@ -523,22 +523,18 @@ export default function LibraryScreen() {
         playlist={selectedPlaylist}
         onClose={() => setSelectedPlaylist(null)}
         onDeletePlaylist={(playlistId) => {
-          setPlaylists((prev) => prev.filter((p) => p.id !== playlistId));
-          setSelectedPlaylist(null);
+          handleDeletePlaylist(playlistId);
         }}
         onTrackRemoved={(playlistId, videoId) => {
-          setPlaylists((prev) =>
-            prev.map((p) =>
-              p.id === playlistId
-                ? { ...p, track_count: Math.max(0, (p.track_count || 1) - 1) }
-                : p
-            )
-          );
+          handleRemoveTrack(playlistId, videoId);
         }}
         onPlaylistUpdated={(updated) => {
-          setPlaylists((prev) =>
-            prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p))
-          );
+          if (setPlaylists && updated?.id) {
+            setPlaylists((prev) =>
+              (prev || []).map((p) => (p.id === updated.id ? { ...p, ...updated } : p))
+            );
+          }
+          setSelectedPlaylist((prev) => (prev && prev.id === updated?.id ? { ...prev, ...updated } : prev));
         }}
       />
     </View>

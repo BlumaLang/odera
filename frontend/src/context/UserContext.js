@@ -19,6 +19,8 @@ import {
   addTrackToPlaylistRTDB,
   removeTrackFromPlaylistRTDB,
   subscribeRecentlyPlayed,
+  subscribeUserStreamCount,
+  recordUserStream,
   loginOrCreatePinUser,
   getLocalSession,
   saveLocalSession,
@@ -57,6 +59,7 @@ export const UserProvider = ({ children }) => {
   const [likedSongs, setLikedSongs] = useState([]);
   const [playlists, setPlaylists] = useState([]);
   const [recentlyPlayed, setRecentlyPlayed] = useState([]);
+  const [streamCount, setStreamCount] = useState(0);
   const [isLoadingUser, setIsLoadingUser] = useState(true);
   const [isPremium, setIsPremium] = useState(false);
   const [premiumPlan, setPremiumPlan] = useState("Free");
@@ -68,6 +71,7 @@ export const UserProvider = ({ children }) => {
     let unsubscribeLiked = null;
     let unsubscribePls = null;
     let unsubscribeRecents = null;
+    let unsubscribeStreams = null;
 
     // Safety timeout: Ensure app never stays stuck on loading screen on startup
     const safetyTimer = setTimeout(() => {
@@ -92,6 +96,10 @@ export const UserProvider = ({ children }) => {
       if (unsubscribeRecents) {
         unsubscribeRecents();
         unsubscribeRecents = null;
+      }
+      if (unsubscribeStreams) {
+        unsubscribeStreams();
+        unsubscribeStreams = null;
       }
 
       if (firebaseUser) {
@@ -185,7 +193,7 @@ export const UserProvider = ({ children }) => {
           }
         });
 
-        // Realtime sync for Liked Songs, Playlists, and Recently Played
+        // Realtime sync for Liked Songs, Playlists, Recently Played and Streams
         unsubscribeLiked = subscribeLikedSongs(firebaseUser.uid, (songs) => {
           setLikedSongs(songs || []);
         });
@@ -196,6 +204,10 @@ export const UserProvider = ({ children }) => {
 
         unsubscribeRecents = subscribeRecentlyPlayed(firebaseUser.uid, (recents) => {
           setRecentlyPlayed(recents || []);
+        });
+
+        unsubscribeStreams = subscribeUserStreamCount(firebaseUser.uid, (count) => {
+          setStreamCount(count || 0);
         });
       } else {
         // Check for active local PIN or QR session before clearing state
@@ -219,6 +231,19 @@ export const UserProvider = ({ children }) => {
             ...prev,
             username: restoredUser.displayName,
           }));
+
+          unsubscribeLiked = subscribeLikedSongs(restoredUser.uid, (songs) => {
+            setLikedSongs(songs || []);
+          });
+          unsubscribePls = subscribePlaylists(restoredUser.uid, (pls) => {
+            setPlaylists(pls || []);
+          });
+          unsubscribeRecents = subscribeRecentlyPlayed(restoredUser.uid, (recents) => {
+            setRecentlyPlayed(recents || []);
+          });
+          unsubscribeStreams = subscribeUserStreamCount(restoredUser.uid, (count) => {
+            setStreamCount(count || 0);
+          });
           return;
         }
 
@@ -232,6 +257,7 @@ export const UserProvider = ({ children }) => {
         setLikedSongs([]);
         setPlaylists([]);
         setRecentlyPlayed([]);
+        setStreamCount(0);
         setIsLoadingUser(false);
       }
     });
@@ -243,6 +269,7 @@ export const UserProvider = ({ children }) => {
       if (unsubscribeLiked) unsubscribeLiked();
       if (unsubscribePls) unsubscribePls();
       if (unsubscribeRecents) unsubscribeRecents();
+      if (unsubscribeStreams) unsubscribeStreams();
     };
   }, []);
 
@@ -518,25 +545,68 @@ export const UserProvider = ({ children }) => {
     return await fbToggleLikedSong(uid, track);
   };
 
-  // Playlists helpers
+  // Playlists helpers with immediate optimistic state update & RTDB sync
   const createPlaylist = async (name, description = "", initialTracks = [], coverUrl = "") => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
-    return await createPlaylistRTDB(uid, name, description, initialTracks, coverUrl);
+    const res = await createPlaylistRTDB(uid, name, description, initialTracks, coverUrl);
+    if (res) {
+      setPlaylists((prev) => [res, ...(prev || [])]);
+    }
+    return res;
   };
 
   const deletePlaylist = async (playlistId) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
+    setPlaylists((prev) => (prev || []).filter((p) => p.id !== playlistId));
     return await deletePlaylistRTDB(uid, playlistId);
   };
 
   const addTrackToPlaylist = async (playlistId, track) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
-    return await addTrackToPlaylistRTDB(uid, playlistId, track);
+    const ok = await addTrackToPlaylistRTDB(uid, playlistId, track);
+    if (ok) {
+      setPlaylists((prev) =>
+        (prev || []).map((p) => {
+          if (p.id !== playlistId) return p;
+          const curTracks = Array.isArray(p.tracks) ? [...p.tracks] : [];
+          const vid = track.videoId || track.video_id;
+          if (!curTracks.some((t) => (t.videoId || t.video_id) === vid)) {
+            curTracks.push({
+              ...track,
+              videoId: vid,
+              video_id: vid,
+              addedAt: new Date().toISOString(),
+            });
+          }
+          return {
+            ...p,
+            tracks: curTracks,
+            track_count: curTracks.length,
+            cover_url: p.cover_url || track.artwork_url || track.thumbnail || "",
+          };
+        })
+      );
+    }
+    return ok;
   };
 
   const removeTrackFromPlaylist = async (playlistId, videoId) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
-    return await removeTrackFromPlaylistRTDB(uid, playlistId, videoId);
+    const ok = await removeTrackFromPlaylistRTDB(uid, playlistId, videoId);
+    setPlaylists((prev) =>
+      (prev || []).map((p) => {
+        if (p.id !== playlistId) return p;
+        const curTracks = (p.tracks || []).filter(
+          (t) => (t.videoId || t.video_id) !== videoId
+        );
+        return {
+          ...p,
+          tracks: curTracks,
+          track_count: curTracks.length,
+        };
+      })
+    );
+    return ok;
   };
 
   return (
@@ -564,16 +634,19 @@ export const UserProvider = ({ children }) => {
         closeProfile,
         updateProfile,
         updateUsername,
-        // RTDB Liked Songs, Playlists & Recently Played
+        // RTDB Liked Songs, Playlists, Streams & Recently Played
         likedSongs,
         isSongLiked,
         toggleLikeSong,
         playlists,
+        setPlaylists,
         createPlaylist,
         deletePlaylist,
         addTrackToPlaylist,
         removeTrackFromPlaylist,
         recentlyPlayed,
+        streamCount,
+        recordUserStream,
       }}
     >
       {children}
@@ -587,6 +660,12 @@ const defaultUserContext = {
   isOnboardingCompleted: true,
   isLoadingUser: false,
   favorites: [],
+  likedSongs: [],
+  playlists: [],
+  setPlaylists: () => {},
+  recentlyPlayed: [],
+  streamCount: 0,
+  recordUserStream: () => {},
   isFavoriteArtist: () => false,
   toggleFavoriteArtist: () => {},
   isProfileOpen: false,

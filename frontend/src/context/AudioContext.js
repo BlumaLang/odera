@@ -12,6 +12,7 @@ import {
   subscribePlaybackSession,
   addRecentlyPlayed,
   recordAppSongPlay,
+  recordUserStream,
 } from "../services/firebase";
 
 let LockScreenControls = null;
@@ -638,6 +639,7 @@ const AudioProvider = ({ children }) => {
       saveLastPlayback(uid, sanitizedTrack, newQueue || queueRef.current);
       addRecentlyPlayed(uid, sanitizedTrack);
       recordAppSongPlay(sanitizedTrack);
+      recordUserStream(uid);
       updatePlaybackSession(uid, {
         deviceId: myDeviceId,
         trackId: sanitizedTrack.videoId,
