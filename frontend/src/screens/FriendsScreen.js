@@ -47,10 +47,8 @@ export default function FriendsScreen({ onNavigate }) {
   const [activeTab, setActiveTab] = useState("friends"); // "friends" | "requests" | "discover" | "listening"
   const [friendsFilter, setFriendsFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [codeInputValue, setCodeInputValue] = useState("");
-  const [codeStatusMsg, setCodeStatusMsg] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [sendFeedback, setSendFeedback] = useState({ text: "", isError: false });
   const [copiedCode, setCopiedCode] = useState(false);
 
   // Live activities mapped by friend UID: { [uid]: { track, isPlaying, updatedAt } }
@@ -90,32 +88,14 @@ export default function FriendsScreen({ onNavigate }) {
     };
   }, [friendsList]);
 
-  // Debounced user search in Discover tab
+  // Auto-clear send feedback message
   useEffect(() => {
-    if (activeTab !== "discover") return;
-    const q = searchQuery.trim();
-    if (!q) {
-      setSearchResults([]);
-      setIsSearching(false);
-      return;
-    }
-
-    setIsSearching(true);
-    const timer = setTimeout(async () => {
-      try {
-        if (searchUsers) {
-          const results = await searchUsers(q);
-          setSearchResults(results || []);
-        }
-      } catch (err) {
-        console.warn("User search failed:", err);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 350);
-
+    if (!sendFeedback.text) return;
+    const timer = setTimeout(() => {
+      setSendFeedback({ text: "", isError: false });
+    }, 4500);
     return () => clearTimeout(timer);
-  }, [searchQuery, activeTab, searchUsers]);
+  }, [sendFeedback]);
 
   // Filtered friends list
   const filteredFriends = useMemo(() => {
@@ -144,38 +124,68 @@ export default function FriendsScreen({ onNavigate }) {
     setTimeout(() => setCopiedCode(false), 2200);
   };
 
-  const handleSendByCode = async () => {
-    const raw = codeInputValue.trim().toUpperCase();
+  const handleSendFriend = async () => {
+    const raw = searchQuery.trim();
     if (!raw) return;
 
-    if (raw === myFriendCode) {
-      setCodeStatusMsg("You cannot add yourself as a friend.");
+    const normalized = raw.toUpperCase();
+    if (
+      normalized === myFriendCode ||
+      raw.toLowerCase() === (userProfile?.username || "").toLowerCase()
+    ) {
+      setSendFeedback({ text: "You cannot add yourself as a friend.", isError: true });
       return;
     }
 
-    setCodeStatusMsg("Sending request...");
+    // Check if already friends
+    const alreadyFriend = friendsList.find(
+      (f) =>
+        (f.username || "").toLowerCase() === raw.toLowerCase() ||
+        (f.friendCode || "").toUpperCase() === normalized
+    );
+    if (alreadyFriend) {
+      setSendFeedback({ text: `You are already friends with ${alreadyFriend.username}!`, isError: true });
+      return;
+    }
+
+    // Check if outgoing request already exists
+    const alreadySent = outgoingRequests.find(
+      (r) =>
+        (r.username || "").toLowerCase() === raw.toLowerCase() ||
+        (r.friendCode || "").toUpperCase() === normalized
+    );
+    if (alreadySent) {
+      setSendFeedback({ text: `Friend request already pending for ${alreadySent.username}.`, isError: true });
+      return;
+    }
+
+    setIsSending(true);
+    setSendFeedback({ text: "Sending friend request...", isError: false });
+
     try {
       const results = searchUsers ? await searchUsers(raw) : [];
       const match = results?.find(
-        (u) => (u.friendCode || "").toUpperCase() === raw || (u.username || "").toUpperCase() === raw
-      );
+        (u) =>
+          (u.friendCode || "").toUpperCase() === normalized ||
+          (u.username || "").toLowerCase() === raw.toLowerCase()
+      ) || (results && results.length === 1 ? results[0] : null);
 
       if (match) {
         const ok = await sendFriendRequest(match.uid, match);
         if (ok) {
-          setCodeStatusMsg(`Friend request sent to ${match.username}!`);
-          setCodeInputValue("");
+          setSendFeedback({ text: `Friend request sent to ${match.username}!`, isError: false });
+          setSearchQuery("");
         } else {
-          setCodeStatusMsg("Could not send request. Please try again.");
+          setSendFeedback({ text: "Could not send friend request. Please try again.", isError: true });
         }
       } else {
-        setCodeStatusMsg(`No user found with code "${raw}".`);
+        setSendFeedback({ text: `No user found with username or code "${raw}".`, isError: true });
       }
     } catch (err) {
-      setCodeStatusMsg("Failed to send request.");
+      setSendFeedback({ text: "Failed to send friend request.", isError: true });
+    } finally {
+      setIsSending(false);
     }
-
-    setTimeout(() => setCodeStatusMsg(""), 4000);
   };
 
   const handleAcceptRequest = async (reqUser) => {
@@ -450,7 +460,7 @@ export default function FriendsScreen({ onNavigate }) {
                   <Text style={styles.emptySub}>
                     Connect with your friends to see what they are listening to in real time and listen along together!
                   </Text>
-                  <View style={styles.emptyButtonsRow}>
+                  <View style={[styles.emptyButtonsRow, { marginTop: 28 }]}>
                     <TouchableOpacity
                       style={styles.primaryActionBtn}
                       onPress={() => setActiveTab("discover")}
@@ -647,104 +657,80 @@ export default function FriendsScreen({ onNavigate }) {
                 </Text>
               </View>
 
-              {/* Add by Friend Code Box */}
-              <View style={styles.quickAddSection}>
-                <Text style={styles.sectionHeaderTitle}>Add by Code or Username</Text>
-                <View style={styles.quickAddRow}>
-                  <TextInput
-                    style={styles.quickAddInput}
-                    placeholder="Enter friend's code or username..."
-                    placeholderTextColor={colors.textMuted}
-                    value={codeInputValue}
-                    onChangeText={setCodeInputValue}
-                    autoCapitalize="characters"
-                  />
-                  <TouchableOpacity
-                    style={styles.quickAddBtn}
-                    onPress={handleSendByCode}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.quickAddBtnText}>Send Request</Text>
-                  </TouchableOpacity>
-                </View>
-                {codeStatusMsg.length > 0 && (
-                  <Text style={styles.codeStatusMsgText}>{codeStatusMsg}</Text>
-                )}
-              </View>
+              {/* Simple Search & Send Box */}
+              <View style={styles.simpleAddSection}>
+                <Text style={styles.sectionHeaderTitle}>Add Friend</Text>
+                <Text style={styles.sectionSubDesc}>
+                  Enter a username or friend code to send a request
+                </Text>
 
-              {/* Search Users Input */}
-              <View style={[styles.quickAddSection, { marginTop: 28 }]}>
-                <Text style={styles.sectionHeaderTitle}>Search Music Community</Text>
-                <View style={styles.searchBarWrap}>
-                  <Ionicons name="search" size={16} color={colors.textMuted} style={styles.searchIcon} />
+                <View style={styles.simpleSearchRow}>
+                  <Ionicons name="search" size={17} color={colors.textMuted} style={{ marginLeft: 12, marginRight: 8 }} />
                   <TextInput
-                    style={styles.searchInput}
-                    placeholder="Search users by name or taste..."
+                    style={styles.simpleSearchInput}
+                    placeholder="Search username or friend code..."
                     placeholderTextColor={colors.textMuted}
                     value={searchQuery}
                     onChangeText={setSearchQuery}
+                    autoCapitalize="none"
+                    onSubmitEditing={handleSendFriend}
+                    returnKeyType="send"
                   />
-                  {isSearching && (
-                    <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 8 }} />
-                  )}
                   {searchQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => setSearchQuery("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSearchQuery("");
+                        setSendFeedback({ text: "", isError: false });
+                      }}
+                      style={{ padding: 6 }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
                       <Ionicons name="close-circle" size={16} color={colors.textMuted} />
                     </TouchableOpacity>
                   )}
+                  <TouchableOpacity
+                    style={[
+                      styles.sendActionBtn,
+                      (!searchQuery.trim() || isSending) && styles.sendActionBtnDisabled,
+                    ]}
+                    onPress={handleSendFriend}
+                    disabled={!searchQuery.trim() || isSending}
+                    activeOpacity={0.8}
+                  >
+                    {isSending ? (
+                      <ActivityIndicator size="small" color="#000000" />
+                    ) : (
+                      <>
+                        <Ionicons name="send" size={13} color="#000000" style={{ marginRight: 5 }} />
+                        <Text style={styles.sendActionBtnText}>Send</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
                 </View>
 
-                {/* Search Results */}
-                {searchResults.length > 0 ? (
-                  <View style={styles.requestsList}>
-                    {searchResults.map((user) => {
-                      const isAlreadyFriend = friendsList.some((f) => f.uid === user.uid);
-                      const isPending = outgoingRequests.some((r) => r.uid === user.uid);
-
-                      return (
-                        <View key={user.uid} style={styles.requestCard}>
-                          <View
-                            style={[
-                              styles.friendAvatar,
-                              { backgroundColor: user.avatarColor || colors.primary },
-                            ]}
-                          >
-                            <Text style={styles.friendAvatarInitial}>
-                              {(user.username?.[0] || "U").toUpperCase()}
-                            </Text>
-                          </View>
-                          <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.friendName} numberOfLines={1}>
-                              {user.username}
-                            </Text>
-                            <Text style={styles.requestTimeText}>Code: {user.friendCode || user.uid.substring(0, 8)}</Text>
-                          </View>
-                          {isAlreadyFriend ? (
-                            <View style={styles.alreadyFriendBadge}>
-                              <Ionicons name="checkmark" size={14} color="#1DB954" style={{ marginRight: 4 }} />
-                              <Text style={styles.alreadyFriendText}>Friends</Text>
-                            </View>
-                          ) : isPending ? (
-                            <View style={styles.pendingPill}>
-                              <Text style={styles.pendingPillText}>Requested</Text>
-                            </View>
-                          ) : (
-                            <TouchableOpacity
-                              style={styles.addFriendActionBtn}
-                              onPress={async () => {
-                                await sendFriendRequest(user.uid, user);
-                              }}
-                              activeOpacity={0.8}
-                            >
-                              <Ionicons name="person-add" size={14} color="#000000" style={{ marginRight: 4 }} />
-                              <Text style={styles.addFriendActionText}>Add</Text>
-                            </TouchableOpacity>
-                          )}
-                        </View>
-                      );
-                    })}
+                {sendFeedback.text.length > 0 && (
+                  <View
+                    style={[
+                      styles.statusMsgWrap,
+                      sendFeedback.isError ? styles.statusMsgError : styles.statusMsgSuccess,
+                    ]}
+                  >
+                    <Ionicons
+                      name={sendFeedback.isError ? "alert-circle" : "checkmark-circle"}
+                      size={15}
+                      color={sendFeedback.isError ? "#FF5252" : "#1DB954"}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[
+                        styles.statusMsgText,
+                        sendFeedback.isError ? { color: "#FF5252" } : { color: "#1DB954" },
+                      ]}
+                    >
+                      {sendFeedback.text}
+                    </Text>
                   </View>
-                ) : null}
+                )}
               </View>
 
 
@@ -771,17 +757,24 @@ export default function FriendsScreen({ onNavigate }) {
 
                     return (
                       <View key={friend.uid} style={styles.liveCard}>
-                        <Image
-                          source={{ uri: track.artwork_url || track.thumbnail }}
-                          style={styles.liveCardThumb}
-                          resizeMode="cover"
-                        />
-                        <View style={styles.liveCardBody}>
-                          {/* Live Indicator Bar */}
-                          <View style={styles.liveTagRow}>
+                        <View style={styles.liveThumbWrap}>
+                          <Image
+                            source={{ uri: track.artwork_url || track.thumbnail }}
+                            style={styles.liveThumbImg}
+                            resizeMode="cover"
+                          />
+                          <View style={styles.liveBadgeOverlay}>
+                            <Ionicons name="volume-high" size={11} color="#FFFFFF" />
+                          </View>
+                        </View>
+
+                        <View style={styles.liveCardInfo}>
+                          <View style={styles.liveUserHeader}>
                             <View style={styles.liveDot} />
-                            <Text style={styles.liveTagText}>LISTENING NOW</Text>
-                            <Text style={styles.liveUserTag}>• {friend.username}</Text>
+                            <Text style={styles.liveUserTag} numberOfLines={1}>
+                              {friend.username}
+                            </Text>
+                            <Text style={styles.liveListeningLabel}>is listening</Text>
                           </View>
 
                           <Text style={styles.liveTrackTitle} numberOfLines={1}>
@@ -790,17 +783,16 @@ export default function FriendsScreen({ onNavigate }) {
                           <Text style={styles.liveTrackArtist} numberOfLines={1}>
                             {track.artist || "Unknown Artist"}
                           </Text>
-
-                          {/* Listen Along Action */}
-                          <TouchableOpacity
-                            style={styles.liveListenAlongBtn}
-                            onPress={() => handleListenAlong(track)}
-                            activeOpacity={0.85}
-                          >
-                            <Ionicons name="headset" size={16} color="#000000" style={{ marginRight: 6 }} />
-                            <Text style={styles.liveListenAlongBtnText}>Listen Along</Text>
-                          </TouchableOpacity>
                         </View>
+
+                        <TouchableOpacity
+                          style={styles.liveListenAlongBtn}
+                          onPress={() => handleListenAlong(track)}
+                          activeOpacity={0.85}
+                        >
+                          <Ionicons name="headset" size={14} color="#000000" style={{ marginRight: 5 }} />
+                          <Text style={styles.liveListenAlongBtnText}>Listen Along</Text>
+                        </TouchableOpacity>
                       </View>
                     );
                   })}
@@ -816,7 +808,7 @@ export default function FriendsScreen({ onNavigate }) {
                     When your friends are listening to songs on Staytup, their activity appears right here so you can listen along together!
                   </Text>
                   <TouchableOpacity
-                    style={styles.primaryActionBtn}
+                    style={[styles.primaryActionBtn, { marginTop: 28 }]}
                     onPress={() => setActiveTab("discover")}
                     activeOpacity={0.8}
                   >
@@ -1294,80 +1286,66 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 10,
   },
-  quickAddSection: {
+  simpleAddSection: {
     width: "100%",
   },
-  quickAddRow: {
+  simpleSearchRow: {
     flexDirection: "row",
-    gap: 10,
-    marginTop: 10,
-  },
-  quickAddInput: {
-    flex: 1,
+    alignItems: "center",
     backgroundColor: "#161616",
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    paddingRight: 6,
+    height: 48,
+    marginTop: 12,
+  },
+  simpleSearchInput: {
+    flex: 1,
+    height: 48,
     color: "#FFFFFF",
     fontFamily: fonts.medium,
     fontSize: 13,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    paddingHorizontal: 6,
   },
-  quickAddBtn: {
+  sendActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: "#1DB954",
     paddingHorizontal: 16,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
+    paddingVertical: 8,
+    borderRadius: 8,
   },
-  quickAddBtnText: {
+  sendActionBtnDisabled: {
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  sendActionBtnText: {
     fontFamily: fonts.bold,
     fontSize: 13,
     color: "#000000",
   },
-  codeStatusMsgText: {
-    fontFamily: fonts.medium,
-    fontSize: 12,
-    color: "#1DB954",
-    marginTop: 6,
-  },
-  alreadyFriendBadge: {
+  statusMsgWrap: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(29,185,84,0.1)",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
-  },
-  alreadyFriendText: {
-    fontFamily: fonts.medium,
-    fontSize: 11,
-    color: "#1DB954",
-  },
-  pendingPill: {
-    backgroundColor: "rgba(255,255,255,0.08)",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
-  },
-  pendingPillText: {
-    fontFamily: fonts.medium,
-    fontSize: 11,
-    color: "#AAAAAA",
-  },
-  addFriendActionBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
+    borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
+    paddingVertical: 10,
+    marginTop: 10,
   },
-  addFriendActionText: {
-    fontFamily: fonts.bold,
+  statusMsgSuccess: {
+    backgroundColor: "rgba(29,185,84,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(29,185,84,0.25)",
+  },
+  statusMsgError: {
+    backgroundColor: "rgba(255,82,82,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(255,82,82,0.25)",
+  },
+  statusMsgText: {
+    fontFamily: fonts.medium,
     fontSize: 12,
-    color: "#000000",
+    flex: 1,
   },
   liveHeaderWrap: {
     flexDirection: "row",
@@ -1381,70 +1359,88 @@ const styles = StyleSheet.create({
     backgroundColor: "#1DB954",
   },
   liveCardsList: {
-    gap: 16,
+    gap: 12,
   },
   liveCard: {
-    backgroundColor: "#141414",
-    borderRadius: 16,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-  },
-  liveCardThumb: {
-    width: "100%",
-    height: 180,
-    backgroundColor: "#1c1c1c",
-  },
-  liveCardBody: {
-    padding: 16,
-  },
-  liveTagRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 6,
+    backgroundColor: "#131313",
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.07)",
+  },
+  liveThumbWrap: {
+    width: 60,
+    height: 60,
+    borderRadius: 10,
+    overflow: "hidden",
+    position: "relative",
+    backgroundColor: "#1c1c1c",
+  },
+  liveThumbImg: {
+    width: "100%",
+    height: "100%",
+  },
+  liveBadgeOverlay: {
+    position: "absolute",
+    bottom: 3,
+    right: 3,
+    backgroundColor: "#1DB954",
+    borderRadius: 4,
+    paddingHorizontal: 3,
+    paddingVertical: 1,
+  },
+  liveCardInfo: {
+    flex: 1,
+    marginLeft: 12,
+    marginRight: 10,
+    justifyContent: "center",
+  },
+  liveUserHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginBottom: 3,
   },
   liveDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: "#1DB954",
-    marginRight: 6,
-  },
-  liveTagText: {
-    fontFamily: fonts.bold,
-    fontSize: 10,
-    color: "#1DB954",
-    letterSpacing: 1,
   },
   liveUserTag: {
-    fontFamily: fonts.medium,
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: "#1DB954",
+  },
+  liveListeningLabel: {
+    fontFamily: fonts.regular,
     fontSize: 11,
-    color: "#FFFFFF",
-    marginLeft: 4,
+    color: colors.textMuted,
   },
   liveTrackTitle: {
     fontFamily: fonts.bold,
-    fontSize: 16,
+    fontSize: 14,
     color: "#FFFFFF",
   },
   liveTrackArtist: {
     fontFamily: fonts.regular,
-    fontSize: 13,
+    fontSize: 12,
     color: colors.textMuted,
     marginTop: 2,
-    marginBottom: 14,
   },
   liveListenAlongBtn: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
     backgroundColor: "#1DB954",
-    paddingVertical: 10,
-    borderRadius: 22,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
   },
   liveListenAlongBtnText: {
     fontFamily: fonts.bold,
-    fontSize: 13,
+    fontSize: 12,
     color: "#000000",
   },
 });
