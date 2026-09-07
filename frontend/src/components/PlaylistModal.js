@@ -36,6 +36,7 @@ export default function PlaylistModal({
   const [isLoadingTracks, setIsLoadingTracks] = useState(false);
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
   const [showRenameModal, setShowRenameModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   // Sync state with playlist prop and refresh details from backend
   useEffect(() => {
@@ -92,40 +93,22 @@ export default function PlaylistModal({
     playTrack(shuffled[0], shuffled, 0);
   }, [playlistData?.tracks, playTrack, setShuffle]);
 
-  const handleDelete = useCallback(() => {
+  const doDelete = useCallback(async () => {
     if (!playlistData?.id) return;
-
-    const doDelete = async () => {
-      try {
-        await api.deletePlaylist(playlistData.id);
-        if (onDeletePlaylist) {
-          onDeletePlaylist(playlistData.id);
-        }
-        onClose();
-      } catch (err) {
-        console.warn("Failed to delete playlist:", err);
+    try {
+      await api.deletePlaylist(playlistData.id);
+      if (onDeletePlaylist) {
+        onDeletePlaylist(playlistData.id);
       }
-    };
-
-    if (Platform.OS === "web") {
-      if (
-        window.confirm(
-          `Are you sure you want to delete "${playlistData.name}"? This action cannot be undone.`
-        )
-      ) {
-        doDelete();
-      }
-    } else {
-      Alert.alert(
-        "Delete Playlist",
-        `Are you sure you want to delete "${playlistData.name}"? This action cannot be undone.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Delete", style: "destructive", onPress: doDelete },
-        ]
-      );
+      onClose();
+    } catch (err) {
+      console.warn("Failed to delete playlist:", err);
     }
-  }, [playlistData?.id, playlistData?.name, onDeletePlaylist, onClose]);
+  }, [playlistData?.id, onDeletePlaylist, onClose]);
+
+  const handleDelete = useCallback(() => {
+    setShowDeleteModal(true);
+  }, []);
 
   const handleRemoveTrack = useCallback(
     async (videoId) => {
@@ -206,30 +189,13 @@ export default function PlaylistModal({
             <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.topBarTitleWrap}
-            onPress={() => setShowRenameModal(true)}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel="Rename Playlist"
-          >
+          <View style={styles.topBarTitleWrap}>
             <Text style={styles.topBarTitle} numberOfLines={1}>
               {playlistData?.name || "Playlist"}
             </Text>
-          </TouchableOpacity>
+          </View>
 
           <View style={styles.topBarActions}>
-            <TouchableOpacity
-              style={styles.editHeaderBtn}
-              onPress={() => setShowRenameModal(true)}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Rename Playlist"
-            >
-              <Ionicons name="pencil" size={17} color="#FFFFFF" />
-            </TouchableOpacity>
-
             <TouchableOpacity
               style={styles.deleteHeaderBtn}
               onPress={handleDelete}
@@ -272,23 +238,11 @@ export default function PlaylistModal({
                       <Text style={styles.playlistBadgeText}>PLAYLIST</Text>
                     </View>
 
-                    <TouchableOpacity
-                      style={styles.heroTitleRow}
-                      onPress={() => setShowRenameModal(true)}
-                      activeOpacity={0.7}
-                      accessibilityRole="button"
-                      accessibilityLabel="Rename Playlist"
-                    >
+                    <View style={styles.heroTitleRow}>
                       <Text style={styles.heroTitle} numberOfLines={2}>
                         {playlistData?.name}
                       </Text>
-                      <Ionicons
-                        name="pencil"
-                        size={15}
-                        color={colors.primary}
-                        style={styles.heroEditIcon}
-                      />
-                    </TouchableOpacity>
+                    </View>
 
                     {playlistData?.description ? (
                       <Text style={styles.heroDesc} numberOfLines={3}>
@@ -302,7 +256,7 @@ export default function PlaylistModal({
                   </View>
                 </View>
 
-                {/* Playlist Action Bar: Play All, Shuffle, Rename, Delete */}
+                {/* Playlist Action Bar: Play All, Shuffle, Edit */}
                 <View style={styles.actionsBar}>
                   <TouchableOpacity
                     style={[
@@ -334,17 +288,9 @@ export default function PlaylistModal({
                     onPress={() => setShowRenameModal(true)}
                     activeOpacity={0.8}
                     accessibilityRole="button"
-                    accessibilityLabel="Rename Playlist"
+                    accessibilityLabel="Edit Playlist"
                   >
                     <Ionicons name="pencil-outline" size={20} color={colors.text} />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.deleteButton}
-                    onPress={handleDelete}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="trash-outline" size={20} color={colors.error} />
                   </TouchableOpacity>
                 </View>
 
@@ -410,7 +356,7 @@ export default function PlaylistModal({
           track={addToPlaylistTrack}
         />
 
-        {/* Rename Playlist Modal */}
+        {/* Rename / Edit Playlist Modal */}
         <CreatePlaylistModal
           visible={showRenameModal}
           onClose={() => setShowRenameModal(false)}
@@ -418,6 +364,45 @@ export default function PlaylistModal({
           initialName={playlistData?.name}
           mode="edit"
         />
+
+        {/* Delete Playlist Confirmation Modal */}
+        <Modal
+          visible={showDeleteModal}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowDeleteModal(false)}
+        >
+          <View style={styles.deleteModalBackdrop}>
+            <View style={styles.deleteModalCard}>
+              <View style={styles.deleteModalIconWrap}>
+                <Ionicons name="trash-outline" size={28} color={colors.error} />
+              </View>
+              <Text style={styles.deleteModalTitle}>Delete Playlist?</Text>
+              <Text style={styles.deleteModalDesc}>
+                Are you sure you want to delete "{playlistData?.name}"? This action cannot be undone.
+              </Text>
+              <View style={styles.deleteModalActions}>
+                <TouchableOpacity
+                  style={styles.deleteModalCancelBtn}
+                  onPress={() => setShowDeleteModal(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.deleteModalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.deleteModalConfirmBtn}
+                  onPress={() => {
+                    setShowDeleteModal(false);
+                    doDelete();
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.deleteModalConfirmText}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </View>
     </Modal>
   );
@@ -472,14 +457,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  editHeaderBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
   deleteHeaderBtn: {
     width: 38,
     height: 38,
@@ -487,6 +464,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(235, 67, 53, 0.12)",
     alignItems: "center",
     justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   contentWrap: {
     flex: 1,
@@ -590,6 +568,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 28,
     borderRadius: 24,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   playAllText: {
     fontFamily: fonts.bold,
@@ -603,6 +582,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 255, 255, 0.08)",
     alignItems: "center",
     justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   renameActionButton: {
     width: 44,
@@ -611,14 +591,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 255, 255, 0.08)",
     alignItems: "center",
     justifyContent: "center",
-  },
-  deleteButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(235, 67, 53, 0.1)",
-    alignItems: "center",
-    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   disabledBtn: {
     opacity: 0.4,
@@ -674,5 +647,81 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     textAlign: "center",
     maxWidth: 280,
+  },
+  deleteModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  deleteModalCard: {
+    width: "100%",
+    maxWidth: 340,
+    backgroundColor: "#181818",
+    borderRadius: 16,
+    padding: 24,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+  },
+  deleteModalIconWrap: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: "rgba(235, 67, 53, 0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  deleteModalTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: colors.text,
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  deleteModalDesc: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.textSecondary,
+    textAlign: "center",
+    lineHeight: 18,
+    marginBottom: 22,
+  },
+  deleteModalActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    width: "100%",
+  },
+  deleteModalCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 24,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  deleteModalCancelText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: colors.text,
+  },
+  deleteModalConfirmBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 24,
+    backgroundColor: colors.error,
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  deleteModalConfirmText: {
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    color: "#FFFFFF",
   },
 });

@@ -34,6 +34,8 @@ export default function SongCard({
   index,
   onAddToPlaylist,
   showPlayButton = true,
+  showDuration = true,
+  onRemove,
   style,
 }) {
   const [isHovered, setIsHovered] = useState(false);
@@ -197,8 +199,8 @@ export default function SongCard({
           </View>
         )}
 
-        <View style={styles.rowAction}>
-          {formatCardDuration(track) ? (
+        <View style={[styles.rowAction, !showPlayButton && !showDuration && { minWidth: "auto" }]}>
+          {showDuration && formatCardDuration(track) ? (
             <Text style={styles.durationText}>{formatCardDuration(track)}</Text>
           ) : null}
           {onAddToPlaylist && (
@@ -209,11 +211,29 @@ export default function SongCard({
                 e?.stopPropagation?.();
                 onAddToPlaylist(track);
               }}
+              accessibilityLabel="Add to playlist"
             >
               <MaterialCommunityIcons
                 name="playlist-plus"
                 size={22}
                 color={isHovered ? "#FFFFFF" : colors.textSecondary}
+              />
+            </TouchableOpacity>
+          )}
+          {onRemove && (
+            <TouchableOpacity
+              style={styles.actionIconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              onPress={(e) => {
+                e?.stopPropagation?.();
+                onRemove(track);
+              }}
+              accessibilityLabel="Remove"
+            >
+              <Ionicons
+                name="close"
+                size={20}
+                color={isHovered ? "#FFFFFF" : "rgba(255, 255, 255, 0.45)"}
               />
             </TouchableOpacity>
           )}

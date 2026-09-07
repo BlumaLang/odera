@@ -360,43 +360,59 @@ export default function LibraryScreen() {
           keyExtractor={(item, index) => `${item.video_id || item.videoId}_${index}`}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
-          ListHeaderComponent={<View style={{ height: 8 }} />}
-          renderItem={({ item, index }) => (
-            <View style={styles.historyItemRow}>
-              <View style={{ flex: 1 }}>
-                <SongCard
-                  track={{
-                    ...item,
-                    videoId: item.video_id || item.videoId,
-                  }}
-                  layout="row"
-                  showRank={false}
-                  showPlayButton={false}
-                  isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
-                  onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
-                  onPress={() =>
-                    playTrack(
-                      { ...item, videoId: item.video_id || item.videoId },
-                      mergedHistory.map((h) => ({ ...h, videoId: h.video_id || h.videoId })),
-                      index
-                    )
-                  }
-                />
+          ListHeaderComponent={
+            <View style={styles.playlistsListHeader}>
+              <View>
+                <Text style={styles.sectionHeader}>Recently Played</Text>
+                <Text style={styles.sectionSubHeader}>
+                  {mergedHistory.length} {mergedHistory.length === 1 ? "track" : "tracks"}
+                </Text>
               </View>
-              <TouchableOpacity
-                style={styles.historyRemoveBtn}
-                onPress={() => removeFromHistory(item)}
-                activeOpacity={0.7}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityLabel="Remove from history"
-              >
-                <Ionicons name="close" size={20} color="rgba(255,255,255,0.4)" />
-              </TouchableOpacity>
+              {mergedHistory.length > 0 && (
+                <View style={styles.headerButtonsRow}>
+                  <TouchableOpacity
+                    style={styles.playAllSmallBtn}
+                    onPress={() =>
+                      handlePlayWholePlaylist(
+                        mergedHistory.map((h) => ({ ...h, videoId: h.video_id || h.videoId })),
+                        0
+                      )
+                    }
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="play" size={16} color="#000000" style={{ marginRight: 4 }} />
+                    <Text style={styles.playAllSmallBtnText}>Play All</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
+          }
+          renderItem={({ item, index }) => (
+            <SongCard
+              track={{
+                ...item,
+                videoId: item.video_id || item.videoId,
+              }}
+              layout="row"
+              showRank={false}
+              showPlayButton={false}
+              showDuration={false}
+              isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
+              onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+              onRemove={() => removeFromHistory(item)}
+              onPress={() =>
+                playTrack(
+                  { ...item, videoId: item.video_id || item.videoId },
+                  mergedHistory.map((h) => ({ ...h, videoId: h.video_id || h.videoId })),
+                  index
+                )
+              }
+            />
           )}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>No listening history yet.</Text>
+              <Ionicons name="time-outline" size={44} color={colors.textMuted} />
+              <Text style={styles.emptyText}>No listening history yet</Text>
               <Text style={styles.emptySub}>
                 Tracks you play will appear here and shape your daily recommendations.
               </Text>
@@ -410,11 +426,41 @@ export default function LibraryScreen() {
           keyExtractor={(item, index) => `${item.video_id}_${index}`}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          ListHeaderComponent={
+            <View style={styles.playlistsListHeader}>
+              <View>
+                <Text style={styles.sectionHeader}>Liked Songs</Text>
+                <Text style={styles.sectionSubHeader}>
+                  {favorites.length} {favorites.length === 1 ? "song" : "songs"}
+                </Text>
+              </View>
+              {favorites.length > 0 && (
+                <View style={styles.headerButtonsRow}>
+                  <TouchableOpacity
+                    style={styles.playAllSmallBtn}
+                    onPress={() => handlePlayWholePlaylist(favorites, 0)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="play" size={16} color="#000000" style={{ marginRight: 4 }} />
+                    <Text style={styles.playAllSmallBtnText}>Play All</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.shuffleSmallBtn}
+                    onPress={() => handleShufflePlaylist(favorites)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="shuffle" size={18} color="#FFFFFF" />
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          }
           renderItem={({ item, index }) => (
             <SongCard
               track={{ ...item, videoId: item.video_id }}
               layout="row"
               showRank={false}
+              showDuration={false}
               isActive={currentTrack?.videoId === item.video_id}
               onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
               onPress={() =>
@@ -798,6 +844,40 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingHorizontal: 4,
   },
+  sectionSubHeader: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  headerButtonsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  playAllSmallBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  playAllSmallBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: "#000000",
+  },
+  shuffleSmallBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
   createPlBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1055,17 +1135,5 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     fontSize: 13,
     color: "#000000",
-  },
-  historyItemRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  historyRemoveBtn: {
-    width: 36,
-    height: 36,
-    alignItems: "center",
-    justifyContent: "center",
-    marginLeft: -4,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
 });
