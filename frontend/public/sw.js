@@ -1,5 +1,5 @@
 // Staytup Service Worker for PWA
-const CACHE_NAME = 'staytup-pwa-v3';
+const CACHE_NAME = 'staytup-pwa-v4';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

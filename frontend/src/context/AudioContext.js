@@ -116,6 +116,20 @@ const AudioProvider = ({ children }) => {
           updateMediaSessionPlaybackState(false);
         }
       },
+      stop: () => {
+        if (Platform.OS === "web" && webAudioRef.current) {
+          webAudioRef.current.pause();
+          webAudioRef.current.currentTime = 0;
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+          updateMediaSessionPlaybackState(false);
+        } else if (soundRef.current) {
+          soundRef.current.stopAsync();
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+          updateMediaSessionPlaybackState(false);
+        }
+      },
       previoustrack: () => {
         if (playPreviousRef.current) playPreviousRef.current();
       },
@@ -212,6 +226,7 @@ const AudioProvider = ({ children }) => {
       isPlayingRef.current = true;
       setIsLoading(false);
       updateMediaSessionPlaybackState(true);
+      setupMediaSessionHandlers();
     };
 
     const onPause = () => {
@@ -675,6 +690,7 @@ const AudioProvider = ({ children }) => {
         isPlayingRef.current = true;
         setIsLoading(false);
         updateMediaSessionPlaybackState(true);
+        setupMediaSessionHandlers();
       } catch (e) {
         console.warn("[AudioContext] Web play error:", e);
         setIsLoading(false);
