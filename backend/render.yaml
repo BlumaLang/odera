@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: youtube-music-server
+    runtime: node
+    plan: free
+    buildCommand: ./render-build.sh
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: PORT
+        value: 10000
