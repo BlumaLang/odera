@@ -371,6 +371,7 @@ export default function LibraryScreen() {
                   }}
                   layout="row"
                   showRank={false}
+                  showPlayButton={false}
                   isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
                   onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
                   onPress={() =>
@@ -386,8 +387,10 @@ export default function LibraryScreen() {
                 style={styles.historyRemoveBtn}
                 onPress={() => removeFromHistory(item)}
                 activeOpacity={0.7}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Remove from history"
               >
-                <Ionicons name="close-circle" size={22} color="rgba(255,255,255,0.25)" />
+                <Ionicons name="close" size={20} color="rgba(255,255,255,0.4)" />
               </TouchableOpacity>
             </View>
           )}
@@ -1063,5 +1066,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginLeft: -4,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
 });
