@@ -296,15 +296,22 @@ export default function LibraryScreen() {
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
             <View style={styles.playlistsListHeader}>
-              <Text style={styles.sectionHeader}>Your Playlists</Text>
-              <TouchableOpacity
-                style={styles.createPlBtn}
-                onPress={() => setShowCreateModal(true)}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="add" size={18} color="#000000" />
-                <Text style={styles.createPlBtnText}>New Playlist</Text>
-              </TouchableOpacity>
+              <View>
+                <Text style={[styles.sectionHeader, { marginBottom: 2 }]}>Your Playlists</Text>
+                <Text style={styles.sectionSubHeader}>
+                  {playlists.length} {playlists.length === 1 ? "playlist" : "playlists"}
+                </Text>
+              </View>
+              <View style={styles.headerButtonsRow}>
+                <TouchableOpacity
+                  style={styles.createPlBtn}
+                  onPress={() => setShowCreateModal(true)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="add" size={16} color="#000000" />
+                  <Text style={styles.createPlBtnText}>New Playlist</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           }
           renderItem={({ item }) => (
@@ -363,7 +370,7 @@ export default function LibraryScreen() {
           ListHeaderComponent={
             <View style={styles.playlistsListHeader}>
               <View>
-                <Text style={styles.sectionHeader}>Recently Played</Text>
+                <Text style={[styles.sectionHeader, { marginBottom: 2 }]}>Recently Played</Text>
                 <Text style={styles.sectionSubHeader}>
                   {mergedHistory.length} {mergedHistory.length === 1 ? "track" : "tracks"}
                 </Text>
@@ -429,7 +436,7 @@ export default function LibraryScreen() {
           ListHeaderComponent={
             <View style={styles.playlistsListHeader}>
               <View>
-                <Text style={styles.sectionHeader}>Liked Songs</Text>
+                <Text style={[styles.sectionHeader, { marginBottom: 2 }]}>Liked Songs</Text>
                 <Text style={styles.sectionSubHeader}>
                   {favorites.length} {favorites.length === 1 ? "song" : "songs"}
                 </Text>
@@ -883,9 +890,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.primary,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: 20,
     gap: 4,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   createPlBtnText: {
     fontFamily: fonts.bold,
