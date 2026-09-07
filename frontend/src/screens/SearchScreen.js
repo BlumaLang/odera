@@ -16,7 +16,7 @@ import {
   LayoutAnimation,
   UIManager,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import SongCard from "../components/SongCard";
 import AddToPlaylistModal from "../components/AddToPlaylistModal";
 import ArtistModal from "../components/ArtistModal";
@@ -512,6 +512,7 @@ export default function SearchScreen() {
                   >
                     {artistResults.map((artist, idx) => {
                       const isFav = isFavoriteArtist ? isFavoriteArtist(artist.name) : false;
+                      const resolvedImg = resolveLocalArtistImage(artist.name, artist.thumbnail);
                       return (
                         <TouchableOpacity
                           key={artist.name + "_" + idx}
@@ -525,9 +526,9 @@ export default function SearchScreen() {
                               (isDesktop || isTablet) && styles.desktopArtistAvatarWrap,
                             ]}
                           >
-                            {artist.thumbnail ? (
+                            {resolvedImg ? (
                               <Image
-                                source={{ uri: artist.thumbnail }}
+                                source={{ uri: resolvedImg }}
                                 style={[
                                   styles.artistAvatar,
                                   (isDesktop || isTablet) && styles.desktopArtistAvatar,
@@ -607,7 +608,7 @@ export default function SearchScreen() {
                     </View>
                   )}
                   <View style={styles.desktopTableColAction}>
-                    <Ionicons name="time-outline" size={16} color={colors.textMuted} />
+                    <MaterialCommunityIcons name="playlist-plus" size={18} color={colors.textMuted} />
                   </View>
                 </View>
               )}
@@ -619,6 +620,8 @@ export default function SearchScreen() {
               index={index + 1}
               layout="row"
               isActive={currentTrack?.videoId === (item.videoId || item.video_id)}
+              showDuration={false}
+              showPlayButton={false}
               onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
               onPress={() => handlePlaySong(item, index, results)}
             />
@@ -861,6 +864,7 @@ export default function SearchScreen() {
         visible={!!selectedArtistForModal}
         onClose={() => setSelectedArtistForModal(null)}
         artistName={selectedArtistForModal}
+        onSelectArtist={(name) => setSelectedArtistForModal(name)}
       />
     </View>
   );

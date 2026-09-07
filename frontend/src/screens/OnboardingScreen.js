@@ -17,7 +17,7 @@ import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
-import { DEFAULT_ARTIST_IMAGES } from "../theme/artistImages";
+import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
 
 const { width } = Dimensions.get("window");
 
@@ -190,11 +190,12 @@ export default function OnboardingScreen() {
       setIsLoadingRelated(true);
       try {
         const data = await api.getRelatedArtists(artistName);
-        if (data && data.related && data.related.length > 0) {
+        const relatedList = data?.related || data?.artists || [];
+        if (relatedList && relatedList.length > 0) {
           // 1. Collect thumbnails and candidate artist names
           const newImgMap = {};
           const candidates = [];
-          data.related.forEach((r) => {
+          relatedList.forEach((r) => {
             const candidateName = typeof r === "string" ? r.trim() : r?.name?.trim();
             const candidateThumb = typeof r === "object" ? r?.thumbnail : null;
             if (candidateName && candidateName.toLowerCase() !== artistName.toLowerCase()) {
@@ -445,7 +446,7 @@ export default function OnboardingScreen() {
                 const isSelected = selectedArtists.includes(artistName);
                 const isTargetArtist = lastSelectedArtist === artistName;
                 const isSuggested = Boolean(suggestedBy[artistName] && !isSelected);
-                const imageUrl = artistImages[artistName];
+                const imageUrl = resolveLocalArtistImage(artistName, artistImages[artistName]);
                 const hasFailed = failedImages[artistName];
                 const initial = artistName.charAt(0).toUpperCase();
 

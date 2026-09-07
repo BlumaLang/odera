@@ -51,7 +51,7 @@ const ArtistSongRow = React.memo(function ArtistSongRow({
   );
 });
 
-export default function ArtistModal({ visible, onClose, artistName, initialPhoto }) {
+export default function ArtistModal({ visible, onClose, artistName, initialPhoto, onSelectArtist }) {
   const { isDesktop, isTablet } = useResponsive();
   const { currentTrack, playTrack, setShuffle } = useAudio();
   const { isFavoriteArtist, toggleFavoriteArtist } = useUser();
@@ -281,8 +281,48 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       <View style={styles.songsSection}>
         <Text style={styles.sectionTitle}>Popular Songs</Text>
       </View>
+
+      {/* Similar Artists */}
+      {similarArtists.length > 0 && (
+        <View style={styles.similarSection}>
+          <Text style={styles.sectionTitle}>Similar Artists</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.similarScroll}
+          >
+            {similarArtists.map((sa, idx) => (
+              <TouchableOpacity
+                key={`similar_${sa.name}_${idx}`}
+                style={styles.similarCard}
+                activeOpacity={0.8}
+                onPress={() => {
+                  if (onSelectArtist) {
+                    onSelectArtist(sa.name);
+                  }
+                }}
+              >
+                {sa.thumbnail ? (
+                  <Image
+                    source={{ uri: sa.thumbnail }}
+                    style={styles.similarAvatar}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={[styles.similarAvatar, styles.similarAvatarFallback]}>
+                    <Ionicons name="person" size={22} color={colors.primary} />
+                  </View>
+                )}
+                <Text style={styles.similarName} numberOfLines={1}>
+                  {sa.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
     </View>
-  ), [artistImage, cleanName, isFav, handleShuffle, handlePlayAll]);
+  ), [artistImage, cleanName, isFav, handleShuffle, handlePlayAll, similarArtists, onSelectArtist]);
 
   // Memoized Footer
   const footerComponent = useMemo(() => {
@@ -611,5 +651,34 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 12,
     color: "rgba(255, 255, 255, 0.4)",
+  },
+  similarSection: {
+    marginTop: 20,
+    paddingHorizontal: 0,
+  },
+  similarScroll: {
+    paddingHorizontal: 12,
+    gap: 14,
+  },
+  similarCard: {
+    alignItems: "center",
+    width: 72,
+  },
+  similarAvatar: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#1a1a1a",
+  },
+  similarAvatarFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  similarName: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: "#FFFFFF",
+    marginTop: 6,
+    textAlign: "center",
   },
 });
