@@ -273,8 +273,48 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       <View style={styles.songsSection}>
         <Text style={styles.sectionTitle}>Popular Songs</Text>
       </View>
+
+      {/* Similar Artists */}
+      {similarArtists.length > 0 && (
+        <View style={styles.similarSection}>
+          <Text style={styles.sectionTitle}>Similar Artists</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.similarScroll}
+          >
+            {similarArtists.map((sa, idx) => (
+              <TouchableOpacity
+                key={`similar_${sa.name}_${idx}`}
+                style={styles.similarCard}
+                activeOpacity={0.8}
+                onPress={() => {
+                  if (onSelectArtist) {
+                    onSelectArtist(sa.name);
+                  }
+                }}
+              >
+                {sa.thumbnail ? (
+                  <Image
+                    source={{ uri: sa.thumbnail }}
+                    style={styles.similarAvatar}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={[styles.similarAvatar, styles.similarAvatarFallback]}>
+                    <Ionicons name="person" size={22} color={colors.primary} />
+                  </View>
+                )}
+                <Text style={styles.similarName} numberOfLines={1}>
+                  {sa.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
     </View>
-  ), [artistImage, cleanName, isFav, handleShuffle, handlePlayAll]);
+  ), [artistImage, cleanName, isFav, handleShuffle, handlePlayAll, similarArtists, onSelectArtist]);
 
   // Memoized Footer
   const footerComponent = useMemo(() => {
