@@ -1,5 +1,5 @@
 // UserContext - Manages user profile, onboarding state, and preferences persistence via Firebase
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { api, DEFAULT_USER_ID } from "../api/client";
 import {
   auth,
@@ -19,15 +19,32 @@ import {
   addTrackToPlaylistRTDB,
   removeTrackFromPlaylistRTDB,
   subscribeRecentlyPlayed,
+  loginOrCreatePinUser,
+  getLocalSession,
+  saveLocalSession,
+  removeLocalSession,
 } from "../services/firebase";
 
 const UserContext = createContext(null);
 
 export const STORAGE_ARTIST_PHOTOS_KEY = "@staytup_artist_photos_cache";
+export const ONBOARDING_COMPLETED_KEY = "@staytup_onboarding_completed";
 
 export const UserProvider = ({ children }) => {
+  const isFreshLoginRef = useRef(false);
   const [currentUser, setCurrentUser] = useState(null);
-  const [isOnboardingCompleted, setIsOnboardingCompleted] = useState(false);
+  const [isOnboardingCompleted, setIsOnboardingCompleted] = useState(() => {
+    if (typeof window !== "undefined") {
+      if (window.sessionStorage?.getItem("@staytup_retuning") === "true") {
+        return false;
+      }
+      const localVal = window.localStorage?.getItem(ONBOARDING_COMPLETED_KEY);
+      if (localVal === "false") return false;
+      // Default to true so existing/restored users never see an onboarding flash
+      return true;
+    }
+    return true;
+  });
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loginProvider, setLoginProvider] = useState(null);
   const [userProfile, setUserProfile] = useState({
@@ -86,6 +103,17 @@ export const UserProvider = ({ children }) => {
           : firebaseUser.providerData?.[0]?.providerId || "google";
         setLoginProvider(providerId.includes("google") ? "google" : providerId);
 
+        const isFresh = isFreshLoginRef.current;
+        const isExplicitRetune =
+          typeof window !== "undefined" &&
+          window.sessionStorage?.getItem("@staytup_retuning") === "true";
+
+        // Returning user on app launch / refresh: immediately guarantee onboarding is completed
+        if (!isFresh && !isExplicitRetune) {
+          setIsOnboardingCompleted(true);
+          saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
+        }
+
         // Pre-populate initial profile so UI has basic info (Zero dummy seed data)
         const initialProfile = {
           username:
@@ -116,17 +144,37 @@ export const UserProvider = ({ children }) => {
                 ...data.profile,
               }));
             }
-            if (typeof data.onboardingCompleted === "boolean") {
-              setIsOnboardingCompleted(data.onboardingCompleted);
+            if (isExplicitRetune) {
+              setIsOnboardingCompleted(false);
+            } else if (!isFresh) {
+              // Returning user: NEVER show onboarding screen
+              setIsOnboardingCompleted(true);
+              saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
+            } else {
+              // Fresh login from LoginScreen: check if this account already has taste or was completed
+              const hasTaste =
+                (data.profile?.favoriteArtists && data.profile.favoriteArtists.length > 0) ||
+                (data.profile?.languages && data.profile.languages.length > 0);
+
+              if (data.onboardingCompleted === true || hasTaste) {
+                setIsOnboardingCompleted(true);
+                saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
+              } else {
+                setIsOnboardingCompleted(false);
+              }
             }
+
             if (typeof data.isPremium === "boolean") {
               setIsPremium(data.isPremium);
               setPremiumPlan(data.premiumPlan || "Free");
             }
           } else {
-            // First time login - initialize clean node in Firebase RTDB without seed data
+            if (!isFresh && !isExplicitRetune) {
+              setIsOnboardingCompleted(true);
+              saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
+            }
             fbSaveUserProfile(firebaseUser.uid, initialProfile);
-            fbSaveOnboardingState(firebaseUser.uid, false);
+            fbSaveOnboardingState(firebaseUser.uid, !isFresh && !isExplicitRetune);
             fbSaveUserPremium(firebaseUser.uid, false, "Free");
           }
 
@@ -150,6 +198,30 @@ export const UserProvider = ({ children }) => {
           setRecentlyPlayed(recents || []);
         });
       } else {
+        // Check for active local PIN or QR session before clearing state
+        let storedSession = null;
+        try {
+          storedSession = (await getLocalSession("@staytup_pin_user")) || (await getLocalSession("@staytup_qr_user"));
+        } catch (_) {}
+
+        if (storedSession && storedSession.uid) {
+          const restoredUser = {
+            uid: storedSession.uid,
+            displayName: storedSession.displayName || storedSession.username || "Staytup Listener",
+            isAnonymous: false,
+          };
+          setCurrentUser(restoredUser);
+          setIsLoggedIn(true);
+          setLoginProvider(storedSession.pin ? "pin" : "qr");
+          setIsOnboardingCompleted(true);
+          setIsLoadingUser(false);
+          setUserProfile((prev) => ({
+            ...prev,
+            username: restoredUser.displayName,
+          }));
+          return;
+        }
+
         // User logged out or unauthenticated
         setCurrentUser(null);
         setIsLoggedIn(false);
@@ -176,8 +248,31 @@ export const UserProvider = ({ children }) => {
 
   // Login handler - keeps LoginScreen interactive with its own button spinner
   const loginUser = async (info = {}) => {
+    isFreshLoginRef.current = true;
     const provider = info.provider || "guest";
     try {
+      if (provider === "pin") {
+        const res = await loginOrCreatePinUser(info.username, info.pin);
+        if (res && res.success && res.user) {
+          const pinUser = {
+            uid: res.user.uid,
+            displayName: res.user.displayName || info.username,
+            username: info.username,
+            isAnonymous: false,
+          };
+          setCurrentUser(pinUser);
+          setIsLoggedIn(true);
+          setLoginProvider("pin");
+          setIsOnboardingCompleted(true);
+          setIsLoadingUser(false);
+          setUserProfile((prev) => ({
+            ...prev,
+            username: pinUser.displayName,
+          }));
+          return { success: true, user: pinUser, isNewUser: res.isNewUser };
+        }
+        return res || { success: false, error: "PIN authentication failed" };
+      }
       if (provider === "qr") {
         // QR login — user confirmed on another device, user data from backend
         const qrUser = info.qrUser || {};
@@ -188,6 +283,7 @@ export const UserProvider = ({ children }) => {
           photoURL: qrUser.photoURL || null,
           email: qrUser.email || null,
         };
+        await saveLocalSession("@staytup_qr_user", fallbackUser);
         setCurrentUser(fallbackUser);
         setIsLoggedIn(true);
         setLoginProvider("qr");
@@ -237,6 +333,13 @@ export const UserProvider = ({ children }) => {
   // Logout handler
   const logoutUser = async () => {
     try {
+      isFreshLoginRef.current = false;
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        window.sessionStorage.removeItem("@staytup_retuning");
+      }
+      await removeLocalSession("@staytup_pin_user");
+      await removeLocalSession("@staytup_qr_user");
+      await removeLocalSession(ONBOARDING_COMPLETED_KEY);
       await fbLogout();
     } catch (err) {
       console.warn("Logout error:", err);
@@ -245,6 +348,10 @@ export const UserProvider = ({ children }) => {
 
   // Complete onboarding and save to Firebase Realtime Database
   const completeOnboarding = async (profileData) => {
+    isFreshLoginRef.current = false;
+    if (typeof window !== "undefined" && window.sessionStorage) {
+      window.sessionStorage.removeItem("@staytup_retuning");
+    }
     const favs = profileData.favoriteArtists || profileData.favorite_artists || [];
     const fullProfile = {
       username: profileData.username?.trim() || "Staytup Listener",
@@ -255,6 +362,7 @@ export const UserProvider = ({ children }) => {
 
     setUserProfile((prev) => ({ ...prev, ...fullProfile }));
     setIsOnboardingCompleted(true);
+    await saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
 
     const uid = currentUser?.uid || DEFAULT_USER_ID;
     try {
@@ -278,6 +386,11 @@ export const UserProvider = ({ children }) => {
   const resetOnboarding = async () => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
     try {
+      isFreshLoginRef.current = true;
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        window.sessionStorage.setItem("@staytup_retuning", "true");
+      }
+      await removeLocalSession(ONBOARDING_COMPLETED_KEY).catch(() => {});
       await fbSaveOnboardingState(uid, false);
       setIsOnboardingCompleted(false);
     } catch (err) {

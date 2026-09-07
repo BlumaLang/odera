@@ -120,104 +120,17 @@ export default function ProfileScreen({ visible, onClose }) {
   // Artist Discography Modal
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
 
-  // QR Code Modal
-  const [showQRModal, setShowQRModal] = useState(false);
-  const [qrSessionId, setQrSessionId] = useState(null);
-  const [qrLoading, setQrLoading] = useState(false);
-  const [qrPolling, setQrPolling] = useState(false);
-  const qrPollRef = useRef(null);
-  const qrRefreshRef = useRef(null);
-
   // Referral Modal
   const [showReferralModal, setShowReferralModal] = useState(false);
   const [referralCount, setReferralCount] = useState(0);
 
-  // Official Channels Bottom Sheet
+  // Official Channels Modal
   const [showChannelsModal, setShowChannelsModal] = useState(false);
 
-  // Legal Pages Modal (separate for each)
+  // Legal Modals
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
-
-  // QR session management
-  const generateQRSession = useCallback(async () => {
-    try {
-      const res = await api.createQRSession();
-      if (res && res.sid) {
-        setQrSessionId(res.sid);
-        setQrLoading(false);
-        return res.sid;
-      }
-    } catch (_) {}
-    setQrLoading(false);
-    return null;
-  }, []);
-
-  const startQRSession = useCallback(async () => {
-    setQrLoading(true);
-    setQrPolling(true);
-    const sid = await generateQRSession();
-    if (!sid) return;
-
-    // Poll for scan every 2.5s
-    qrPollRef.current = setInterval(async () => {
-      try {
-        const res = await api.pollQRSession(sid);
-        if (res && res.status === "claimed" && res.user) {
-          clearInterval(qrPollRef.current);
-          clearInterval(qrRefreshRef.current);
-          setQrPolling(false);
-          setShowQRModal(false);
-        } else if (res && res.status === "expired") {
-          // Auto-refresh on expiry
-          const newSid = await generateQRSession();
-          if (newSid) {
-            // Update poll interval to new sid
-            clearInterval(qrPollRef.current);
-            qrPollRef.current = setInterval(async () => {
-              try {
-                const r2 = await api.pollQRSession(newSid);
-                if (r2 && r2.status === "claimed") {
-                  clearInterval(qrPollRef.current);
-                  clearInterval(qrRefreshRef.current);
-                  setQrPolling(false);
-                  setShowQRModal(false);
-                } else if (r2 && r2.status === "expired") {
-                  const ns = await generateQRSession();
-                  if (ns) {
-                    clearInterval(qrPollRef.current);
-                    // Restart with new sid (recursive pattern)
-                  }
-                }
-              } catch (_) {}
-            }, 2500);
-          }
-        }
-      } catch (_) {}
-    }, 2500);
-
-    // Auto-refresh QR every 60 seconds
-    qrRefreshRef.current = setInterval(async () => {
-      await generateQRSession();
-    }, 60000);
-  }, [generateQRSession]);
-
-  const stopQRSession = useCallback(() => {
-    if (qrPollRef.current) clearInterval(qrPollRef.current);
-    if (qrRefreshRef.current) clearInterval(qrRefreshRef.current);
-    setQrSessionId(null);
-    setQrPolling(false);
-  }, []);
-
-  useEffect(() => {
-    if (showQRModal) {
-      startQRSession();
-    } else {
-      stopQRSession();
-    }
-    return () => stopQRSession();
-  }, [showQRModal, startQRSession, stopQRSession]);
 
   // Settings state
   const [audioQuality, setAudioQuality] = useState("Lossless (320 kbps)");
@@ -516,22 +429,6 @@ export default function ProfileScreen({ visible, onClose }) {
           </View>
         </View>
 
-        {/* Share QR Code */}
-        <TouchableOpacity
-          style={styles.qrCodeBtn}
-          onPress={() => setShowQRModal(true)}
-          activeOpacity={0.85}
-        >
-          <View style={[styles.qrCodeIconWrap, { backgroundColor: "rgba(29, 185, 84, 0.15)" }]}>
-            <Ionicons name="qr-code" size={22} color={colors.primary} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.qrCodeTitle}>Share QR Code</Text>
-            <Text style={styles.qrCodeSub}>Let others scan to open Staytup</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.3)" />
-        </TouchableOpacity>
-
         {/* Referral */}
         <TouchableOpacity
           style={styles.qrCodeBtn}
@@ -721,6 +618,7 @@ export default function ProfileScreen({ visible, onClose }) {
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
+              style={{ flexGrow: 0 }}
               contentContainerStyle={styles.avatarPickerRow}
             >
               {avatarOptions.map((item) => {
@@ -824,97 +722,6 @@ export default function ProfileScreen({ visible, onClose }) {
         artistName={selectedArtistForModal}
         initialPhoto={selectedArtistForModal ? artistPhotos[selectedArtistForModal] : null}
       />
-
-      {/* QR Code Modal — Fullscreen */}
-      <Modal
-        visible={showQRModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowQRModal(false)}
-      >
-        <View style={styles.qrFullscreen}>
-          <View style={styles.qrFullscreenHeader}>
-            <TouchableOpacity onPress={() => setShowQRModal(false)} style={styles.qrCloseArea}>
-              <Ionicons name="close" size={28} color="#FFFFFF" />
-            </TouchableOpacity>
-            <Text style={styles.qrFullscreenTitle}>Your QR Code</Text>
-            <View style={{ width: 40 }} />
-          </View>
-
-          <View style={styles.qrFullscreenBody}>
-            <Text style={styles.qrFullscreenSub}>
-              Scan this code on another device to log in to your Staytup account. Code refreshes every 60 seconds.
-            </Text>
-
-            {qrLoading ? (
-              <View style={styles.qrFullscreenCodeWrap}>
-                <ActivityIndicator size="large" color={colors.primary} />
-              </View>
-            ) : qrSessionId ? (
-              <>
-                <View style={styles.qrFullscreenCodeWrap}>
-                  <Image
-                    source={{
-                      uri: `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(
-                        `${Platform.OS === "web" && typeof window !== "undefined" ? window.location.origin : "https://staytup.in"}/qr-login?sid=${qrSessionId}`
-                      )}&bgcolor=000000&color=FFFFFF&t=${Date.now()}`,
-                    }}
-                    style={styles.qrFullscreenCode}
-                    resizeMode="contain"
-                  />
-                </View>
-
-                {qrPolling && (
-                  <View style={styles.qrPollStatus}>
-                    <View style={styles.qrPollDot} />
-                    <Text style={styles.qrPollText}>Waiting for scan...</Text>
-                  </View>
-                )}
-
-                <Text style={styles.qrFullscreenUrl}>
-                  {qrSessionId}
-                </Text>
-              </>
-            ) : (
-              <View style={styles.qrFullscreenCodeWrap}>
-                <Text style={{ color: "rgba(255,255,255,0.4)", fontFamily: fonts.medium, fontSize: 13 }}>Failed to generate QR</Text>
-              </View>
-            )}
-
-            {/* How it works steps */}
-            <View style={styles.qrStepsRow}>
-              <View style={styles.qrStepItem}>
-                <View style={styles.qrStepNum}><Text style={styles.qrStepNumText}>1</Text></View>
-                <Text style={styles.qrStepLabel}>Open{"\n"}Staytup App</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" style={{ marginTop: -10 }} />
-              <View style={styles.qrStepItem}>
-                <View style={styles.qrStepNum}><Text style={styles.qrStepNumText}>2</Text></View>
-                <Text style={styles.qrStepLabel}>Tap{"\n"}Scan QR</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" style={{ marginTop: -10 }} />
-              <View style={styles.qrStepItem}>
-                <View style={styles.qrStepNum}><Text style={styles.qrStepNumText}>3</Text></View>
-                <Text style={styles.qrStepLabel}>Point at{"\n"}this code</Text>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={styles.qrShareBtn}
-              onPress={() => {
-                const url = Platform.OS === "web" && typeof window !== "undefined" ? window.location.origin : "https://staytup.in";
-                if (Platform.OS === "web" && navigator.share) {
-                  navigator.share({ title: "Login to Staytup", url }).catch(() => {});
-                }
-              }}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="refresh-outline" size={18} color="#000000" style={{ marginRight: 8 }} />
-              <Text style={styles.qrShareBtnText}>Refresh Code</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
 
       {/* Referral Full Page Modal */}
       <Modal
@@ -2253,6 +2060,77 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: 13,
     color: "rgba(255,255,255,0.5)",
+  },
+  qrPinContainer: {
+    backgroundColor: "#111111",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    width: "100%",
+    maxWidth: 320,
+    marginTop: 4,
+    marginBottom: 20,
+  },
+  qrPinHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 10,
+    gap: 6,
+  },
+  qrPinHeaderTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    color: "rgba(255,255,255,0.6)",
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+  },
+  qrPinBoxesRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 10,
+  },
+  qrPinDigitBox: {
+    width: 48,
+    height: 52,
+    borderRadius: 8,
+    backgroundColor: "#181818",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  qrPinDigitText: {
+    fontFamily: fonts.bold,
+    fontSize: 24,
+    color: "#FFFFFF",
+    letterSpacing: 0.5,
+  },
+  qrPinInstructionText: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: "rgba(255,255,255,0.55)",
+    textAlign: "center",
+    lineHeight: 16,
+  },
+  qrSuccessBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(29, 185, 84, 0.15)",
+    borderColor: "#1DB954",
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    gap: 10,
+  },
+  qrSuccessText: {
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    color: "#1DB954",
   },
   qrShareBtn: {
     flexDirection: "row",

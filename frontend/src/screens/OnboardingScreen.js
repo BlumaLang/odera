@@ -417,7 +417,7 @@ export default function OnboardingScreen() {
                 />
                 <Text style={styles.searchStatusText}>
                   {isSearchingArtists
-                    ? `Searching live on YouTube Music for "${artistSearchQuery.trim()}"...`
+                    ? `Searching live for "${artistSearchQuery.trim()}"...`
                     : `Showing ${displayedArtists.length} matching artists`}
                 </Text>
               </View>

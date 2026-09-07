@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -340,22 +340,23 @@ export default function HomeScreen() {
   } : null;
 
   // 3. Filter & normalize backend sections: map tracks -> items, remove stale/empty sections
-  const backendSections = (feed?.sections || [])
-    .filter((section) => {
-      const tracks = section.tracks || section.items || [];
-      if (!section || tracks.length === 0) return false;
-      if (section.id === "trending_global" || section.title?.toLowerCase().includes("global")) return false;
-      if (section.id === "trending_india" || section.title?.toLowerCase().includes("youtube india")) return false;
-      return true;
-    })
-    .map((section) => ({
-      ...section,
-      items: section.items || section.tracks || [],
-    }));
-
-  // 4. Daily seeded shuffle — sections reorder every day based on date seed
+  // 4. Daily seeded shuffle — sections reorder once per day based on date seed (memoized to prevent render glitch)
   const daySeed = getDaySeed();
-  const shuffledBackendSections = seededShuffle(backendSections, daySeed);
+  const shuffledBackendSections = useMemo(() => {
+    const raw = (feed?.sections || [])
+      .filter((section) => {
+        const tracks = section.tracks || section.items || [];
+        if (!section || tracks.length === 0) return false;
+        if (section.id === "trending_global" || section.title?.toLowerCase().includes("global")) return false;
+        if (section.id === "trending_india" || section.title?.toLowerCase().includes("youtube india")) return false;
+        return true;
+      })
+      .map((section) => ({
+        ...section,
+        items: section.items || section.tracks || [],
+      }));
+    return seededShuffle(raw, daySeed);
+  }, [feed?.sections, daySeed]);
 
   const allDisplayedSections = [
     jumpBackInSection,
@@ -369,7 +370,7 @@ export default function HomeScreen() {
     ? recentlyPlayed.slice(0, 6)
     : appTrending.length > 0
     ? appTrending.slice(0, 6)
-    : backendSections?.[0]?.items?.slice(0, 6) || []
+    : shuffledBackendSections?.[0]?.items?.slice(0, 6) || []
   );
 
   return (
@@ -382,7 +383,7 @@ export default function HomeScreen() {
       {isLoading ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Fetching YouTube top charts...</Text>
+          <Text style={styles.loadingText}>Fetching top charts...</Text>
         </View>
       ) : error ? (
         <View style={styles.centerContainer}>

@@ -14,7 +14,9 @@ import {
   cacheStream as cacheFirebaseStream,
   getCachedStream as getCachedFirebaseStream,
   getUserListeningData,
-  getAppTrendingTracks
+  getAppTrendingTracks,
+  getPinUser,
+  savePinUser
 } from './firebase.js';
 
 const app = express();
@@ -296,6 +298,217 @@ app.get(['/api/suggest', '/suggest', '/suggest/:userId'], async (req, res) => {
   } catch (error) {
     console.error('Suggest error:', error.message);
     res.json({ suggestions: [] });
+  }
+});
+
+// ─── JioSaavn Direct Audio & Search Integration ──────────────────────────────
+const SAAVN_BASE_URL = 'https://saavn.sumit.co/api';
+
+async function fetchSaavnJson(endpoint, retries = 1, timeoutMs = 12000) {
+  const url = endpoint.startsWith('http') ? endpoint : `${SAAVN_BASE_URL}${endpoint}`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Staytup/2.0 (Windows NT 10.0; Win64; x64)',
+        'Accept': 'application/json'
+      },
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    if (!res.ok) {
+      if (retries > 0 && (res.status === 408 || res.status >= 500)) {
+        await new Promise(r => setTimeout(r, 1000));
+        return fetchSaavnJson(endpoint, retries - 1, timeoutMs);
+      }
+      throw new Error(`Saavn API HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err) {
+    if (retries > 0) {
+      await new Promise(r => setTimeout(r, 1000));
+      return fetchSaavnJson(endpoint, retries - 1, timeoutMs);
+    }
+    throw err;
+  }
+}
+
+function normalizeSaavnSong(song, streamUrl = null) {
+  if (!song || !song.id) return null;
+  const rawId = String(song.id);
+  const title = (song.name || song.title || '').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&');
+  
+  let artist = '';
+  if (song.artists?.primary && Array.isArray(song.artists.primary) && song.artists.primary.length > 0) {
+    artist = song.artists.primary.map(a => a.name).filter(Boolean).join(', ');
+  } else if (song.primaryArtists) {
+    artist = String(song.primaryArtists);
+  } else if (song.singers) {
+    artist = String(song.singers);
+  } else if (song.artist) {
+    artist = String(song.artist);
+  }
+
+  // Pick 500x500 image or highest quality
+  let artworkUrl = '';
+  if (Array.isArray(song.image) && song.image.length > 0) {
+    const fiveHundred = song.image.find(img => img.quality === '500x500');
+    artworkUrl = fiveHundred?.url || song.image[song.image.length - 1]?.url || '';
+  } else if (typeof song.image === 'string') {
+    artworkUrl = song.image;
+  }
+
+  // Duration in seconds
+  let duration = 0;
+  if (song.duration) {
+    duration = Number(song.duration) || 0;
+  }
+
+  // If streamUrl not passed, check if song.downloadUrl exists
+  let resolvedStream = streamUrl;
+  if (!resolvedStream && Array.isArray(song.downloadUrl) && song.downloadUrl.length > 0) {
+    const sorted = [...song.downloadUrl].sort((a, b) => (parseInt(b.quality, 10) || 0) - (parseInt(a.quality, 10) || 0));
+    resolvedStream = sorted[0]?.url || null;
+  }
+
+  return {
+    id: `saavn_${rawId}`,
+    source: 'saavn',
+    videoId: rawId, // UI compatibility
+    video_id: rawId,
+    title,
+    artist: artist || 'Staytup Artist',
+    artwork_url: artworkUrl,
+    thumbnail: artworkUrl,
+    duration,
+    duration_seconds: duration,
+    stream_url: resolvedStream || null
+  };
+}
+
+// 1. Saavn Search Route
+app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
+  try {
+    const query = req.query.q ? String(req.query.q).trim() : (req.query.query ? String(req.query.query).trim() : '');
+    if (!query) {
+      return res.json({ query: '', count: 0, results: [], tracks: [], has_more: false });
+    }
+
+    let songs = [];
+    try {
+      // First try /search/songs (higher quality metadata & pagination)
+      const data = await fetchSaavnJson(`/search/songs?query=${encodeURIComponent(query)}&limit=30`);
+      if (data && data.success && Array.isArray(data.data?.results)) {
+        songs = data.data.results;
+      }
+    } catch (_) {}
+
+    // Fallback to /search?query=...
+    if (!songs || songs.length === 0) {
+      try {
+        const fallbackData = await fetchSaavnJson(`/search?query=${encodeURIComponent(query)}`);
+        if (fallbackData && fallbackData.success && Array.isArray(fallbackData.data?.songs?.results)) {
+          songs = fallbackData.data.songs.results;
+        }
+      } catch (_) {}
+    }
+
+    const normalized = songs.map(s => normalizeSaavnSong(s, null)).filter(Boolean);
+    res.json({
+      query,
+      count: normalized.length,
+      results: normalized,
+      tracks: normalized,
+      has_more: normalized.length >= 25
+    });
+  } catch (err) {
+    console.error('Saavn search error:', err.message);
+    res.status(500).json({ error: 'Saavn search failed', details: err.message, results: [], tracks: [] });
+  }
+});
+
+// 2. Saavn Stream URL Resolution Route (Called on every play - never cached)
+app.get(['/api/stream/saavn/:id', '/stream/saavn/:id'], async (req, res) => {
+  const rawId = req.params.id ? String(req.params.id).replace(/^saavn_/, '').trim() : '';
+  if (!rawId) {
+    return res.status(400).json({ error: 'Saavn song ID required' });
+  }
+
+  try {
+    const data = await fetchSaavnJson(`/songs/${encodeURIComponent(rawId)}`);
+    if (!data || !data.success || !data.data) {
+      return res.status(404).json({ error: 'Song details not found on Saavn', id: rawId });
+    }
+
+    const song = Array.isArray(data.data) ? data.data[0] : data.data;
+    if (!song) {
+      return res.status(404).json({ error: 'Song not found', id: rawId });
+    }
+
+    // Pick highest bitrate stream URL (320kbps > 160kbps > ...)
+    let streamUrl = null;
+    let bitrate = '320kbps';
+    if (Array.isArray(song.downloadUrl) && song.downloadUrl.length > 0) {
+      const sorted = [...song.downloadUrl].sort((a, b) => (parseInt(b.quality, 10) || 0) - (parseInt(a.quality, 10) || 0));
+      streamUrl = sorted[0]?.url || null;
+      bitrate = sorted[0]?.quality || '320kbps';
+    }
+
+    if (!streamUrl) {
+      return res.status(502).json({ error: 'No playable stream URL available for this song', id: rawId });
+    }
+
+    const normalized = normalizeSaavnSong(song, streamUrl);
+    res.json({
+      ...normalized,
+      stream_url: streamUrl,
+      bitrate,
+      contentType: 'audio/mp4'
+    });
+  } catch (err) {
+    console.error(`Saavn stream resolution error for ${rawId}:`, err.message);
+    res.status(502).json({ error: 'Failed to resolve Saavn audio stream', details: err.message, id: rawId });
+  }
+});
+
+// 3. Saavn Home / Trending Route
+app.get(['/api/home/saavn', '/home/saavn'], async (req, res) => {
+  try {
+    const trendingQueries = [
+      { id: 'trending_india', title: 'Trending in India', q: 'Trending 2026' },
+      { id: 'bollywood_hits', title: 'Bollywood Top Hits', q: 'Bollywood Hits' },
+      { id: 'romantic_melodies', title: 'Romantic Melodies', q: 'Arijit Singh Romantic' },
+      { id: 'punjabi_vibes', title: 'Punjabi Blockbusters', q: 'Punjabi Hits 2026' },
+      { id: 'global_top', title: 'International & English', q: 'English Hits 2026' }
+    ];
+
+    const sections = await Promise.all(
+      trendingQueries.map(async (sec) => {
+        try {
+          const data = await fetchSaavnJson(`/search/songs?query=${encodeURIComponent(sec.q)}&limit=15`);
+          const raw = data?.data?.results || [];
+          const tracks = raw.map(s => normalizeSaavnSong(s, null)).filter(Boolean);
+          return {
+            id: sec.id,
+            title: sec.title,
+            tracks
+          };
+        } catch (e) {
+          return { id: sec.id, title: sec.title, tracks: [] };
+        }
+      })
+    );
+
+    const validSections = sections.filter(s => s.tracks.length > 0);
+    const allTracks = validSections.flatMap(s => s.tracks);
+
+    res.json({
+      timestamp: new Date().toISOString(),
+      trending: allTracks.slice(0, 20),
+      sections: validSections,
+      count: allTracks.length
+    });
+  } catch (err) {
+    console.error('Saavn home feed error:', err.message);
+    res.status(500).json({ error: 'Failed to generate Saavn home feed', details: err.message, sections: [] });
   }
 });
 
@@ -620,6 +833,14 @@ async function parallelSearch(queries, limitPerQuery = 12) {
 
 // ─── 8. Daily Home Feed — India-focused rich sections ────────────────────────
 app.get(['/home', '/home/:userId', '/api/home'], async (req, res) => {
+  // If the browser requested HTML (user typed URL or refreshed in browser), serve the SPA app!
+  if (req.accepts('html') && !req.accepts('json') && !req.path.startsWith('/api')) {
+    const distIndex = path.join(process.cwd(), 'dist', 'index.html');
+    if (fs.existsSync(distIndex)) return res.sendFile(distIndex);
+    const pubIndex = path.join(process.cwd(), 'public', 'index.html');
+    if (fs.existsSync(pubIndex)) return res.sendFile(pubIndex);
+  }
+
   try {
     const now = new Date();
     const timestamp = now.toISOString();
@@ -951,8 +1172,9 @@ app.post(['/playlists', '/api/playlists'], async (req, res) => {
 
 app.post('/api/premium/subscribe', (req, res) => res.json({ status: 'ok' }));
 
-// ─── QR Login (Device Linking) ─────────────────────────────────────────────────
+// ─── QR Login (WhatsApp-Style Device Linking with 4-Digit PIN) ────────────────
 const qrSessions = new Map();
+const qrPins = new Map(); // Maps 4-digit PIN -> sid
 const QR_SESSION_TTL_MS = 5 * 60 * 1000;
 
 function generateSid() {
@@ -962,38 +1184,227 @@ function generateSid() {
   return sid;
 }
 
+function generate4DigitPin() {
+  return Math.floor(1000 + Math.random() * 9000).toString();
+}
+
 function cleanupExpiredQRSessions() {
   const now = Date.now();
   for (const [sid, s] of qrSessions) {
-    if (now - s.createdAt > QR_SESSION_TTL_MS) qrSessions.delete(sid);
+    if (now - s.createdAt > QR_SESSION_TTL_MS) {
+      if (s.pin) qrPins.delete(s.pin);
+      qrSessions.delete(sid);
+    }
   }
 }
 
 app.post(['/api/qr-login/create', '/qr-login/create'], (req, res) => {
   cleanupExpiredQRSessions();
   const sid = generateSid();
-  qrSessions.set(sid, { status: 'pending', user: null, createdAt: Date.now() });
-  res.json({ sid, status: 'pending' });
+  let pin = generate4DigitPin();
+  while (qrPins.has(pin)) {
+    pin = generate4DigitPin();
+  }
+  const createdAt = Date.now();
+  const authUser = req.body && req.body.user ? {
+    uid: req.body.user.uid || `user_${Date.now()}`,
+    displayName: req.body.user.displayName || req.body.user.username || 'Staytup Listener',
+    username: req.body.user.username || null,
+    email: req.body.user.email || null,
+    photoURL: req.body.user.photoURL || req.body.user.avatar || null,
+  } : null;
+
+  qrSessions.set(sid, {
+    sid,
+    pin,
+    status: 'pending',
+    user: authUser,
+    createdAt,
+    expiresAt: createdAt + QR_SESSION_TTL_MS,
+  });
+  qrPins.set(pin, sid);
+  res.json({
+    sid,
+    pin,
+    status: 'pending',
+    hasUser: !!authUser,
+    expiresIn: Math.floor(QR_SESSION_TTL_MS / 1000),
+    expiresAt: createdAt + QR_SESSION_TTL_MS,
+  });
 });
 
 app.get(['/api/qr-login/status/:sid', '/qr-login/status/:sid'], (req, res) => {
   const session = qrSessions.get(req.params.sid);
   if (!session) return res.json({ status: 'expired' });
   if (session.status === 'claimed') {
+    if (session.pin) qrPins.delete(session.pin);
     qrSessions.delete(req.params.sid);
-    return res.json({ status: 'claimed', user: session.user });
+    return res.json({ status: 'claimed', user: session.user, claimedByPhone: session.claimedByPhone || false });
   }
-  res.json({ status: 'pending' });
+  const remaining = Math.max(0, Math.floor((session.createdAt + QR_SESSION_TTL_MS - Date.now()) / 1000));
+  res.json({
+    status: 'pending',
+    pin: session.pin,
+    hasUser: !!session.user,
+    user: session.user || null,
+    remaining,
+  });
 });
 
 app.post(['/api/qr-login/claim', '/qr-login/claim'], (req, res) => {
-  const { sid, user } = req.body;
-  if (!sid || !user) return res.status(400).json({ error: 'sid and user required' });
-  const session = qrSessions.get(sid);
-  if (!session) return res.json({ success: false, error: 'Session expired' });
+  const { sid, pin, user } = req.body;
+  if (!sid && !pin) {
+    return res.status(400).json({ error: 'sid or pin required' });
+  }
+
+  let session = null;
+  if (sid) {
+    session = qrSessions.get(sid);
+  } else if (pin) {
+    const pinStr = pin.toString().trim();
+    const matchedSid = qrPins.get(pinStr);
+    if (matchedSid) {
+      session = qrSessions.get(matchedSid);
+    }
+  }
+
+  if (!session) {
+    return res.json({ success: false, error: 'Session expired or invalid 4-digit code' });
+  }
+
+  // If the session was created from an already logged-in profile, transfer account to phone!
+  if (session.user) {
+    const authUser = session.user;
+    session.status = 'claimed';
+    session.claimedByPhone = true;
+    return res.json({
+      success: true,
+      mode: 'phone_login',
+      user: authUser,
+      message: 'Phone successfully logged in',
+    });
+  }
+
+  // Otherwise (Desktop waiting for phone scan - WhatsApp Web direction):
+  if (!user) {
+    return res.status(400).json({ error: 'user required to link device' });
+  }
+
   session.status = 'claimed';
-  session.user = user;
-  res.json({ success: true });
+  session.user = {
+    uid: user.uid || `user_${Date.now()}`,
+    displayName: user.displayName || user.username || 'Staytup Listener',
+    email: user.email || null,
+    photoURL: user.photoURL || null,
+  };
+  res.json({ success: true, message: 'Device successfully linked' });
+});
+
+// Dedicated endpoint: Enter 4-Digit Code on Phone to Log In
+app.post(['/api/qr-login/phone-login', '/qr-login/phone-login'], (req, res) => {
+  const { code } = req.body;
+  if (!code) {
+    return res.status(400).json({ success: false, error: '4-digit code required' });
+  }
+  const cleanCode = code.toString().trim();
+  const matchedSid = qrPins.get(cleanCode);
+  const session = matchedSid ? qrSessions.get(matchedSid) : qrSessions.get(cleanCode);
+
+  if (!session) {
+    return res.json({
+      success: false,
+      error: 'Invalid or expired 4-digit code. Please check your screen.',
+    });
+  }
+
+  if (!session.user) {
+    return res.json({
+      success: false,
+      error: 'This code has not been authorized by an active profile yet.',
+    });
+  }
+
+  const authUser = session.user;
+  session.status = 'claimed';
+  session.claimedByPhone = true;
+
+  return res.json({
+    success: true,
+    user: authUser,
+    message: `Logged in as ${authUser.displayName || authUser.username || 'Listener'}`,
+  });
+});
+
+// ─── 4-Digit PIN Authentication ────────────────────────────────────────────────
+// Users can create or sign in with just their Username and a 4-Digit PIN
+const localPinUsers = new Map();
+
+app.post(['/api/auth/pin-login', '/auth/pin-login'], async (req, res) => {
+  try {
+    const { username, pin } = req.body;
+    if (!username || !pin) {
+      return res.status(400).json({ error: 'Username and 4-digit PIN are required' });
+    }
+
+    const cleanUser = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+    const cleanPin = pin.toString().trim();
+
+    if (cleanUser.length < 2) {
+      return res.status(400).json({ error: 'Username must be at least 2 characters' });
+    }
+    if (!/^\d{4}$/.test(cleanPin)) {
+      return res.status(400).json({ error: 'PIN must be exactly 4 digits' });
+    }
+
+    // Check in local cache or Firebase RTDB
+    let userRecord = localPinUsers.get(cleanUser);
+    if (!userRecord) {
+      userRecord = await getPinUser(cleanUser);
+      if (userRecord) localPinUsers.set(cleanUser, userRecord);
+    }
+
+    if (!userRecord) {
+      // Create new user account with 4-digit PIN ("create 4 digit PIN that's it")
+      const newUser = {
+        uid: `pin_${cleanUser}_${Date.now().toString(36)}`,
+        username: username.trim(),
+        displayName: username.trim(),
+        cleanUser,
+        pin: cleanPin,
+        createdAt: Date.now(),
+      };
+      localPinUsers.set(cleanUser, newUser);
+      await savePinUser(cleanUser, newUser);
+
+      return res.json({
+        success: true,
+        isNewUser: true,
+        user: {
+          uid: newUser.uid,
+          displayName: newUser.displayName,
+          username: newUser.username,
+        },
+      });
+    }
+
+    // Existing user: verify PIN
+    if (userRecord.pin !== cleanPin) {
+      return res.status(401).json({ success: false, error: 'Incorrect 4-digit PIN. Please try again.' });
+    }
+
+    return res.json({
+      success: true,
+      isNewUser: false,
+      user: {
+        uid: userRecord.uid,
+        displayName: userRecord.displayName,
+        username: userRecord.username,
+      },
+    });
+  } catch (err) {
+    console.error('PIN Auth Error:', err);
+    res.status(500).json({ error: 'Failed to authenticate PIN' });
+  }
 });
 
 // ─── User QR Profile (share your account) ───────────────────────────────────────
@@ -1052,10 +1463,10 @@ async function startServer() {
     const p = req.path.toLowerCase();
 
     // Skip API and stream routes — they already have their own handlers
-    if (API_PREFIXES.some(prefix => p.startsWith(prefix))) {
+    if (!req.accepts('html') && API_PREFIXES.some(prefix => p.startsWith(prefix))) {
       return res.status(404).json({ error: 'Not found' });
     }
-    if (API_EXACT.some(route => p === route || p === route + '/')) {
+    if (!req.accepts('html') && API_EXACT.some(route => p === route || p === route + '/')) {
       return res.status(404).json({ error: 'Not found' });
     }
 

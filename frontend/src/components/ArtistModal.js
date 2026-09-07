@@ -15,7 +15,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
-import { useAudio } from "../context/AudioContext";
+import { useAudio, fisherYatesShuffle } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
@@ -53,7 +53,7 @@ const ArtistSongRow = React.memo(function ArtistSongRow({
 
 export default function ArtistModal({ visible, onClose, artistName, initialPhoto }) {
   const { isDesktop, isTablet } = useResponsive();
-  const { currentTrack, playTrack } = useAudio();
+  const { currentTrack, playTrack, setShuffle } = useAudio();
   const { isFavoriteArtist, toggleFavoriteArtist } = useUser();
 
   const cleanName = (artistName || "").trim();
@@ -200,9 +200,10 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
   // Shuffle and play all songs
   const handleShuffle = useCallback(() => {
     if (songs.length === 0) return;
-    const shuffled = [...songs].sort(() => Math.random() - 0.5);
+    const shuffled = fisherYatesShuffle(songs);
+    if (setShuffle) setShuffle(true);
     playTrack(shuffled[0], shuffled, 0);
-  }, [songs, playTrack]);
+  }, [songs, playTrack, setShuffle]);
 
   // Memoized Header: Prevents header remount on playback ticks
   const headerComponent = useMemo(() => (

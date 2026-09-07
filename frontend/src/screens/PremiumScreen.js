@@ -438,12 +438,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   headerBar: {
-    paddingTop: Platform.OS === "web" ? 10 : 14,
+    paddingTop: Platform.OS === "web" ? 12 : 14,
     paddingBottom: 8,
     paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceBorder,
-    backgroundColor: colors.background,
+    backgroundColor: "#000000",
   },
   innerWrap: {
     width: "100%",
@@ -457,7 +455,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   headerTitleRow: {
-    height: 34,
+    height: 38,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -472,8 +470,8 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontFamily: fonts.bold,
-    fontSize: 24,
-    color: colors.text,
+    fontSize: 26,
+    color: "#FFFFFF",
     letterSpacing: -0.4,
   },
   profileAvatar: {

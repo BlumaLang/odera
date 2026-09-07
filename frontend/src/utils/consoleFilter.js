@@ -24,6 +24,12 @@ var IGNORED = [
   'pagead/viewthroughconversion','googleads.g.doubleclick.net',
   'Access to fetch','redirected from','has been blocked by CORS policy',
   'No \'Access-Control-Allow-Origin\' header is present',
+  'Failed to convert value to \'Response\'',
+  'The FetchEvent for',
+  'resulted in a network error response',
+  'powerPreference',
+  'requestAdapter',
+  '369219127',
 ];
 function bad(a){
   try{

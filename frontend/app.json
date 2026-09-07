@@ -9,6 +9,7 @@
     "backgroundColor": "#000000",
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.staytup.app",
       "infoPlist": {
         "UIBackgroundModes": [
           "audio"

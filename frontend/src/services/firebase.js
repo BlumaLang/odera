@@ -70,11 +70,120 @@ export async function loginAsGuest() {
  */
 export async function logoutUser() {
   try {
+    await removeLocalSession("@staytup_pin_user");
     await signOut(auth);
     return { success: true };
   } catch (error) {
     console.warn("Sign-Out Error:", error.message);
     return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Local Session Helpers for Persistent PIN & Device Sessions
+ */
+export async function saveLocalSession(key, data) {
+  try {
+    const val = JSON.stringify(data);
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.setItem(key, val);
+    }
+  } catch (_) {}
+}
+
+export async function getLocalSession(key) {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      const v = window.localStorage.getItem(key);
+      if (v) return JSON.parse(v);
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+export async function removeLocalSession(key) {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.removeItem(key);
+    }
+  } catch (_) {}
+}
+
+/**
+ * 4-Digit PIN Authentication (Instant Create or Login)
+ */
+export async function loginOrCreatePinUser(username, pin) {
+  if (!username || !pin) {
+    return { success: false, error: "Username and 4-digit PIN required" };
+  }
+  const clean = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+  const cleanPin = pin.toString().trim();
+  if (clean.length < 2) {
+    return { success: false, error: "Username must be at least 2 characters" };
+  }
+  if (!/^\d{4}$/.test(cleanPin)) {
+    return { success: false, error: "PIN must be exactly 4 digits" };
+  }
+
+  try {
+    // 1. Try backend API first
+    const { api } = await import("../api/client");
+    const res = await api.loginWithPin(clean, cleanPin);
+    if (res && res.success && res.user) {
+      await saveLocalSession("@staytup_pin_user", {
+        ...res.user,
+        username: username.trim(),
+        pin: cleanPin,
+      });
+      return { success: true, user: res.user, isNewUser: res.isNewUser };
+    } else if (res && res.error) {
+      return { success: false, error: res.error };
+    }
+  } catch (_) {}
+
+  // 2. Direct Firebase RTDB fallback
+  try {
+    const userRef = ref(db, `pin_users/${clean}`);
+    const snap = await get(userRef);
+    if (snap.exists()) {
+      const existing = snap.val();
+      if (existing.pin !== cleanPin) {
+        return { success: false, error: "Incorrect 4-digit PIN. Please try again." };
+      }
+      const user = {
+        uid: existing.uid,
+        displayName: existing.displayName || username.trim(),
+        username: existing.username || username.trim(),
+      };
+      await saveLocalSession("@staytup_pin_user", { ...user, pin: cleanPin });
+      return { success: true, user, isNewUser: false };
+    } else {
+      // Create new user with 4-digit PIN
+      const newUser = {
+        uid: `pin_${clean}_${Date.now().toString(36)}`,
+        displayName: username.trim(),
+        username: username.trim(),
+        cleanUser: clean,
+        pin: cleanPin,
+        createdAt: Date.now(),
+      };
+      await set(userRef, newUser);
+      await saveLocalSession("@staytup_pin_user", { ...newUser, pin: cleanPin });
+      return { success: true, user: newUser, isNewUser: true };
+    }
+  } catch (err) {
+    // Offline local fallback
+    const offlineUser = {
+      uid: `pin_${clean}`,
+      displayName: username.trim(),
+      username: username.trim(),
+      cleanUser: clean,
+      pin: cleanPin,
+    };
+    await saveLocalSession("@staytup_pin_user", offlineUser);
+    return { success: true, user: offlineUser, isNewUser: true };
   }
 }
 

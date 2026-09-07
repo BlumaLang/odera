@@ -22,7 +22,7 @@ import PlaylistModal from "../components/PlaylistModal";
 import CreatePlaylistModal from "../components/CreatePlaylistModal";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
-import { useAudio } from "../context/AudioContext";
+import { useAudio, fisherYatesShuffle } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { auth, getRecentlyPlayed, subscribeRecentlyPlayed, removeRecentlyPlayed } from "../services/firebase";
@@ -74,7 +74,7 @@ export default function LibraryScreen() {
   const rawHistory = localRecentlyPlayed.length > 0 ? localRecentlyPlayed : (rtdbRecentlyPlayed || []);
   const isLoading = false;
 
-  const { currentTrack, playTrack } = useAudio();
+  const { currentTrack, playTrack, setShuffle } = useAudio();
 
   const removeFromHistory = useCallback(async (track) => {
     const uid = currentUser?.uid || auth.currentUser?.uid || "guest";
@@ -166,7 +166,8 @@ export default function LibraryScreen() {
       ...t,
       videoId: t.video_id || t.videoId,
     }));
-    const shuffled = [...formatted].sort(() => Math.random() - 0.5);
+    const shuffled = fisherYatesShuffle(formatted);
+    if (setShuffle) setShuffle(true);
     playTrack(shuffled[0], shuffled, 0);
   };
 
@@ -500,7 +501,10 @@ const styles = StyleSheet.create({
     userSelect: "none",
   },
   tabsRowContainer: {
+    flexGrow: 0,
     flexShrink: 0,
+    height: 50,
+    maxHeight: 50,
   },
   desktopLibraryInner: {
     width: "100%",
@@ -508,11 +512,9 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === "web" ? 10 : 14,
-    paddingBottom: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceBorder,
-    backgroundColor: colors.background,
+    paddingTop: Platform.OS === "web" ? 12 : 14,
+    paddingBottom: 8,
+    backgroundColor: "#000000",
   },
   headerInner: {
     width: "100%",
@@ -522,7 +524,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   profileRow: {
-    height: 34,
+    height: 38,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -549,8 +551,8 @@ const styles = StyleSheet.create({
   },
   profileName: {
     fontFamily: fonts.bold,
-    fontSize: 24,
-    color: colors.text,
+    fontSize: 26,
+    color: "#FFFFFF",
     letterSpacing: -0.4,
   },
   statsRow: {
@@ -577,7 +579,8 @@ const styles = StyleSheet.create({
   },
   tabsRow: {
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 8,
+    alignItems: "center",
     gap: 8,
   },
   tabButton: {

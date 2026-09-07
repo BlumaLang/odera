@@ -18,7 +18,7 @@ import AddToPlaylistModal from "./AddToPlaylistModal";
 import CreatePlaylistModal from "./CreatePlaylistModal";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
-import { useAudio } from "../context/AudioContext";
+import { useAudio, fisherYatesShuffle } from "../context/AudioContext";
 import { useResponsive } from "../context/ResponsiveContext";
 
 export default function PlaylistModal({
@@ -30,7 +30,7 @@ export default function PlaylistModal({
   onPlaylistUpdated,
 }) {
   const { isDesktop, isTablet } = useResponsive();
-  const { currentTrack, playTrack } = useAudio();
+  const { currentTrack, playTrack, setShuffle } = useAudio();
 
   const [playlistData, setPlaylistData] = useState(playlist || null);
   const [isLoadingTracks, setIsLoadingTracks] = useState(false);
@@ -87,9 +87,10 @@ export default function PlaylistModal({
       ...t,
       videoId: t.video_id || t.videoId,
     }));
-    const shuffled = [...formatted].sort(() => Math.random() - 0.5);
+    const shuffled = fisherYatesShuffle(formatted);
+    if (setShuffle) setShuffle(true);
     playTrack(shuffled[0], shuffled, 0);
-  }, [playlistData?.tracks, playTrack]);
+  }, [playlistData?.tracks, playTrack, setShuffle]);
 
   const handleDelete = useCallback(() => {
     if (!playlistData?.id) return;
