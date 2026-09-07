@@ -25,72 +25,6 @@ const TABS = [
   { id: "listening", label: "Live Listening", icon: "headset" },
 ];
 
-const COMMUNITY_SUGGESTIONS = [
-  {
-    uid: "comm_aria",
-    username: "Aria Melody",
-    avatar: "musical-notes",
-    avatarColor: "#FF5E3A",
-    tag: "Pop & Bollywood",
-    favoriteArtist: "Arijit Singh",
-    friendCode: "ARIAMELODY",
-    recentTrack: {
-      videoId: "comm_song_1",
-      title: "Chaleya",
-      artist: "Arijit Singh, Shilpa Rao",
-      thumbnail: "https://c.saavncdn.com/026/Chaleya-From-Jawan-Hindi-2023-20230814014337-500x500.jpg",
-      artwork_url: "https://c.saavncdn.com/026/Chaleya-From-Jawan-Hindi-2023-20230814014337-500x500.jpg",
-    },
-  },
-  {
-    uid: "comm_kabir",
-    username: "Kabir Rhythm",
-    avatar: "headset",
-    avatarColor: "#1DB954",
-    tag: "Punjabi & Hip-Hop",
-    favoriteArtist: "Diljit Dosanjh",
-    friendCode: "KABIRRHYTHM",
-    recentTrack: {
-      videoId: "comm_song_2",
-      title: "Lover",
-      artist: "Diljit Dosanjh",
-      thumbnail: "https://c.saavncdn.com/152/MoonChild-Era-Punjabi-2021-20210822180846-500x500.jpg",
-      artwork_url: "https://c.saavncdn.com/152/MoonChild-Era-Punjabi-2021-20210822180846-500x500.jpg",
-    },
-  },
-  {
-    uid: "comm_zara",
-    username: "Zara Vibes",
-    avatar: "radio",
-    avatarColor: "#9B51E0",
-    tag: "Lo-Fi & Acoustic",
-    favoriteArtist: "Prateek Kuhad",
-    friendCode: "ZARAVIBES",
-    recentTrack: {
-      videoId: "comm_song_3",
-      title: "Kasoor",
-      artist: "Prateek Kuhad",
-      thumbnail: "https://c.saavncdn.com/835/Kasoor-Hindi-2020-20200630043135-500x500.jpg",
-      artwork_url: "https://c.saavncdn.com/835/Kasoor-Hindi-2020-20200630043135-500x500.jpg",
-    },
-  },
-  {
-    uid: "comm_leo",
-    username: "Leo Sound",
-    avatar: "flame",
-    avatarColor: "#F2994A",
-    tag: "EDM & Global Hits",
-    favoriteArtist: "The Weeknd",
-    friendCode: "LEOSOUND",
-    recentTrack: {
-      videoId: "comm_song_4",
-      title: "Blinding Lights",
-      artist: "The Weeknd",
-      thumbnail: "https://c.saavncdn.com/978/After-Hours-English-2020-20200320180429-500x500.jpg",
-      artwork_url: "https://c.saavncdn.com/978/After-Hours-English-2020-20200320180429-500x500.jpg",
-    },
-  },
-];
 
 export default function FriendsScreen({ onNavigate }) {
   const { isDesktop, isTablet, isPhone } = useResponsive();
@@ -235,14 +169,7 @@ export default function FriendsScreen({ onNavigate }) {
           setCodeStatusMsg("Could not send request. Please try again.");
         }
       } else {
-        const commMatch = COMMUNITY_SUGGESTIONS.find((c) => c.friendCode === raw);
-        if (commMatch) {
-          await sendFriendRequest(commMatch.uid, commMatch);
-          setCodeStatusMsg(`Friend request sent to ${commMatch.username}!`);
-          setCodeInputValue("");
-        } else {
-          setCodeStatusMsg(`No user found with code "${raw}".`);
-        }
+        setCodeStatusMsg(`No user found with code "${raw}".`);
       }
     } catch (err) {
       setCodeStatusMsg("Failed to send request.");
@@ -820,83 +747,7 @@ export default function FriendsScreen({ onNavigate }) {
                 ) : null}
               </View>
 
-              {/* Community Music Lover Suggestions */}
-              <View style={[styles.quickAddSection, { marginTop: 24 }]}>
-                <Text style={styles.sectionHeaderTitle}>Suggested Listeners</Text>
-                <Text style={styles.sectionSubDesc}>
-                  Staytup music lovers who enjoy similar artists and tracks
-                </Text>
 
-                <View style={styles.communityGrid}>
-                  {COMMUNITY_SUGGESTIONS.map((comm) => {
-                    const isAlreadyFriend = friendsList.some((f) => f.uid === comm.uid);
-                    const isPending = outgoingRequests.some((r) => r.uid === comm.uid);
-
-                    return (
-                      <View key={comm.uid} style={styles.commCard}>
-                        <View style={styles.commCardTop}>
-                          <View style={[styles.commAvatar, { backgroundColor: comm.avatarColor }]}>
-                            <Ionicons name={comm.avatar} size={20} color="#000000" />
-                          </View>
-                          <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.commName} numberOfLines={1}>
-                              {comm.username}
-                            </Text>
-                            <Text style={styles.commTag} numberOfLines={1}>
-                              {comm.tag}
-                            </Text>
-                          </View>
-                        </View>
-
-                        <View style={styles.commTrackRow}>
-                          <Image source={{ uri: comm.recentTrack.thumbnail }} style={styles.commTrackThumb} />
-                          <View style={{ flex: 1, marginLeft: 8 }}>
-                            <Text style={styles.commTrackTitle} numberOfLines={1}>
-                              {comm.recentTrack.title}
-                            </Text>
-                            <Text style={styles.commTrackArtist} numberOfLines={1}>
-                              {comm.recentTrack.artist}
-                            </Text>
-                          </View>
-                        </View>
-
-                        <View style={styles.commCardActions}>
-                          <TouchableOpacity
-                            style={styles.commListenBtn}
-                            onPress={() => handleListenAlong(comm.recentTrack)}
-                            activeOpacity={0.8}
-                          >
-                            <Ionicons name="play" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                            <Text style={styles.commListenBtnText}>Play</Text>
-                          </TouchableOpacity>
-
-                          {isAlreadyFriend ? (
-                            <View style={styles.alreadyFriendBadge}>
-                              <Ionicons name="checkmark" size={13} color="#1DB954" style={{ marginRight: 4 }} />
-                              <Text style={styles.alreadyFriendText}>Friends</Text>
-                            </View>
-                          ) : isPending ? (
-                            <View style={styles.pendingPill}>
-                              <Text style={styles.pendingPillText}>Pending</Text>
-                            </View>
-                          ) : (
-                            <TouchableOpacity
-                              style={styles.commAddBtn}
-                              onPress={async () => {
-                                await sendFriendRequest(comm.uid, comm);
-                              }}
-                              activeOpacity={0.8}
-                            >
-                              <Ionicons name="person-add" size={13} color="#000000" style={{ marginRight: 4 }} />
-                              <Text style={styles.commAddBtnText}>Add Friend</Text>
-                            </TouchableOpacity>
-                          )}
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
-              </View>
             </View>
           )}
 
@@ -1514,94 +1365,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   addFriendActionText: {
-    fontFamily: fonts.bold,
-    fontSize: 12,
-    color: "#000000",
-  },
-  communityGrid: {
-    gap: 12,
-  },
-  commCard: {
-    backgroundColor: "#131313",
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.06)",
-  },
-  commCardTop: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  commAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  commName: {
-    fontFamily: fonts.bold,
-    fontSize: 14,
-    color: "#FFFFFF",
-  },
-  commTag: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: colors.primary,
-    marginTop: 1,
-  },
-  commTrackRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.03)",
-    borderRadius: 8,
-    padding: 8,
-    marginTop: 10,
-  },
-  commTrackThumb: {
-    width: 34,
-    height: 34,
-    borderRadius: 4,
-    backgroundColor: "#1c1c1c",
-  },
-  commTrackTitle: {
-    fontFamily: fonts.medium,
-    fontSize: 12,
-    color: "#FFFFFF",
-  },
-  commTrackArtist: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: colors.textMuted,
-  },
-  commCardActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 12,
-  },
-  commListenBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.1)",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  commListenBtnText: {
-    fontFamily: fonts.medium,
-    fontSize: 12,
-    color: "#FFFFFF",
-  },
-  commAddBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#1DB954",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  commAddBtnText: {
     fontFamily: fonts.bold,
     fontSize: 12,
     color: "#000000",
