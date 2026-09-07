@@ -279,6 +279,19 @@ export async function saveUserProfile(uid, profileData) {
       ...profileData,
       updatedAt: new Date().toISOString(),
     });
+
+    // Public directory index for friend search & discovery
+    const cleanUsername = profileData.username || "Staytup Listener";
+    const friendCode = cleanUsername.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    const publicRef = ref(db, `publicUsers/${uid}`);
+    await update(publicRef, {
+      uid,
+      username: cleanUsername,
+      avatar: profileData.avatar || "initial",
+      avatarColor: profileData.avatarColor || "#1DB954",
+      friendCode,
+      updatedAt: Date.now(),
+    });
   } catch (error) {
     console.warn("Failed to save profile to RTDB:", error.message);
   }
@@ -1248,5 +1261,247 @@ export async function clearRecentSearches(uid) {
   try {
     await set(ref(rtdb, `users/${uid}/recentSearches`), []);
   } catch (_) {}
+}
+
+// ----------------------------------------------------
+// Realtime Database Friend System
+// ----------------------------------------------------
+
+/**
+ * Subscribe to user friends in RTDB
+ */
+export function subscribeFriends(uid, callback) {
+  if (!uid || !callback) return () => {};
+  const safeUid = uid || "guest";
+  const friendsRef = ref(db, `users/${safeUid}/friends`);
+  const listener = onValue(
+    friendsRef,
+    (snapshot) => {
+      const val = snapshot.val();
+      const list = val && typeof val === "object" ? Object.values(val) : [];
+      callback(list);
+    },
+    (error) => {
+      console.warn("RTDB friends subscription error:", error.message);
+    }
+  );
+  return () => off(friendsRef, "value", listener);
+}
+
+/**
+ * Subscribe to incoming and outgoing friend requests
+ */
+export function subscribeFriendRequests(uid, callback) {
+  if (!uid || !callback) return () => {};
+  const safeUid = uid || "guest";
+  const requestsRef = ref(db, `users/${safeUid}/friendRequests`);
+  const listener = onValue(
+    requestsRef,
+    (snapshot) => {
+      const val = snapshot.val() || {};
+      const incoming = val.incoming && typeof val.incoming === "object" ? Object.values(val.incoming) : [];
+      const outgoing = val.outgoing && typeof val.outgoing === "object" ? Object.values(val.outgoing) : [];
+      callback({ incoming, outgoing });
+    },
+    (error) => {
+      console.warn("RTDB friend requests subscription error:", error.message);
+    }
+  );
+  return () => off(requestsRef, "value", listener);
+}
+
+/**
+ * Send a friend request to another user
+ */
+export async function sendFriendRequestRTDB(senderUser, recipientUid, recipientUser) {
+  if (!senderUser?.uid || !recipientUid) return false;
+  if (senderUser.uid === recipientUid) return false;
+
+  try {
+    const senderData = {
+      uid: senderUser.uid,
+      username: senderUser.username || senderUser.displayName || "Staytup Listener",
+      avatar: senderUser.avatar || senderUser.photoURL || "initial",
+      avatarColor: senderUser.avatarColor || "#1DB954",
+      sentAt: Date.now(),
+    };
+
+    const recipientData = {
+      uid: recipientUid,
+      username: recipientUser?.username || "Staytup Friend",
+      avatar: recipientUser?.avatar || "initial",
+      avatarColor: recipientUser?.avatarColor || "#1DB954",
+      sentAt: Date.now(),
+    };
+
+    const incomingRef = ref(db, `users/${recipientUid}/friendRequests/incoming/${senderUser.uid}`);
+    const outgoingRef = ref(db, `users/${senderUser.uid}/friendRequests/outgoing/${recipientUid}`);
+
+    await Promise.all([
+      set(incomingRef, senderData),
+      set(outgoingRef, recipientData),
+    ]);
+    return true;
+  } catch (error) {
+    console.warn("Failed to send friend request:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Accept an incoming friend request
+ */
+export async function acceptFriendRequestRTDB(currentUser, requestUser) {
+  if (!currentUser?.uid || !requestUser?.uid) return false;
+  try {
+    const curUid = currentUser.uid;
+    const reqUid = requestUser.uid;
+
+    const myFriendData = {
+      uid: reqUid,
+      username: requestUser.username || "Friend",
+      avatar: requestUser.avatar || "initial",
+      avatarColor: requestUser.avatarColor || "#1DB954",
+      addedAt: Date.now(),
+    };
+
+    const theirFriendData = {
+      uid: curUid,
+      username: currentUser.username || currentUser.displayName || "Friend",
+      avatar: currentUser.avatar || currentUser.photoURL || "initial",
+      avatarColor: currentUser.avatarColor || "#1DB954",
+      addedAt: Date.now(),
+    };
+
+    await Promise.all([
+      set(ref(db, `users/${curUid}/friends/${reqUid}`), myFriendData),
+      set(ref(db, `users/${reqUid}/friends/${curUid}`), theirFriendData),
+      set(ref(db, `users/${curUid}/friendRequests/incoming/${reqUid}`), null),
+      set(ref(db, `users/${reqUid}/friendRequests/outgoing/${curUid}`), null),
+    ]);
+    return true;
+  } catch (error) {
+    console.warn("Failed to accept friend request:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Decline an incoming friend request
+ */
+export async function declineFriendRequestRTDB(currentUid, senderUid) {
+  if (!currentUid || !senderUid) return false;
+  try {
+    await Promise.all([
+      set(ref(db, `users/${currentUid}/friendRequests/incoming/${senderUid}`), null),
+      set(ref(db, `users/${senderUid}/friendRequests/outgoing/${currentUid}`), null),
+    ]);
+    return true;
+  } catch (error) {
+    console.warn("Failed to decline friend request:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Cancel an outgoing friend request
+ */
+export async function cancelFriendRequestRTDB(currentUid, recipientUid) {
+  if (!currentUid || !recipientUid) return false;
+  try {
+    await Promise.all([
+      set(ref(db, `users/${currentUid}/friendRequests/outgoing/${recipientUid}`), null),
+      set(ref(db, `users/${recipientUid}/friendRequests/incoming/${currentUid}`), null),
+    ]);
+    return true;
+  } catch (error) {
+    console.warn("Failed to cancel friend request:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Remove a friend from both sides
+ */
+export async function removeFriendRTDB(currentUid, friendUid) {
+  if (!currentUid || !friendUid) return false;
+  try {
+    await Promise.all([
+      set(ref(db, `users/${currentUid}/friends/${friendUid}`), null),
+      set(ref(db, `users/${friendUid}/friends/${currentUid}`), null),
+    ]);
+    return true;
+  } catch (error) {
+    console.warn("Failed to remove friend:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Search public users by username or friendCode
+ */
+export async function searchUsersRTDB(query, currentUid) {
+  const cleanQ = (query || "").trim().toLowerCase();
+  try {
+    const publicRef = ref(db, "publicUsers");
+    const snapshot = await get(publicRef);
+    let list = [];
+    if (snapshot.exists()) {
+      const val = snapshot.val();
+      list = Object.values(val || {}).filter((u) => u && u.uid && u.uid !== currentUid);
+    }
+    if (cleanQ) {
+      list = list.filter((u) =>
+        (u.username && u.username.toLowerCase().includes(cleanQ)) ||
+        (u.friendCode && u.friendCode.toLowerCase().includes(cleanQ)) ||
+        (u.uid && u.uid.toLowerCase() === cleanQ)
+      );
+    }
+    return list.slice(0, 20);
+  } catch (error) {
+    console.warn("Failed to search users in RTDB:", error.message);
+    return [];
+  }
+}
+
+/**
+ * Subscribe to a friend's live playback status
+ */
+export function subscribeFriendActivity(friendUid, callback) {
+  if (!friendUid || !callback) return () => {};
+
+  const playbackRef = ref(db, `users/${friendUid}/lastPlayback`);
+  const sessionRef = ref(db, `users/${friendUid}/playbackSession`);
+
+  let currentPlayback = null;
+  let currentSession = null;
+
+  const emit = () => {
+    const isPlaying = Boolean(currentSession?.isPlaying);
+    const sessionAge = currentSession?.updatedAt ? Date.now() - currentSession.updatedAt : Infinity;
+    const isLive = isPlaying && sessionAge < 1000 * 60 * 30; // Within 30 minutes
+    callback({
+      track: currentPlayback?.track || null,
+      isPlaying: isLive,
+      updatedAt: currentPlayback?.updatedAt || currentSession?.updatedAt || null,
+    });
+  };
+
+  const pbListener = onValue(playbackRef, (snap) => {
+    currentPlayback = snap.val();
+    emit();
+  });
+
+  const sessListener = onValue(sessionRef, (snap) => {
+    currentSession = snap.val();
+    emit();
+  });
+
+  return () => {
+    try {
+      off(playbackRef, "value", pbListener);
+      off(sessionRef, "value", sessListener);
+    } catch (_) {}
+  };
 }
 

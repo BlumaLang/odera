@@ -21,6 +21,14 @@ import {
   subscribeRecentlyPlayed,
   subscribeUserStreamCount,
   recordUserStream,
+  subscribeFriends,
+  subscribeFriendRequests,
+  sendFriendRequestRTDB,
+  acceptFriendRequestRTDB,
+  declineFriendRequestRTDB,
+  cancelFriendRequestRTDB,
+  removeFriendRTDB,
+  searchUsersRTDB,
   loginOrCreatePinUser,
   getLocalSession,
   saveLocalSession,
@@ -60,6 +68,8 @@ export const UserProvider = ({ children }) => {
   const [playlists, setPlaylists] = useState([]);
   const [recentlyPlayed, setRecentlyPlayed] = useState([]);
   const [streamCount, setStreamCount] = useState(0);
+  const [friends, setFriends] = useState([]);
+  const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
   const [isLoadingUser, setIsLoadingUser] = useState(true);
   const [isPremium, setIsPremium] = useState(false);
   const [premiumPlan, setPremiumPlan] = useState("Free");
@@ -72,6 +82,8 @@ export const UserProvider = ({ children }) => {
     let unsubscribePls = null;
     let unsubscribeRecents = null;
     let unsubscribeStreams = null;
+    let unsubscribeFriends = null;
+    let unsubscribeRequests = null;
 
     // Safety timeout: Ensure app never stays stuck on loading screen on startup
     const safetyTimer = setTimeout(() => {
@@ -100,6 +112,14 @@ export const UserProvider = ({ children }) => {
       if (unsubscribeStreams) {
         unsubscribeStreams();
         unsubscribeStreams = null;
+      }
+      if (unsubscribeFriends) {
+        unsubscribeFriends();
+        unsubscribeFriends = null;
+      }
+      if (unsubscribeRequests) {
+        unsubscribeRequests();
+        unsubscribeRequests = null;
       }
 
       if (firebaseUser) {
@@ -209,6 +229,14 @@ export const UserProvider = ({ children }) => {
         unsubscribeStreams = subscribeUserStreamCount(firebaseUser.uid, (count) => {
           setStreamCount(count || 0);
         });
+
+        unsubscribeFriends = subscribeFriends(firebaseUser.uid, (list) => {
+          setFriends(list || []);
+        });
+
+        unsubscribeRequests = subscribeFriendRequests(firebaseUser.uid, (reqs) => {
+          setFriendRequests(reqs || { incoming: [], outgoing: [] });
+        });
       } else {
         // Check for active local PIN or QR session before clearing state
         let storedSession = null;
@@ -244,6 +272,12 @@ export const UserProvider = ({ children }) => {
           unsubscribeStreams = subscribeUserStreamCount(restoredUser.uid, (count) => {
             setStreamCount(count || 0);
           });
+          unsubscribeFriends = subscribeFriends(restoredUser.uid, (list) => {
+            setFriends(list || []);
+          });
+          unsubscribeRequests = subscribeFriendRequests(restoredUser.uid, (reqs) => {
+            setFriendRequests(reqs || { incoming: [], outgoing: [] });
+          });
           return;
         }
 
@@ -258,6 +292,8 @@ export const UserProvider = ({ children }) => {
         setPlaylists([]);
         setRecentlyPlayed([]);
         setStreamCount(0);
+        setFriends([]);
+        setFriendRequests({ incoming: [], outgoing: [] });
         setIsLoadingUser(false);
       }
     });
@@ -270,6 +306,8 @@ export const UserProvider = ({ children }) => {
       if (unsubscribePls) unsubscribePls();
       if (unsubscribeRecents) unsubscribeRecents();
       if (unsubscribeStreams) unsubscribeStreams();
+      if (unsubscribeFriends) unsubscribeFriends();
+      if (unsubscribeRequests) unsubscribeRequests();
     };
   }, []);
 
@@ -616,6 +654,47 @@ export const UserProvider = ({ children }) => {
     return ok;
   };
 
+  // Friend System helpers
+  const sendFriendRequest = async (recipientUid, recipientUser) => {
+    const sender = {
+      uid: currentUser?.uid || DEFAULT_USER_ID,
+      username: userProfile?.username || currentUser?.displayName || "Staytup Listener",
+      avatar: userProfile?.avatar || "initial",
+      avatarColor: userProfile?.avatarColor || "#1DB954",
+    };
+    return await sendFriendRequestRTDB(sender, recipientUid, recipientUser);
+  };
+
+  const acceptFriendRequest = async (requestUser) => {
+    const me = {
+      uid: currentUser?.uid || DEFAULT_USER_ID,
+      username: userProfile?.username || currentUser?.displayName || "Staytup Listener",
+      avatar: userProfile?.avatar || "initial",
+      avatarColor: userProfile?.avatarColor || "#1DB954",
+    };
+    return await acceptFriendRequestRTDB(me, requestUser);
+  };
+
+  const declineFriendRequest = async (senderUid) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    return await declineFriendRequestRTDB(uid, senderUid);
+  };
+
+  const cancelFriendRequest = async (recipientUid) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    return await cancelFriendRequestRTDB(uid, recipientUid);
+  };
+
+  const removeFriend = async (friendUid) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    return await removeFriendRTDB(uid, friendUid);
+  };
+
+  const searchUsers = async (query) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    return await searchUsersRTDB(query, uid);
+  };
+
   return (
     <UserContext.Provider
       value={{
@@ -654,6 +733,15 @@ export const UserProvider = ({ children }) => {
         recentlyPlayed,
         streamCount,
         recordUserStream,
+        // Friend System
+        friends,
+        friendRequests,
+        sendFriendRequest,
+        acceptFriendRequest,
+        declineFriendRequest,
+        cancelFriendRequest,
+        removeFriend,
+        searchUsers,
       }}
     >
       {children}
@@ -673,6 +761,14 @@ const defaultUserContext = {
   recentlyPlayed: [],
   streamCount: 0,
   recordUserStream: () => {},
+  friends: [],
+  friendRequests: { incoming: [], outgoing: [] },
+  sendFriendRequest: () => Promise.resolve(false),
+  acceptFriendRequest: () => Promise.resolve(false),
+  declineFriendRequest: () => Promise.resolve(false),
+  cancelFriendRequest: () => Promise.resolve(false),
+  removeFriend: () => Promise.resolve(false),
+  searchUsers: () => Promise.resolve([]),
   isFavoriteArtist: () => false,
   toggleFavoriteArtist: () => {},
   isProfileOpen: false,
