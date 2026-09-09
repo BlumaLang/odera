@@ -573,9 +573,9 @@ export default function SearchScreen() {
   }, [isLoadingMore, isSearching, hasMore, query, results.length]);
 
   // Important: Playing a track must NEVER modify `query`
-  const handlePlaySong = (track, index, trackList = results) => {
+  const handlePlaySong = (track) => {
     addTrackToRecent(track);
-    playTrack(track, trackList, index);
+    playTrack(track, [track], 0);
   };
 
   const handleSelectArtist = (artistName) => {
@@ -868,7 +868,7 @@ export default function SearchScreen() {
             return (
               <TouchableOpacity
                 style={[styles.spotifySongRow, isCurrent && styles.activeSongRow]}
-                onPress={() => handlePlaySong(item, index, results)}
+                onPress={() => handlePlaySong(item)}
                 activeOpacity={0.7}
               >
                 {/* Artwork */}
@@ -978,13 +978,7 @@ export default function SearchScreen() {
                       /* Track Row (Screenshot 2) */
                       <TouchableOpacity
                         style={styles.recentTrackTouch}
-                        onPress={() =>
-                          handlePlaySong(
-                            item,
-                            idx,
-                            displayRecents.filter((i) => i.type !== "query")
-                          )
-                        }
+                        onPress={() => handlePlaySong(item)}
                         activeOpacity={0.7}
                       >
                         <View style={styles.spotifyArtworkWrap}>

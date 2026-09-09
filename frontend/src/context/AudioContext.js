@@ -96,6 +96,7 @@ const AudioProvider = ({ children }) => {
   const togglePlayPauseRef = useRef(null);
   const playNextRef = useRef(null);
   const playPreviousRef = useRef(null);
+  const enrichmentTokenRef = useRef(0);
 
   queueRef.current = queue;
   queueIndexRef.current = queueIndex;
@@ -832,58 +833,112 @@ const AudioProvider = ({ children }) => {
     setSleepEndOnTrack(false);
   };
 
-  // ─── Smart Auto-Queue: Enriches queue with artist tracks, trends & new feed releases ──
+  // ─── Smart Auto-Queue: Enriches queue with artist top hits & related artist tracks ──
   const enrichQueueForTrack = async (track, baseQueue = []) => {
     if (!track) return;
+    // If user explicitly chose a playlist/album/list with multiple songs, preserve their queue intact!
+    if (baseQueue && baseQueue.length > 1) return;
+
+    const currentToken = ++enrichmentTokenRef.current;
     try {
       const trackId = track.videoId || track.video_id || track.id;
-      const cleanArtist = (track.artist || track.primaryArtists || "")
-        .split(",")[0]
-        .split("&")[0]
-        .split("•")[0]
-        .trim();
+      const normTitle = (str) =>
+        String(str || "")
+          .toLowerCase()
+          .replace(/\(.*?\)/g, "")
+          .replace(/\[.*?\]/g, "")
+          .replace(/feat\..*$/i, "")
+          .replace(/ft\..*$/i, "")
+          .trim();
+
+      const currentTitleNorm = normTitle(track.title);
+
+      const artists = (track.artist || track.primaryArtists || "")
+        .split(/[,&•/]/)
+        .map((a) => a.replace(/\(.*?\)/g, "").trim())
+        .filter((a) => a.length > 1);
+
+      const cleanArtist = artists[0] || (track.artist || track.primaryArtists || "").trim();
 
       const existingIds = new Set(
         (baseQueue || []).map((t) => t?.videoId || t?.video_id || t?.id).filter(Boolean)
       );
-      existingIds.add(trackId);
+      if (trackId) existingIds.add(trackId);
 
-      // 1. Fetch tracks by the same artist
+      const existingTitles = new Set();
+      if (currentTitleNorm) existingTitles.add(currentTitleNorm);
+      (baseQueue || []).forEach((t) => {
+        const nt = normTitle(t?.title);
+        if (nt) existingTitles.add(nt);
+      });
+
+      // 1. Fetch official discography top hits by the primary artist
       let artistTracks = [];
       if (cleanArtist && cleanArtist.length > 1) {
         try {
-          const artistSearch = await api.search(cleanArtist, 0, 8);
-          const rawTracks = artistSearch?.tracks || artistSearch?.results || [];
+          const artistSongsData = await api.getArtistSongs(cleanArtist, 0, 15);
+          const rawTracks = artistSongsData?.tracks || artistSongsData?.results || [];
           artistTracks = rawTracks.filter((t) => {
             const id = t?.videoId || t?.video_id || t?.id;
+            const tTitle = normTitle(t?.title);
             if (!id || existingIds.has(id)) return false;
+            if (tTitle && existingTitles.has(tTitle)) return false;
             existingIds.add(id);
+            if (tTitle) existingTitles.add(tTitle);
             return true;
           });
         } catch (_) {}
       }
 
-      // 2. Fetch trending and fresh new songs from Home feed
-      let feedTracks = [];
-      try {
-        const feedData = await api.getHomeFeed();
-        const sections = feedData?.sections || [];
-        for (const sec of sections) {
-          const tList = sec?.tracks || sec?.items || sec?.data || [];
-          for (const t of tList) {
-            const id = t?.videoId || t?.video_id || t?.id;
-            if (id && !existingIds.has(id)) {
-              existingIds.add(id);
-              feedTracks.push(t);
+      // 2. If artist has few hits or there's a co-artist, fetch from secondary artist or similar artists
+      let relatedTracks = [];
+      if (artistTracks.length < 8 && cleanArtist && cleanArtist.length > 1) {
+        try {
+          const secondaryArtist = artists[1];
+          if (secondaryArtist && secondaryArtist.toLowerCase() !== cleanArtist.toLowerCase()) {
+            const secSongsData = await api.getArtistSongs(secondaryArtist, 0, 6);
+            const secRaw = secSongsData?.tracks || secSongsData?.results || [];
+            for (const st of secRaw) {
+              const id = st?.videoId || st?.video_id || st?.id;
+              const tTitle = normTitle(st?.title);
+              if (id && !existingIds.has(id) && (!tTitle || !existingTitles.has(tTitle))) {
+                existingIds.add(id);
+                if (tTitle) existingTitles.add(tTitle);
+                relatedTracks.push(st);
+              }
             }
           }
-        }
-      } catch (_) {}
 
-      // 3. Merge: artist songs first, then trending and new releases from feed
-      const mergedRecs = [...artistTracks.slice(0, 6), ...feedTracks.slice(0, 10)];
+          if (artistTracks.length + relatedTracks.length < 8) {
+            const relatedData = await api.getRelatedArtists(cleanArtist, 2);
+            const relatedArtists = relatedData?.artists || relatedData?.related || [];
+            for (const rel of relatedArtists) {
+              const relName = rel?.name || rel?.artist;
+              if (relName && relName.toLowerCase() !== cleanArtist.toLowerCase()) {
+                const relSongsData = await api.getArtistSongs(relName, 0, 4);
+                const rTracks = relSongsData?.tracks || relSongsData?.results || [];
+                for (const rt of rTracks) {
+                  const id = rt?.videoId || rt?.video_id || rt?.id;
+                  const tTitle = normTitle(rt?.title);
+                  if (id && !existingIds.has(id) && (!tTitle || !existingTitles.has(tTitle))) {
+                    existingIds.add(id);
+                    if (tTitle) existingTitles.add(tTitle);
+                    relatedTracks.push(rt);
+                  }
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 3. Queue only authentic artist hits & closely related tracks (No random Home feed dump!)
+      const mergedRecs = [...artistTracks, ...relatedTracks].slice(0, 15);
       if (mergedRecs.length > 0) {
+        if (currentToken !== enrichmentTokenRef.current) return;
+
         setQueue((prevQueue) => {
+          if (currentToken !== enrichmentTokenRef.current) return prevQueue;
           const curId = currentTrackRef.current?.videoId || currentTrackRef.current?.video_id || currentTrackRef.current?.id;
           const targetId = track.videoId || track.video_id || track.id;
           if (curId && targetId && curId !== targetId) return prevQueue;
@@ -941,6 +996,7 @@ const AudioProvider = ({ children }) => {
   };
 
   const clearQueue = () => {
+    enrichmentTokenRef.current++;
     if (currentTrackRef.current) {
       const single = [currentTrackRef.current];
       setQueue(single);
@@ -949,6 +1005,7 @@ const AudioProvider = ({ children }) => {
       queueIndexRef.current = 0;
     }
   };
+
 
   // Pre-resolve stream URLs for upcoming tracks so track transitions in background/PWA
   // happen SYNCHRONOUSLY with 0ms gap — preventing iOS & Android from muting background audio.
