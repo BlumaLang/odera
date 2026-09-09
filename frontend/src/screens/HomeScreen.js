@@ -781,8 +781,8 @@ export default function HomeScreen({ onNavigate } = {}) {
 
     return {
       id: `because_you_listen_${topAffinityArtist.toLowerCase().replace(/[^a-z0-9]/g, "_")}`,
-      title: `Because You Listen to ${topAffinityArtist}`,
-      description: `Top tracks and recommendations inspired by your love for ${topAffinityArtist}`,
+      title: `More Like ${topAffinityArtist}`,
+      description: `Tracks inspired by your love for ${topAffinityArtist}`,
       items: combined.slice(0, 15),
     };
   }, [topAffinityArtist, allFollowingTracks, recentlyPlayed, feed?.sections, hasPunjabiAffinity, isTrackPunjabi]);

@@ -65,13 +65,30 @@ export default function SectionList({ section, sectionIndex = 0 }) {
   const showScrollButtons = isDesktop || isTablet || Platform.OS === "web";
 
   return (
-    <View style={[styles.sectionWrapper, { backgroundColor: SECTION_BACKGROUNDS[sectionIndex % SECTION_BACKGROUNDS.length] }]}>
-      <View style={styles.sectionSeparator} />
+    <View
+      style={[
+        styles.sectionWrapper,
+        sectionIndex === 0 && styles.firstSectionWrapper,
+        { backgroundColor: SECTION_BACKGROUNDS[sectionIndex % SECTION_BACKGROUNDS.length] },
+      ]}
+    >
       <View style={styles.sectionHeaderRow}>
         <View style={styles.headerTextGroup}>
-          <Text style={styles.sectionTitle}>{section.title}</Text>
+          <Text
+            style={[styles.sectionTitle, (isDesktop || isTablet) && styles.sectionTitleDesktop]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {section.title}
+          </Text>
           {section.description ? (
-            <Text style={styles.sectionDescription}>{section.description}</Text>
+            <Text
+              style={styles.sectionDescription}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
+              {section.description}
+            </Text>
           ) : null}
         </View>
 
@@ -148,14 +165,12 @@ export default function SectionList({ section, sectionIndex = 0 }) {
 
 const styles = StyleSheet.create({
   sectionWrapper: {
-    marginVertical: 6,
-    paddingVertical: 4,
+    marginVertical: 4,
+    paddingVertical: 2,
   },
-  sectionSeparator: {
-    height: 1,
-    backgroundColor: "rgba(255, 255, 255, 0.06)",
-    marginHorizontal: 16,
-    marginBottom: 8,
+  firstSectionWrapper: {
+    marginTop: 0,
+    paddingTop: 0,
   },
   sectionHeaderRow: {
     flexDirection: "row",
@@ -166,19 +181,23 @@ const styles = StyleSheet.create({
   },
   headerTextGroup: {
     flex: 1,
-    paddingRight: 12,
+    paddingRight: 16,
+    justifyContent: "center",
   },
   sectionTitle: {
     fontFamily: fonts.bold,
     fontSize: 20,
     color: colors.text,
-    letterSpacing: -0.3,
+    letterSpacing: -0.4,
+  },
+  sectionTitleDesktop: {
+    fontSize: 22,
   },
   sectionDescription: {
     fontFamily: fonts.regular,
-    fontSize: 12,
+    fontSize: 13,
     color: colors.textSecondary,
-    marginTop: 2,
+    marginTop: 3,
   },
   scrollButtonsContainer: {
     flexDirection: "row",
