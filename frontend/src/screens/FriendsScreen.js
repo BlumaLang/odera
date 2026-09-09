@@ -14,7 +14,7 @@ import {
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { useResponsive } from "../context/ResponsiveContext";
-import { useUser, formatPersonName, formatUsername } from "../context/UserContext";
+import { useUser, formatPersonName, formatUsername, getDeterministicAvatarColor } from "../context/UserContext";
 import { useAudioPlayback } from "../context/AudioContext";
 import {
   subscribeFriendActivity,
@@ -27,7 +27,7 @@ import CreatePlaylistModal from "../components/CreatePlaylistModal";
 import { registerBackAction } from "../services/navigation";
 
 /**
- * Robust UserAvatar component using Dicebear Toon Head default preset
+ * Robust UserAvatar component using user avatar photo, Toon Head, or vibrant colored monogram
  */
 function UserAvatar({ user, size = 44, fontSize = 15, style }) {
   const [imgError, setImgError] = useState(false);
@@ -37,23 +37,27 @@ function UserAvatar({ user, size = 44, fontSize = 15, style }) {
   }, [user?.avatar, user?.photoURL, user?.avatarUrl]);
 
   const username = user?.username || user?.displayName || user?.name || "Friend";
-  const dicebearUrl = `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(username.trim())}`;
 
   const candidateUri =
-    (user?.avatar && typeof user.avatar === "string" && user.avatar.startsWith("http"))
+    (user?.avatar && typeof user.avatar === "string" && user.avatar.startsWith("http") && !user.avatar.includes("googleusercontent.com"))
       ? user.avatar
-      : (user?.avatarUrl && typeof user.avatarUrl === "string" && user.avatarUrl.startsWith("http"))
+      : (user?.avatarUrl && typeof user.avatarUrl === "string" && user.avatarUrl.startsWith("http") && !user.avatarUrl.includes("googleusercontent.com"))
       ? user.avatarUrl
-      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http"))
+      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http") && !user.photoURL.includes("googleusercontent.com"))
       ? user.photoURL
       : null;
 
-  // Never use Google account photo; always display crisp Dicebear Toon Head
-  const isGoogle = candidateUri && candidateUri.includes("googleusercontent.com");
-  const isInitial = user?.avatar === "initial";
+  const isInitial = user?.avatar === "initial" || (!candidateUri && !user?.avatar);
   const initial = (username[0] || "U").toUpperCase();
-  const avatarUri = (!imgError && candidateUri && !isGoogle) ? candidateUri : dicebearUrl;
-  const bgColor = user?.avatarColor || colors.primary;
+
+  const bgColor =
+    user?.avatarColor && user.avatarColor !== "#1DB954"
+      ? user.avatarColor
+      : getDeterministicAvatarColor(user?.uid || username);
+
+  const isLightBg = bgColor === "#FFFFFF" || bgColor === "#FFA500";
+  const textColor = isLightBg ? "#000000" : "#FFFFFF";
+  const showImage = !imgError && Boolean(candidateUri);
 
   return (
     <View
@@ -70,17 +74,17 @@ function UserAvatar({ user, size = 44, fontSize = 15, style }) {
         style,
       ]}
     >
-      {isInitial ? (
-        <Text style={{ fontFamily: fonts.bold, fontSize, color: "#000000" }}>
-          {initial}
-        </Text>
-      ) : (
+      {showImage ? (
         <Image
-          source={{ uri: avatarUri }}
-          style={{ width: size, height: size }}
+          source={{ uri: candidateUri }}
+          style={{ width: "100%", height: "100%" }}
           resizeMode="cover"
           onError={() => setImgError(true)}
         />
+      ) : (
+        <Text style={{ fontFamily: fonts.bold, fontSize, color: textColor }}>
+          {initial}
+        </Text>
       )}
     </View>
   );
@@ -972,17 +976,27 @@ export default function FriendsScreen({ onNavigate }) {
                               const sArtist = s?.artist || s?.subtitle || "";
                               return (
                                 <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
-                                  <Ionicons name="musical-note" size={12} color="#888888" style={{ marginRight: 4 }} />
+                                  <Ionicons name="musical-note" size={12} color="#1DB954" style={{ marginRight: 4 }} />
                                   <Text style={styles.userHandleSubText} numberOfLines={1}>
                                     {sTitle}{sArtist ? ` • ${sArtist}` : ""}
                                   </Text>
                                 </View>
                               );
                             })()
+                          ) : !u.isFriend ? (
+                            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+                              <Ionicons name="musical-notes-outline" size={12} color="#888888" style={{ marginRight: 4 }} />
+                              <Text style={[styles.userHandleSubText, { color: colors.textSecondary }]} numberOfLines={1}>
+                                Add friend to see currently played songs
+                              </Text>
+                            </View>
                           ) : (
-                            <Text style={styles.userHandleSubText} numberOfLines={1}>
-                              @{formatUsername(u.username || "")}
-                            </Text>
+                            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+                              <Ionicons name="musical-notes-outline" size={12} color="#888888" style={{ marginRight: 4 }} />
+                              <Text style={[styles.userHandleSubText, { color: colors.textSecondary }]} numberOfLines={1}>
+                                No songs played recently
+                              </Text>
+                            </View>
                           )}
                         </View>
 

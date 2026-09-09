@@ -1855,27 +1855,97 @@ export async function removeFriendRTDB(currentUid, friendUid) {
   }
 }
 
+const SEARCH_AVATAR_BG_COLORS = [
+  "#8C52FF", // Amethyst
+  "#2EBDD7", // Cyan
+  "#FFA500", // Amber
+  "#E8115B", // Rose
+  "#3A86FF", // Electric Blue
+  "#FF5722", // Coral
+  "#FFFFFF", // White
+  "#9D4EDD", // Purple
+];
+
+function getSearchAvatarColor(seedOrUid) {
+  if (!seedOrUid) return SEARCH_AVATAR_BG_COLORS[0];
+  let hash = 0;
+  const str = String(seedOrUid);
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  const idx = Math.abs(hash) % SEARCH_AVATAR_BG_COLORS.length;
+  return SEARCH_AVATAR_BG_COLORS[idx];
+}
+
 /**
- * Search public users by username or friendCode
+ * Search public users by username, displayName or friendCode, with complete avatar and avatarColor
  */
 export async function searchUsersRTDB(query, currentUid) {
   const cleanQ = (query || "").trim().toLowerCase().replace(/^@/, "");
   try {
-    const publicRef = ref(db, "publicUsers");
-    const snapshot = await get(publicRef);
-    let list = [];
-    if (snapshot.exists()) {
-      const val = snapshot.val();
-      list = Object.values(val || {}).filter((u) => u && u.uid && u.uid !== currentUid);
+    const [publicSnap, usersSnap] = await Promise.all([
+      get(ref(db, "publicUsers")).catch(() => null),
+      get(ref(db, "users")).catch(() => null),
+    ]);
+
+    const usersMap = new Map();
+
+    // 1. Populate from users node (most complete profile data)
+    if (usersSnap && usersSnap.exists()) {
+      const uVal = usersSnap.val() || {};
+      Object.entries(uVal).forEach(([uid, uData]) => {
+        if (!uid || uid === currentUid) return;
+        const prof = uData?.profile || {};
+        const uname = prof.username || uData?.username || `listener_${uid.slice(0, 5)}`;
+        const dName = prof.displayName || prof.name || uData?.displayName || uname;
+        const col = prof.avatarColor || uData?.avatarColor;
+        const av = prof.avatar || uData?.avatar || "initial";
+        usersMap.set(uid, {
+          uid,
+          username: uname,
+          displayName: dName,
+          avatar: av,
+          avatarColor: col && col !== "#1DB954" ? col : getSearchAvatarColor(uid || uname),
+          friendCode: uname.replace(/[^a-zA-Z0-9]/g, "").toUpperCase(),
+          lastPlayback: uData?.lastPlayback || null,
+        });
+      });
     }
+
+    // 2. Merge from publicUsers (may have newer index or lastPlayback)
+    if (publicSnap && publicSnap.exists()) {
+      const pVal = publicSnap.val() || {};
+      Object.values(pVal).forEach((pUser) => {
+        if (!pUser || !pUser.uid || pUser.uid === currentUid) return;
+        const existing = usersMap.get(pUser.uid);
+        const uname = pUser.username || existing?.username || "user";
+        const col = pUser.avatarColor || existing?.avatarColor;
+        const av = pUser.avatar || existing?.avatar || "initial";
+        usersMap.set(pUser.uid, {
+          ...existing,
+          ...pUser,
+          username: uname,
+          displayName: pUser.displayName || existing?.displayName || uname,
+          avatar: av,
+          avatarColor: col && col !== "#1DB954" ? col : getSearchAvatarColor(pUser.uid || uname),
+          lastPlayback: pUser.lastPlayback || existing?.lastPlayback || null,
+        });
+      });
+    }
+
+    let list = Array.from(usersMap.values());
+
     if (cleanQ) {
       list = list.filter((u) =>
         (u.username && u.username.toLowerCase().includes(cleanQ)) ||
+        (u.displayName && u.displayName.toLowerCase().includes(cleanQ)) ||
         (u.friendCode && u.friendCode.toLowerCase().includes(cleanQ)) ||
         (u.uid && u.uid.toLowerCase() === cleanQ)
       );
     }
-    return list.slice(0, 20);
+
+    return list.slice(0, 30);
   } catch (error) {
     console.warn("Failed to search users in RTDB:", error.message);
     return [];
