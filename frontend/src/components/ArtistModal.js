@@ -96,7 +96,6 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     initialPhoto || cachedData?.image || resolveLocalArtistImage(cleanName) || null
   );
   const [songs, setSongs] = useState(cachedData?.songs || []);
-  const [relatedArtists, setRelatedArtists] = useState(cachedData?.related || []);
   const [isLoading, setIsLoading] = useState(!cachedData?.songs?.length);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(cachedData ? cachedData.hasMore : true);
@@ -112,7 +111,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     }
   }, [initialPhoto]);
 
-  // Fetch artist photo, official songs, and related artists
+  // Fetch artist photo and official songs
   useEffect(() => {
     if (!visible || !cleanName) return;
 
@@ -131,9 +130,6 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
         setSongs(cached.songs);
         setHasMore(cached.hasMore);
         setIsLoading(false);
-        if (cached.related && cached.related.length > 0) {
-          setRelatedArtists(cached.related);
-        }
         if (cached.image) return;
       }
     }
@@ -176,20 +172,6 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       })
       .catch(() => {});
 
-    // Fetch related/similar artists (collaborators and peers)
-    api
-      .getRelatedArtists(cleanName, 10)
-      .then((res) => {
-        const list = res?.artists || res?.related || [];
-        if (isMounted && list.length > 0) {
-          setRelatedArtists(list);
-          artistDataCache.set(cleanName, {
-            ...(artistDataCache.get(cleanName) || {}),
-            related: list,
-          });
-        }
-      })
-      .catch(() => {});
 
     // 2. Fetch top songs using official artist endpoint with deduplication
     api
@@ -368,51 +350,10 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
             <Text style={styles.endOfListText}>You've reached the end</Text>
           </View>
         )}
-        {relatedArtists && relatedArtists.length > 0 && (
-          <View style={styles.relatedSection}>
-            <Text style={styles.relatedSectionTitle}>Fans Also Like & Collaborators</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.relatedRow}
-            >
-              {relatedArtists.map((rel, rIdx) => {
-                const rName = rel.name || rel.artist;
-                const rImg = rel.image || rel.thumbnail;
-                return (
-                  <TouchableOpacity
-                    key={`rel_artist_${rIdx}`}
-                    style={styles.relatedArtistItem}
-                    onPress={() => {
-                      if (recordArtistMovement) {
-                        recordArtistMovement(rName);
-                      }
-                      if (onSelectArtist) {
-                        onSelectArtist(rName);
-                      }
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    {rImg ? (
-                      <Image source={{ uri: rImg }} style={styles.relatedArtistImg} resizeMode="cover" />
-                    ) : (
-                      <View style={[styles.relatedArtistImg, styles.relatedArtistFallback]}>
-                        <Ionicons name="person" size={24} color="#777777" />
-                      </View>
-                    )}
-                    <Text style={styles.relatedArtistName} numberOfLines={1}>
-                      {rName}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        )}
         <View style={{ height: 80 }} />
       </View>
     );
-  }, [isLoadingMore, hasMore, songs.length, relatedArtists, recordArtistMovement, onSelectArtist]);
+  }, [isLoadingMore, hasMore, songs.length]);
 
   // Memoized Empty
   const emptyComponent = useMemo(() => {
@@ -720,44 +661,5 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 12,
     color: "rgba(255, 255, 255, 0.4)",
-  },
-  relatedSection: {
-    marginTop: 28,
-    marginBottom: 16,
-    paddingHorizontal: 16,
-  },
-  relatedSectionTitle: {
-    fontFamily: fonts.bold,
-    fontSize: 18,
-    color: "#FFFFFF",
-    marginBottom: 14,
-    letterSpacing: -0.2,
-  },
-  relatedRow: {
-    flexDirection: "row",
-    gap: 16,
-    paddingRight: 20,
-  },
-  relatedArtistItem: {
-    width: 90,
-    alignItems: "center",
-  },
-  relatedArtistImg: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: "#222222",
-    marginBottom: 8,
-  },
-  relatedArtistFallback: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  relatedArtistName: {
-    fontFamily: fonts.medium,
-    fontSize: 12,
-    color: "#CCCCCC",
-    textAlign: "center",
-    width: 86,
   },
 });

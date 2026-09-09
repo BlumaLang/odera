@@ -17,8 +17,12 @@ export function getBackendBase() {
     return process.env.EXPO_PUBLIC_API_URL.replace(/\/$/, "");
   }
   if (Platform.OS === "web" && typeof window !== "undefined" && window.location) {
-    if (window.location.port === "3000") {
-      return window.location.origin;
+    const { hostname, port, protocol } = window.location;
+    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname.startsWith("192.168.")) {
+      if (port === "3000") {
+        return window.location.origin;
+      }
+      return `${protocol}//${hostname}:3000`;
     }
   }
   return RENDER_BASE_URL;
@@ -54,7 +58,7 @@ function parseLrc(lrcText) {
 async function request(endpoint, options = {}, retries = 1) {
   const base = getBackendBase();
   const url = endpoint.startsWith("http") ? endpoint : `${base}${endpoint}`;
-  const timeoutMs = 25000;
+  const timeoutMs = 8000;
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
   const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
 

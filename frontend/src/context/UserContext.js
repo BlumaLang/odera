@@ -158,25 +158,33 @@ export const UserProvider = ({ children }) => {
       (window.sessionStorage?.getItem("@staytup_pending_oauth_redirect") === "true" ||
         window.localStorage?.getItem("@staytup_pending_oauth_redirect") === "true");
 
-    // Fast-track restoration from cached Firebase session for seamless PWA startup
-    getLocalSession("@staytup_firebase_user").then((cached) => {
+    // Fast-track restoration from cached session for seamless, instant startup
+    Promise.all([
+      getLocalSession("@staytup_firebase_user"),
+      getLocalSession("@staytup_pin_user"),
+      getLocalSession("@staytup_qr_user"),
+    ]).then(([cachedFb, cachedPin, cachedQr]) => {
+      const cached = cachedFb || cachedPin || cachedQr;
       if (cached && cached.uid) {
         setCurrentUser((prev) => prev || {
           uid: cached.uid,
-          displayName: cached.displayName || "Staytup Listener",
+          displayName: cached.displayName || cached.username || "Staytup Listener",
           email: cached.email || null,
           photoURL: cached.photoURL || null,
           isAnonymous: false,
         });
         setIsLoggedIn(true);
-        if (cached.providerId) setLoginProvider(cached.providerId);
+        if (cached.providerId || cached.pin) {
+          setLoginProvider(cached.providerId || (cached.pin ? "pin" : "qr"));
+        }
+        setIsLoadingUser(false);
       }
     }).catch(() => {});
 
-    // Safety timeout: Give adequate time on mobile PWA cold start (3.5s) or OAuth redirect (7s)
+    // Fast startup safety timeout: never hang after splash screen
     const safetyTimer = setTimeout(() => {
       setIsLoadingUser(false);
-    }, isPendingRedirect ? 7000 : 3500);
+    }, isPendingRedirect ? 4000 : 1200);
 
     // Check OAuth redirect result (for Apple / Google Sign-In)
     fbCheckAuthRedirect()

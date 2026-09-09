@@ -415,10 +415,9 @@ function AppContent() {
 
   if (isLoadingUser) {
     return (
-      <View style={styles.loadingContainer}>
-        <StatusBar style="light" backgroundColor="#000000" />
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
+      <SafeAreaProvider>
+        <SplashScreen onFinish={() => {}} />
+      </SafeAreaProvider>
     );
   }
 
@@ -460,13 +459,18 @@ export default function App() {
     Poppins_700Bold,
     Poppins_800ExtraBold,
   });
+  const [fontTimeout, setFontTimeout] = useState(false);
 
-  // Show the React splash screen while fonts are loading
-  // (the HTML native splash is already showing behind this)
-  if (!fontsLoaded) {
+  useEffect(() => {
+    const timer = setTimeout(() => setFontTimeout(true), 1200);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Show the React splash screen while fonts are loading (max 1.2s safety)
+  if (!fontsLoaded && !fontTimeout) {
     return (
       <SafeAreaProvider>
-        <SplashScreen onFinish={() => {}} />
+        <SplashScreen onFinish={() => setFontTimeout(true)} />
       </SafeAreaProvider>
     );
   }

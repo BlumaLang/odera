@@ -2463,7 +2463,7 @@ app.get(['/api/artists/:idOrName/songs', '/artists/:idOrName/songs', '/api/artis
             if (normalized) tracks.push(normalized);
           }
 
-          if (tracks.length > 0) {
+          if (tracks.length >= 10) {
             hasMore = rawSongs.length >= 8;
             return res.json({
               tracks,
@@ -2480,7 +2480,7 @@ app.get(['/api/artists/:idOrName/songs', '/artists/:idOrName/songs', '/api/artis
       // 2. Direct JioSaavn artist.getArtistMoreSong & artist.getArtistPageDetails
       try {
         const [moreRes, pageRes] = await Promise.allSettled([
-          fetch(`https://www.jiosaavn.com/api.php?__call=artist.getArtistMoreSong&_format=json&_marker=0&api_version=4&ctx=web6dot0&artistId=${artistId}&page=${page}&category=popularity&sort_order=desc`, {
+          fetch(`https://www.jiosaavn.com/api.php?__call=artist.getArtistMoreSong&_format=json&_marker=0&api_version=4&ctx=web6dot0&artistId=${artistId}&page=${page}&category=popularity&sort_order=desc&n=30`, {
             headers: { 'User-Agent': 'Mozilla/5.0' },
             signal: AbortSignal.timeout(6000)
           }).then(r => r.json()),
@@ -2496,7 +2496,7 @@ app.get(['/api/artists/:idOrName/songs', '/artists/:idOrName/songs', '/api/artis
         const rawPage = pageRes.status === 'fulfilled' ? (pageRes.value?.topSongs?.songs || (Array.isArray(pageRes.value?.topSongs) ? pageRes.value.topSongs : [])) : [];
         const directList = [...rawMore, ...rawPage];
 
-        const seenTitles = new Set();
+        const seenTitles = new Set(tracks.map(t => (t.title || '').toLowerCase().replace(/\s*\(.*?\)/g, '').trim()));
         for (const s of directList) {
           const album = s.album || s.album?.name || '';
           const title = (s.title || s.song || s.name || '').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&');
@@ -2510,7 +2510,7 @@ app.get(['/api/artists/:idOrName/songs', '/artists/:idOrName/songs', '/api/artis
           if (normalized) tracks.push(normalized);
         }
 
-        if (tracks.length > 0) {
+        if (tracks.length >= 10) {
           return res.json({
             tracks,
             results: tracks,
@@ -2525,9 +2525,13 @@ app.get(['/api/artists/:idOrName/songs', '/artists/:idOrName/songs', '/api/artis
 
     // 3. Fallback to song search on staytup-api and direct JioSaavn with title deduplication
     try {
-      const [searchRes, directSearchRes] = await Promise.allSettled([
+      const [searchRes, directSearchRes, directSongsRes] = await Promise.allSettled([
         fetchSaavnJson(`/search/songs?query=${encodeURIComponent(artistName)}&limit=40`),
-        fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(artistName)}&p=${page + 1}&n=${limit}`, {
+        fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(artistName)}&p=${page + 1}&n=40`, {
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+          signal: AbortSignal.timeout(6000)
+        }).then(r => r.json()),
+        fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(artistName + ' songs')}&p=${page + 1}&n=40`, {
           headers: { 'User-Agent': 'Mozilla/5.0' },
           signal: AbortSignal.timeout(6000)
         }).then(r => r.json())
@@ -2535,8 +2539,9 @@ app.get(['/api/artists/:idOrName/songs', '/artists/:idOrName/songs', '/api/artis
 
       const raw1 = searchRes.status === 'fulfilled' ? (searchRes.value?.data?.results || []) : [];
       const raw2 = directSearchRes.status === 'fulfilled' ? (directSearchRes.value?.results || []) : [];
-      const combined = [...raw1, ...raw2];
-      const seenTitles = new Set();
+      const raw3 = directSongsRes.status === 'fulfilled' ? (directSongsRes.value?.results || []) : [];
+      const combined = [...raw1, ...raw2, ...raw3];
+      const seenTitles = new Set(tracks.map(t => (t.title || '').toLowerCase().replace(/\s*\(.*?\)/g, '').trim()));
 
       for (const s of combined) {
         const album = s.album?.name || s.album || '';
