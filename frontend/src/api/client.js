@@ -16,15 +16,7 @@ export function getBackendBase() {
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL.replace(/\/$/, "");
   }
-  if (Platform.OS === "web" && typeof window !== "undefined" && window.location) {
-    const { hostname, port, protocol } = window.location;
-    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname.startsWith("192.168.")) {
-      if (port === "3000") {
-        return window.location.origin;
-      }
-      return `${protocol}//${hostname}:3000`;
-    }
-  }
+  // Always connect directly to online production server on Render
   return RENDER_BASE_URL;
 }
 
