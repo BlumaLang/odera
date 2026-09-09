@@ -642,6 +642,7 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
     const scoreTrack = (t) => {
       const titleLower = (t.title || '').toLowerCase();
       const cleanT = cleanSearchTitle(t.title || '');
+      const artistLower = (t.artist || '').toLowerCase();
       let score = 0;
 
       if (titleLower === qLower) score += 300;
@@ -651,17 +652,23 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       else if (qWords.length > 0 && qWords.every(w => cleanT.includes(w) || titleLower.includes(w))) score += 55;
       else if (qWords.some(w => cleanT.includes(w))) score += 20;
 
+      // Artist match scoring (critical when query is an artist name like "The Kid LAROI")
+      if (artistLower === qLower) score += 250;
+      else if (artistLower.includes(qLower)) score += 180;
+      else if (qWords.length > 0 && qWords.every(w => artistLower.includes(w))) score += 120;
+      else if (qWords.some(w => artistLower.includes(w))) score += 40;
+
       if (!isExplicitInstrumental) {
         if (/instrumental|karaoke|cover|remake|orchestra/i.test(titleLower) || /instrumental/i.test(t.album || '')) {
-          score -= 50;
+          score -= 60;
         }
       }
 
       if (t.source === 'saavn') score += 15;
 
       const playCount = Number(t.playCount) || 0;
-      if (playCount > 10000000) score += 40;
-      else if (playCount > 1000000) score += 25;
+      if (playCount > 10000000) score += 50;
+      else if (playCount > 1000000) score += 30;
       else if (playCount > 100000) score += 15;
       else if (playCount > 10000) score += 5;
 
