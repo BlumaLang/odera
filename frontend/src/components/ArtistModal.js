@@ -79,6 +79,7 @@ const ArtistSongRow = React.memo(function ArtistSongRow({
         style={styles.artistSongRow}
         onAddToPlaylist={onAddToPlaylist}
         onPress={onPlay}
+        showPlayButton={false}
       />
     </View>
   );
