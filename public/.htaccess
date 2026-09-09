@@ -1,5 +1,5 @@
 <IfModule mod_headers.c>
-    # Security headers (CORS handled by PHP backend)
+    # Security headers
     Header always set Cross-Origin-Opener-Policy "same-origin-allow-popups"
     Header always set X-Content-Type-Options "nosniff"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
@@ -20,10 +20,10 @@
     # Route /api to the PHP API router
     RewriteRule ^api$ api/index.php [L]
 
-    # Serve frontend from dist/ or root
+    # Serve frontend (SPA fallback)
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteRule ^(.*)$ dist/index.html [L]
+    RewriteRule ^(.*)$ index.html [L]
 </IfModule>
 
 # PWA Cache Controls
