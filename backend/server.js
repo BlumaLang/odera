@@ -405,6 +405,12 @@ app.get(['/api/suggest', '/suggest', '/suggest/:userId'], async (req, res) => {
 });
 
 // ─── JioSaavn Direct Audio & Search Integration ──────────────────────────────
+const JIOSAAVN_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Referer': 'https://www.jiosaavn.com/'
+};
 const SAAVN_API_PROVIDERS = [
   process.env.SAAVN_API_BASE_URL || 'https://staytup-api.onrender.com/api'
 ];
@@ -562,36 +568,46 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
 
     const isExplicitInstrumental = /instrumental|karaoke|bgm/i.test(query);
 
-    // 2. Fetch concurrently from user's Staytup API and Direct JioSaavn API with pagination (NO YouTube)
-    const [staytupRes, directSaavnRes, directAutoRes] = await Promise.allSettled([
-      fetchSaavnJson(`/search/songs?query=${encodeURIComponent(query)}&page=${page}&limit=${limit}`).catch(() => null),
+    // 2. Fetch concurrently from JioSaavn Direct API (with browser headers) & Staytup API
+    const searchPromises = [
       fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query)}&p=${page}&n=${limit}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(6000)
+        headers: JIOSAAVN_HEADERS,
+        signal: AbortSignal.timeout(10000)
       }).then(r => r.json()).catch(() => null),
-      page === 1
-        ? fetch(`https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&query=${encodeURIComponent(query)}`, {
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            signal: AbortSignal.timeout(5000)
-          }).then(r => r.json()).catch(() => null)
-        : Promise.resolve(null)
-    ]);
+      fetchSaavnJson(`/search/songs?query=${encodeURIComponent(query)}&page=${page}&limit=${limit}`).catch(() => null),
+    ];
 
+    if (!/songs?$/i.test(query)) {
+      searchPromises.push(
+        fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query + ' songs')}&p=${page}&n=${limit}`, {
+          headers: JIOSAAVN_HEADERS,
+          signal: AbortSignal.timeout(10000)
+        }).then(r => r.json()).catch(() => null)
+      );
+    }
+
+    if (page === 1) {
+      searchPromises.push(
+        fetch(`https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&query=${encodeURIComponent(query)}`, {
+          headers: JIOSAAVN_HEADERS,
+          signal: AbortSignal.timeout(6000)
+        }).then(r => r.json()).catch(() => null)
+      );
+    }
+
+    const searchResponses = await Promise.allSettled(searchPromises);
     let rawSongs = [];
 
-    // From staytup-api:
-    if (staytupRes.status === 'fulfilled' && staytupRes.value?.success && Array.isArray(staytupRes.value.data?.results)) {
-      rawSongs.push(...staytupRes.value.data.results);
-    }
-
-    // From direct JioSaavn search:
-    if (directSaavnRes.status === 'fulfilled' && Array.isArray(directSaavnRes.value?.results)) {
-      rawSongs.push(...directSaavnRes.value.results);
-    }
-
-    // From direct JioSaavn autocomplete:
-    if (directAutoRes?.status === 'fulfilled' && Array.isArray(directAutoRes.value?.songs?.data)) {
-      rawSongs.push(...directAutoRes.value.songs.data);
+    for (const res of searchResponses) {
+      if (res.status === 'fulfilled' && res.value) {
+        if (Array.isArray(res.value?.results)) {
+          rawSongs.push(...res.value.results);
+        } else if (Array.isArray(res.value?.data?.results)) {
+          rawSongs.push(...res.value.data.results);
+        } else if (Array.isArray(res.value?.songs?.data)) {
+          rawSongs.push(...res.value.songs.data);
+        }
+      }
     }
 
     let normalized = rawSongs.map(s => normalizeSaavnSong(s, null)).filter(Boolean);
@@ -609,7 +625,7 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       });
     }
 
-    // Relevance scoring: guarantees exact song title matches (e.g. "GIRLS") rank at the top
+    // Relevance scoring: guarantees exact song title matches rank at the top
     const qLower = query.toLowerCase().trim();
     const qWords = qLower.split(/\s+/).filter(w => w.length > 1);
 
@@ -628,21 +644,19 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       const cleanT = cleanSearchTitle(t.title || '');
       let score = 0;
 
-      if (titleLower === qLower) score += 300; // Absolute exact title (no extra words/feat)
-      else if (cleanT === qLower) score += 200; // Clean title matches query
+      if (titleLower === qLower) score += 300;
+      else if (cleanT === qLower) score += 200;
       else if (cleanT.startsWith(qLower + ' ') || titleLower.startsWith(qLower + ' ')) score += 120;
       else if (cleanT.includes(qLower) || titleLower.includes(qLower)) score += 70;
       else if (qWords.length > 0 && qWords.every(w => cleanT.includes(w) || titleLower.includes(w))) score += 55;
       else if (qWords.some(w => cleanT.includes(w))) score += 20;
 
-      // Penalize instrumental/karaoke/covers when user didn't ask for them
       if (!isExplicitInstrumental) {
         if (/instrumental|karaoke|cover|remake|orchestra/i.test(titleLower) || /instrumental/i.test(t.album || '')) {
           score -= 50;
         }
       }
 
-      // Bonus for genuine official 320kbps Saavn tracks
       if (t.source === 'saavn') score += 15;
 
       const playCount = Number(t.playCount) || 0;
@@ -671,41 +685,6 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       if (dedupeKey) seenKeys.add(dedupeKey);
       finalTracks.push(t);
       if (finalTracks.length >= limit) break;
-    }
-
-    // If tracks are missing or sparse (e.g. international artists, unreleased/phonk, Kid LAROI, PROS BANDIDO), supplement via YouTube
-    if (finalTracks.length < limit) {
-      try {
-        const ytResults = await scrapeYouTubeSearch(query);
-        for (const yt of ytResults) {
-          if (!yt) continue;
-          const vid = yt.videoId || yt.id;
-          const cleanT = cleanVideoTitle(yt.title);
-          const cleanTitle = cleanT.toLowerCase().replace(/\s*\([^)]*\)/g, '').replace(/[^a-z0-9]/g, '').trim();
-          const cleanArtist = (yt.artist || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 15);
-          const dedupeKey = `${cleanTitle}_${cleanArtist}`;
-          if (!vid || seenIds.has(vid)) continue;
-          if (dedupeKey && seenKeys.has(dedupeKey)) continue;
-          seenIds.add(vid);
-          if (dedupeKey) seenKeys.add(dedupeKey);
-          finalTracks.push({
-            id: vid,
-            videoId: vid,
-            video_id: vid,
-            title: cleanT,
-            artist: yt.artist || 'YouTube Artist',
-            album: '',
-            thumbnail: yt.thumbnail || yt.artwork_url || '',
-            artwork_url: yt.artwork_url || yt.thumbnail || '',
-            duration: yt.duration || 0,
-            duration_seconds: yt.duration_seconds || 0,
-            source: 'youtube'
-          });
-          if (finalTracks.length >= limit) break;
-        }
-      } catch (ytErr) {
-        console.warn('YouTube search supplement error:', ytErr.message);
-      }
     }
 
     res.json({
@@ -805,40 +784,6 @@ app.get(['/api/stream/saavn/:id', '/stream/saavn/:id'], async (req, res) => {
     }
   } catch (err) {
     console.warn(`Saavn stream resolution failed for ${rawId}:`, err.message);
-  }
-
-  // Fallback: try YouTube search using song metadata or raw ID
-  try {
-    const songTitle = resolvedSong?.name || resolvedSong?.title || rawId;
-    const songArtist = resolvedSong?.artists?.primary?.[0]?.name || resolvedSong?.primaryArtists || '';
-    const searchQuery = `${songArtist} ${songTitle} official audio`.trim();
-    const ytResults = await scrapeYouTubeSearch(searchQuery);
-    if (ytResults && ytResults.length > 0) {
-      const bestResult = ytResults[0];
-      const ytStream = await extractAudioStream(bestResult.videoId);
-      if (ytStream && ytStream.url) {
-        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-        const host = req.get('host') || `localhost:${PORT}`;
-        const artwork = resolvedSong?.image?.find?.(img => img.quality === '500x500')?.url || bestResult.thumbnail || '';
-        const fallbackData = {
-          id: `saavn_${rawId}`,
-          videoId: rawId,
-          title: songTitle,
-          artist: songArtist || bestResult.artist,
-          artwork_url: artwork,
-          thumbnail: artwork,
-          stream_url: ytStream.url,
-          proxy_url: `${protocol}://${host}/stream/${bestResult.videoId}/audio`,
-          bitrate: '320kbps',
-          contentType: ytStream.contentType || 'audio/mp4',
-          source: 'yt-dlp-fallback'
-        };
-        saavnStreamCache.set(rawId, { data: fallbackData, expiry: Date.now() + SAAVN_STREAM_CACHE_TTL });
-        return res.json(fallbackData);
-      }
-    }
-  } catch (ytErr) {
-    console.error(`YouTube fallback also failed for ${rawId}:`, ytErr.message);
   }
 
   res.status(502).json({ error: 'Failed to resolve audio stream', id: rawId });
@@ -2557,12 +2502,16 @@ app.get(['/api/artists/:idOrName/songs', '/artists/:idOrName/songs', '/api/artis
       const searchPromises = [
         fetchSaavnJson(`/search/songs?query=${encodeURIComponent(artistName)}&page=${page + 1}&limit=${limit}`).catch(() => null),
         fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(artistName)}&p=${page + 1}&n=${limit}`, {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          signal: AbortSignal.timeout(6000)
+          headers: JIOSAAVN_HEADERS,
+          signal: AbortSignal.timeout(8000)
         }).then(r => r.json()).catch(() => null),
         fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(artistName + ' songs')}&p=${page + 1}&n=${limit}`, {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          signal: AbortSignal.timeout(6000)
+          headers: JIOSAAVN_HEADERS,
+          signal: AbortSignal.timeout(8000)
+        }).then(r => r.json()).catch(() => null),
+        fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(artistName + ' hits')}&p=${page + 1}&n=${limit}`, {
+          headers: JIOSAAVN_HEADERS,
+          signal: AbortSignal.timeout(8000)
         }).then(r => r.json()).catch(() => null),
       ];
 
@@ -2573,36 +2522,6 @@ app.get(['/api/artists/:idOrName/songs', '/artists/:idOrName/songs', '/api/artis
           addCandidateSongs(list);
           if (tracks.length >= limit) break;
         }
-      }
-    }
-
-    // 3. If still under limit tracks (e.g. The Kid LAROI, PROS BANDIDO, Western/Indie artists), supplement with YouTube
-    if (tracks.length < limit) {
-      try {
-        const ytResults = await scrapeYouTubeSearch(`${artistName} songs official`);
-        for (const t of ytResults) {
-          if (!t) continue;
-          const cleanT = cleanVideoTitle(t.title);
-          const normTitle = cleanT.toLowerCase().replace(/\s*\(.*?\)/g, '').replace(/[^a-z0-9]/g, '').trim();
-          if (!normTitle || seenTitles.has(normTitle)) continue;
-          seenTitles.add(normTitle);
-          tracks.push({
-            id: t.videoId,
-            videoId: t.videoId,
-            video_id: t.videoId,
-            title: cleanT,
-            artist: t.artist || artistName,
-            album: '',
-            thumbnail: t.thumbnail || t.artwork_url || '',
-            artwork_url: t.artwork_url || t.thumbnail || '',
-            duration: t.duration || 0,
-            duration_seconds: t.duration_seconds || 0,
-            source: 'youtube',
-          });
-          if (tracks.length >= limit) break;
-        }
-      } catch (err) {
-        console.warn('YouTube fallback in artist songs error:', err.message);
       }
     }
 

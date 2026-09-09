@@ -134,27 +134,6 @@ export const api = {
       console.warn("Saavn search request error:", err.message);
     }
 
-    // Resilient fallback to YouTube search if Saavn returned 0 songs or failed
-    try {
-      const ytData = await request(`/api/search?q=${encodeURIComponent(cleanQ)}`);
-      const ytRaw = ytData?.results || ytData?.tracks || [];
-      if (ytRaw.length > 0) {
-        const list = ytRaw.map((item) => ({
-          ...item,
-          artwork_url: item.artwork_url || item.thumbnail || "",
-          thumbnail: item.thumbnail || item.artwork_url || "",
-          source: item.source || "youtube",
-        }));
-        return {
-          query: cleanQ,
-          count: list.length,
-          results: list,
-          tracks: list,
-          has_more: Boolean(ytData?.has_more ?? (list.length >= 20)),
-        };
-      }
-    } catch (_) {}
-
     return { query: cleanQ, count: 0, results: [], tracks: [], has_more: false };
   },
 
