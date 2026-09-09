@@ -793,33 +793,87 @@ app.get(['/api/track-image/:id', '/track-image/:id'], async (req, res) => {
   }
 });
 
+function isCompilationAlbum(albumName, songTitle) {
+  if (!albumName) return false;
+  const a = albumName.toLowerCase().trim();
+  const t = (songTitle || '').toLowerCase().trim();
+  if (a.includes(t) || t.includes(a)) return false;
+  const keywords = [
+    'bollywood hits',
+    'bollywood top hits',
+    'world music day',
+    'best of',
+    'hits of',
+    'greatest hits',
+    'superhits',
+    'top hits',
+    'collection',
+    'mashup'
+  ];
+  return keywords.some(kw => a.includes(kw));
+}
+
 // 3. Saavn Home / Trending Route
 app.get(['/api/home/saavn', '/home/saavn'], async (req, res) => {
   try {
-    const trendingQueries = [
-      { id: 'trending_now', title: 'Trending Now', q: 'Trending Hindi Hits' },
-      { id: 'bollywood_hits', title: 'Bollywood Top Hits', q: 'Bollywood Top Hits' },
-      { id: 'romantic_melodies', title: 'Romantic Melodies', q: 'Bollywood Romantic Melodies' },
-      { id: 'punjabi_vibes', title: 'Punjabi Blockbusters', q: 'Punjabi Top Hits' },
-      { id: 'new_releases', title: 'Fresh New Releases', q: 'Latest Hindi Songs' },
-      { id: 'indie_pop', title: 'Indie Pop Hits', q: 'Indian Indie' },
+    const playlistSections = [
+      { id: 'trending_now', title: 'Trending Now', playlistId: '47599074', fallbackQ: 'Trending Hindi Hits' },
+      { id: 'bollywood_hits', title: 'Bollywood Top Hits', playlistId: '1134543272', fallbackQ: 'Bollywood Superhits' },
+      { id: 'romantic_melodies', title: 'Romantic Melodies', playlistId: '1302033575', fallbackQ: 'Bollywood Romantic Melodies' },
+      { id: 'punjabi_vibes', title: 'Punjabi Blockbusters', playlistId: '1134543511', fallbackQ: 'Punjabi Top Hits' },
+      { id: 'new_releases', title: 'Fresh New Releases', playlistId: '6689255', fallbackQ: 'Latest Hindi Songs' },
+      { id: 'indie_pop', title: 'Indie Pop Hits', playlistId: '1219169738', fallbackQ: 'Indian Indie' },
     ];
 
     const sections = await Promise.all(
-      trendingQueries.map(async (sec) => {
+      playlistSections.map(async (sec) => {
+        let tracks = [];
         try {
-          const data = await fetchSaavnJson(`/search/songs?query=${encodeURIComponent(sec.q)}&limit=15`);
-          const raw = data?.data?.results || [];
-          const tracks = raw.map(s => normalizeSaavnSong(s, null)).filter(Boolean);
-          return {
-            id: sec.id,
-            title: sec.title,
-            tracks,
-            items: tracks
-          };
+          // 1. Fetch from official curated playlist (guarantees official single/movie cover art)
+          const data = await fetchSaavnJson(`/playlists?id=${sec.playlistId}&limit=25`);
+          const raw = data?.data?.songs || [];
+          const seen = new Set();
+          for (const s of raw) {
+            const album = s.album?.name || s.album || '';
+            const title = (s.name || s.title || '').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&');
+            const normTitle = title.toLowerCase().replace(/\s*\(.*?\)/g, '').trim();
+            if (seen.has(normTitle)) continue;
+            if (isCompilationAlbum(album, title)) continue;
+            seen.add(normTitle);
+            const normalized = normalizeSaavnSong(s, null);
+            if (normalized) tracks.push(normalized);
+            if (tracks.length >= 15) break;
+          }
         } catch (e) {
-          return { id: sec.id, title: sec.title, tracks: [], items: [] };
+          console.warn(`[Saavn Feed] Playlist ${sec.playlistId} failed, trying search fallback:`, e.message);
         }
+
+        // 2. Fallback search if playlist was unavailable or returned few tracks
+        if (tracks.length < 10) {
+          try {
+            const data = await fetchSaavnJson(`/search/songs?query=${encodeURIComponent(sec.fallbackQ)}&limit=30`);
+            const raw = data?.data?.results || [];
+            const seen = new Set(tracks.map(t => (t.title || '').toLowerCase().replace(/\s*\(.*?\)/g, '').trim()));
+            for (const s of raw) {
+              const album = s.album?.name || s.album || '';
+              const title = (s.name || s.title || '').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&');
+              const normTitle = title.toLowerCase().replace(/\s*\(.*?\)/g, '').trim();
+              if (seen.has(normTitle)) continue;
+              if (isCompilationAlbum(album, title)) continue;
+              seen.add(normTitle);
+              const normalized = normalizeSaavnSong(s, null);
+              if (normalized) tracks.push(normalized);
+              if (tracks.length >= 15) break;
+            }
+          } catch (_) {}
+        }
+
+        return {
+          id: sec.id,
+          title: sec.title,
+          tracks,
+          items: tracks
+        };
       })
     );
 
