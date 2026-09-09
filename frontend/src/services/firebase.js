@@ -493,21 +493,38 @@ export function subscribeUserData(uid, callback) {
 export async function saveUserProfile(uid, profileData) {
   if (!uid) return;
   try {
-    const profileRef = ref(db, `users/${uid}/profile`);
-    await update(profileRef, {
+    const rawUsername = profileData.username || "listener";
+    const cleanUsername = rawUsername.toLowerCase().replace(/[^a-z0-9_.]/g, "").slice(0, 15) || "listener";
+
+    let cleanDisplayName = profileData.displayName || profileData.name || "";
+    if (cleanDisplayName) {
+      cleanDisplayName = cleanDisplayName
+        .slice(0, 15)
+        .split(/\s+/)
+        .map((p) => (p ? p.charAt(0).toUpperCase() + p.slice(1).toLowerCase() : ""))
+        .join(" ")
+        .slice(0, 15);
+    }
+
+    const payload = {
       ...profileData,
+      username: cleanUsername,
+      ...(cleanDisplayName ? { displayName: cleanDisplayName, name: cleanDisplayName } : {}),
       updatedAt: new Date().toISOString(),
-    });
+    };
+
+    const profileRef = ref(db, `users/${uid}/profile`);
+    await update(profileRef, payload);
 
     // Public directory index for friend search & discovery
-    const cleanUsername = profileData.username || "Staytup Listener";
     const friendCode = cleanUsername.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
     const publicRef = ref(db, `publicUsers/${uid}`);
     await update(publicRef, {
       uid,
       username: cleanUsername,
+      displayName: cleanDisplayName || cleanUsername,
       avatar: profileData.avatar || "initial",
-      avatarColor: profileData.avatarColor || "#1DB954",
+      avatarColor: profileData.avatarColor || "#8C52FF",
       friendCode,
       updatedAt: Date.now(),
     });
@@ -1346,7 +1363,7 @@ export async function removeTrackFromPlaylistRTDB(uid, playlistId, videoId) {
   }
 }
 
-export async function renamePlaylistRTDB(uid, playlistId, newName) {
+export async function renamePlaylistRTDB(uid, playlistId, newName, newCover = "") {
   if (!uid || !playlistId || !newName) return false;
   try {
     const playlistsRef = ref(db, `users/${uid}/playlists`);
@@ -1359,6 +1376,7 @@ export async function renamePlaylistRTDB(uid, playlistId, newName) {
     list[idx] = {
       ...list[idx],
       name: newName.trim(),
+      ...(newCover ? { cover_url: newCover, preview_artwork: newCover } : {}),
       updatedAt: Date.now(),
     };
     await set(playlistsRef, list);
@@ -1827,7 +1845,7 @@ export function subscribeFriendActivity(friendUid, callback) {
 
 function sanitizeDbKey(key) {
   if (!key || typeof key !== "string") return "";
-  return key.trim().toLowerCase().replace(/[.#$[\]/]/g, "_");
+  return key.trim().toLowerCase().replace(/\s+/g, "_").replace(/[.#$[\]/]/g, "_");
 }
 
 /**
@@ -1839,11 +1857,7 @@ export async function getCachedArtist(artistIdOrName) {
   if (!clean) return null;
 
   try {
-    let snap = await get(ref(db, `artists_cache/${clean}`));
-    if (!snap.exists() && clean.includes(" ")) {
-      const underscored = clean.replace(/\s+/g, "_");
-      snap = await get(ref(db, `artists_cache/${underscored}`));
-    }
+    const snap = await get(ref(db, `artists_cache/${clean}`));
     if (snap && snap.exists()) {
       const data = snap.val();
       if (data && (data.imageUrl || data.image)) {
@@ -1862,35 +1876,27 @@ export async function getCachedArtist(artistIdOrName) {
 
 /**
  * Save an artist record to database cache
- * Only saves if imageUrl is present
+ * Saves uniquely under standardized key (no duplicates)
  */
 export async function saveCachedArtist(artist) {
   if (!artist) return false;
   const name = artist.name || "";
-  const id = artist.id ? String(artist.id) : sanitizeDbKey(name);
+  const rawKey = name || artist.id || "";
+  const cleanKey = sanitizeDbKey(rawKey);
+  if (!cleanKey) return false;
+
   const imageUrl = artist.imageUrl || artist.image;
   if (!imageUrl || typeof imageUrl !== "string") return false;
 
-  const cleanId = sanitizeDbKey(id);
-  const cleanName = sanitizeDbKey(name);
-  const underscoreName = cleanName.replace(/\s+/g, "_");
   const record = {
-    id: String(artist.id || cleanId),
-    name: name || artist.id,
+    id: String(artist.id || cleanKey),
+    name: name || artist.id || cleanKey,
     imageUrl,
     updatedAt: Date.now(),
   };
 
   try {
-    if (cleanId) {
-      await set(ref(db, `artists_cache/${cleanId}`), record);
-    }
-    if (cleanName && cleanName !== cleanId) {
-      await set(ref(db, `artists_cache/${cleanName}`), record);
-    }
-    if (underscoreName && underscoreName !== cleanName && underscoreName !== cleanId) {
-      await set(ref(db, `artists_cache/${underscoreName}`), record);
-    }
+    await set(ref(db, `artists_cache/${cleanKey}`), record);
     return true;
   } catch (_) {
     return false;
@@ -2312,14 +2318,19 @@ export async function removeCollaboratorFromCollabPlaylist(collabId, targetUid) 
 /**
  * Rename a collaborative playlist
  */
-export async function renameCollabPlaylist(collabId, newName) {
+export async function renameCollabPlaylist(collabId, newName, newCover = "") {
   if (!collabId || !newName) return false;
   try {
     const plRef = ref(db, `collab_playlists/${collabId}`);
-    await update(plRef, {
+    const updates = {
       name: newName.trim(),
       updatedAt: Date.now(),
-    });
+    };
+    if (newCover) {
+      updates.cover_url = newCover;
+      updates.preview_artwork = newCover;
+    }
+    await update(plRef, updates);
     return true;
   } catch (err) {
     console.warn("renameCollabPlaylist error:", err);
@@ -2560,5 +2571,44 @@ export async function calculateFriendBlend(myUid, myProfile, friendUid, friendPr
     console.warn("calculateFriendBlend error:", err);
     return null;
   }
+}
+
+/**
+ * Cache high-res track artwork in Firebase RTDB
+ */
+export async function saveCachedTrackImage(videoId, imageUrl) {
+  if (!videoId || !imageUrl) return;
+  try {
+    const cleanId = String(videoId).replace(/^saavn_/, "").trim();
+    const highRes = String(imageUrl).replace(/(?:50x50|150x150)\.jpg/i, "500x500.jpg");
+    const imgRef = ref(rtdb, `track_images/${cleanId}`);
+    await set(imgRef, {
+      videoId: cleanId,
+      image: highRes,
+      updatedAt: Date.now(),
+    });
+  } catch (err) {
+    console.warn("saveCachedTrackImage error:", err.message);
+  }
+}
+
+/**
+ * Get cached track artwork from Firebase RTDB
+ */
+export async function getCachedTrackImage(videoId) {
+  if (!videoId) return null;
+  try {
+    const cleanId = String(videoId).replace(/^saavn_/, "").trim();
+    const imgRef = ref(rtdb, `track_images/${cleanId}`);
+    const snap = await get(imgRef);
+    if (snap.exists()) {
+      const data = snap.val();
+      if (typeof data === "string") return data;
+      return data?.image || null;
+    }
+  } catch (err) {
+    console.warn("getCachedTrackImage error:", err.message);
+  }
+  return null;
 }
 

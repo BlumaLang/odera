@@ -447,6 +447,26 @@ export const api = {
     }
   },
 
+  // Get official artist songs (deduplicated original movie/album releases)
+  getArtistSongs: async (artistIdOrName, page = 0, limit = 25) => {
+    if (!artistIdOrName) return { tracks: [], results: [], has_more: false };
+    try {
+      const param = encodeURIComponent(String(artistIdOrName).trim());
+      const data = await request(`/artists/${param}/songs?page=${page}&limit=${limit}`);
+      if (data && Array.isArray(data.tracks) && data.tracks.length > 0) {
+        return data;
+      }
+    } catch (_) {}
+
+    // Fallback to standard search
+    try {
+      const data = await api.search(`${artistIdOrName} songs`, page * limit, limit);
+      return data;
+    } catch (_) {
+      return { tracks: [], results: [], has_more: false };
+    }
+  },
+
   // Get related/similar artists via Staytup API
   getRelatedArtists: async (artistIdOrName, limit = 6) => {
     if (!artistIdOrName) return { artists: [], related: [] };

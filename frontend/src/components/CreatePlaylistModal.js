@@ -11,10 +11,20 @@ import {
   StatusBar,
   ScrollView,
   KeyboardAvoidingView,
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { useResponsive } from "../context/ResponsiveContext";
+
+export const PLAYLIST_PRESET_COVERS = [
+  { id: "preset1", label: "Cover 1", url: "https://i.pinimg.com/736x/0a/0c/1e/0a0c1e61f487c99518f1cf2aff8df6b8.jpg" },
+  { id: "preset2", label: "Cover 2", url: "https://i.pinimg.com/736x/8c/68/e3/8c68e3352dbb43ab0e8d30346f1fb29e.jpg" },
+  { id: "preset3", label: "Cover 3", url: "https://i.pinimg.com/736x/ef/f1/02/eff10290cdf26d8d70f7da9a2ecb0dea.jpg" },
+  { id: "preset4", label: "Cover 4", url: "https://i.pinimg.com/736x/8c/44/41/8c44417d29fe788f556ccbbeec8a9b16.jpg" },
+  { id: "preset5", label: "Cover 5", url: "https://i.pinimg.com/736x/50/ed/08/50ed084eac9b3fc060a3f5f74f5beeae.jpg" },
+  { id: "preset6", label: "Cover 6", url: "https://i.pinimg.com/736x/39/ad/9f/39ad9f51cd2fffb7dbc31ce6d219fac6.jpg" },
+];
 
 function getNextPlaylistDefaultName(playlists = []) {
   const customList = Array.isArray(playlists) ? playlists : [];
@@ -49,10 +59,14 @@ export default function CreatePlaylistModal({
   onSubmit,
   existingPlaylists = [],
   initialName = "",
+  initialCover = "",
   mode = "create", // "create" | "edit"
 }) {
   const { isDesktop, isTablet } = useResponsive();
   const [playlistName, setPlaylistName] = useState("");
+  const [selectedCover, setSelectedCover] = useState("");
+  const [customCoverInput, setCustomCoverInput] = useState("");
+  const [showCustomLinkInput, setShowCustomLinkInput] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -66,6 +80,16 @@ export default function CreatePlaylistModal({
           ? initialName.trim()
           : getNextPlaylistDefaultName(existingPlaylists);
       setPlaylistName(startingName);
+      const defaultCover = initialCover || PLAYLIST_PRESET_COVERS[0]?.url || "";
+      setSelectedCover(defaultCover);
+      setCustomCoverInput(
+        initialCover && !PLAYLIST_PRESET_COVERS.some((p) => p.url === initialCover)
+          ? initialCover
+          : ""
+      );
+      setShowCustomLinkInput(
+        Boolean(initialCover && !PLAYLIST_PRESET_COVERS.some((p) => p.url === initialCover))
+      );
       setLoading(false);
 
       const timer = setTimeout(() => {
@@ -76,18 +100,25 @@ export default function CreatePlaylistModal({
       return () => clearTimeout(timer);
     } else {
       setPlaylistName("");
+      setSelectedCover("");
+      setCustomCoverInput("");
+      setShowCustomLinkInput(false);
       setLoading(false);
     }
-  }, [visible, initialName]);
+  }, [visible, initialName, initialCover]);
 
   const handleSave = async () => {
     const trimmed = playlistName.trim();
     const finalName =
       trimmed || (initialName && initialName.trim()) || getNextPlaylistDefaultName(existingPlaylists);
+    const finalCover =
+      (customCoverInput && customCoverInput.trim())
+        ? customCoverInput.trim()
+        : (selectedCover || PLAYLIST_PRESET_COVERS[0]?.url || "");
     setLoading(true);
     try {
       if (onSubmit) {
-        await onSubmit(finalName);
+        await onSubmit(finalName, finalCover);
       }
       onClose();
     } catch (err) {
@@ -148,19 +179,28 @@ export default function CreatePlaylistModal({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            <View style={styles.iconCircle}>
-              <Ionicons
-                name={isEdit ? "pencil" : "musical-notes"}
-                size={34}
-                color={colors.primary}
+            {/* Playlist Avatar Preview */}
+            {(customCoverInput.trim() || selectedCover) ? (
+              <Image
+                source={{ uri: customCoverInput.trim() || selectedCover }}
+                style={styles.avatarPreviewImage}
+                resizeMode="cover"
               />
-            </View>
+            ) : (
+              <View style={styles.iconCircle}>
+                <Ionicons
+                  name={isEdit ? "pencil" : "musical-notes"}
+                  size={34}
+                  color={colors.primary}
+                />
+              </View>
+            )}
 
             <Text style={styles.mainTitle}>{modalHeading}</Text>
             <Text style={styles.subtitle}>
               {isEdit
-                ? "Choose a fresh name for your playlist collection"
-                : "Give your playlist a title to easily recognize and play it"}
+                ? "Choose a fresh name and avatar for your playlist"
+                : "Give your playlist a title and choose a rounded avatar"}
             </Text>
 
             {/* Editable Input Box */}
@@ -203,6 +243,85 @@ export default function CreatePlaylistModal({
                   />
                 </TouchableOpacity>
               )}
+            </View>
+
+            {/* Playlist Avatar / Cover Presets */}
+            <View style={styles.presetsSection}>
+              <View style={styles.coverHeaderRow}>
+                <Text style={styles.presetsLabel}>PLAYLIST AVATAR / COVER</Text>
+                <TouchableOpacity
+                  onPress={() => setShowCustomLinkInput(!showCustomLinkInput)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.customLinkToggleText}>
+                    {showCustomLinkInput ? "Hide Link Input" : "Paste Image Link"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {showCustomLinkInput && (
+                <View style={[styles.inputWrapper, styles.customLinkWrapper]}>
+                  <TextInput
+                    style={[styles.textInput, { fontSize: 13 }]}
+                    value={customCoverInput}
+                    onChangeText={(t) => {
+                      setCustomCoverInput(t);
+                      if (t.trim()) setSelectedCover(t.trim());
+                    }}
+                    placeholder="Paste image URL (https://...)"
+                    placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  {customCoverInput.length > 0 && (
+                    <TouchableOpacity
+                      onPress={() => setCustomCoverInput("")}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons
+                        name="close-circle"
+                        size={18}
+                        color="rgba(255, 255, 255, 0.45)"
+                      />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.coverPresetsRow}
+              >
+                {PLAYLIST_PRESET_COVERS.map((cov) => {
+                  const isSelected = selectedCover === cov.url && !customCoverInput;
+                  return (
+                    <TouchableOpacity
+                      key={cov.id}
+                      style={[
+                        styles.coverPresetCard,
+                        isSelected && styles.coverPresetCardActive,
+                      ]}
+                      onPress={() => {
+                        setSelectedCover(cov.url);
+                        setCustomCoverInput("");
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Image
+                        source={{ uri: cov.url }}
+                        style={styles.coverPresetThumb}
+                        resizeMode="cover"
+                      />
+                      {isSelected && (
+                        <View style={styles.coverSelectedBadge}>
+                          <Ionicons name="checkmark" size={12} color="#FFFFFF" />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             </View>
 
             {/* Name Preset Suggestions */}
@@ -433,5 +552,72 @@ const styles = StyleSheet.create({
   },
   disabledBtn: {
     opacity: 0.6,
+  },
+  avatarPreviewImage: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    marginBottom: 16,
+    borderWidth: 2,
+    borderColor: colors.primary,
+  },
+  coverHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
+  customLinkToggleText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 11,
+    color: colors.primary,
+    letterSpacing: 0.2,
+  },
+  customLinkWrapper: {
+    height: 44,
+    marginBottom: 12,
+    borderRadius: 10,
+  },
+  coverPresetsRow: {
+    flexDirection: "row",
+    gap: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    alignItems: "center",
+  },
+  coverPresetCard: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    overflow: "visible",
+    borderWidth: 2,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    position: "relative",
+  },
+  coverPresetCardActive: {
+    borderColor: colors.primary,
+    borderWidth: 2.5,
+  },
+  coverPresetThumb: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 27,
+    overflow: "hidden",
+  },
+  coverSelectedBadge: {
+    position: "absolute",
+    bottom: -4,
+    right: -4,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.primary,
+    borderWidth: 2.5,
+    borderColor: "#000000",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+    elevation: 5,
   },
 });

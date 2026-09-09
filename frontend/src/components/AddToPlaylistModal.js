@@ -103,11 +103,11 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
     }
   };
 
-  const handleCreatePlaylist = async (name) => {
+  const handleCreatePlaylist = async (name, cover = "") => {
     const trimmed = (name || "").trim();
     if (!trimmed) return;
     try {
-      const newPl = await createPlaylist(trimmed);
+      const newPl = await createPlaylist(trimmed, "", [], cover);
       if (newPl) {
         setShowCreateModal(false);
         // Automatically add current track to the newly created playlist
@@ -527,7 +527,7 @@ const styles = StyleSheet.create({
   playlistThumb: {
     width: 48,
     height: 48,
-    borderRadius: 8,
+    borderRadius: 24,
     backgroundColor: "#181818",
   },
   playlistThumbFallback: {

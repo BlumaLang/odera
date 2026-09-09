@@ -12,11 +12,29 @@ require('./src/utils/consoleFilter');
 
 // Global safety net: catch any unhandled error that would cause a black screen
 if (typeof window !== 'undefined') {
+  var SUPPRESSED_ERRORS = [
+    'startTime', 'reportAllChanges', 'beforeinstallprompt', 'Banner not shown',
+    'powerPreference', 'requestAdapter', '369219127', 'doubleclick', 'googleads',
+    'postMessage', 'DOMWindow', 'target origin', 'www-widgetapi'
+  ];
+  function isSuppressed(val) {
+    try {
+      var s = String((val && val.message) || val || '');
+      return SUPPRESSED_ERRORS.some(function(term) { return s.indexOf(term) !== -1; });
+    } catch (_) { return false; }
+  }
   window.addEventListener('error', function(e) {
-    // Log but don't let any error kill the entire app
+    if (isSuppressed(e)) {
+      e.preventDefault();
+      return;
+    }
     console.warn('[GlobalError]', e?.message || e);
   });
   window.addEventListener('unhandledrejection', function(e) {
+    if (isSuppressed(e && e.reason)) {
+      e.preventDefault();
+      return;
+    }
     console.warn('[GlobalUnhandled]', e?.reason?.message || e?.reason);
   });
 }

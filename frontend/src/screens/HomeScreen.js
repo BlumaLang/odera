@@ -161,7 +161,7 @@ export default function HomeScreen({ onNavigate } = {}) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
-  const { userProfile, friends, likedSongs } = useUser() || {};
+  const { userProfile, friends, likedSongs, userArtistMovements, recordArtistMovement } = useUser() || {};
   const favoriteArtists = userProfile?.favoriteArtists || userProfile?.favorite_artists || [];
   const friendsList = friends || [];
   const [followingSections, setFollowingSections] = useState([]);
@@ -474,11 +474,17 @@ export default function HomeScreen({ onNavigate } = {}) {
     return ["Hindi", "English"];
   }, [userProfile?.languages]);
 
-  // 2. Ranked Artist Affinities (combining followed artists + recently played + liked songs)
+  // 2. Ranked Artist Affinities (combining followed artists + user movements + recently played + liked songs)
   const affinityArtists = useMemo(() => {
     const counts = {};
     (favoriteArtists || []).forEach((name) => {
-      if (name) counts[name.trim()] = (counts[name.trim()] || 0) + 15;
+      if (name) counts[name.trim()] = (counts[name.trim()] || 0) + 20;
+    });
+    // Add user artist movements (viewed artist profiles, similar artist clicks, collaborator discoveries)
+    Object.entries(userArtistMovements || {}).forEach(([name, weight]) => {
+      if (name) {
+        counts[name] = (counts[name] || 0) + (weight || 3);
+      }
     });
     (recentlyPlayed || []).forEach((t) => {
       const a = t?.artist;
@@ -486,7 +492,7 @@ export default function HomeScreen({ onNavigate } = {}) {
         a.split(/,|&|feat\./i).forEach((sub) => {
           const clean = sub.trim();
           if (clean && clean.length > 2 && !/t-series|sony|records|music/i.test(clean)) {
-            counts[clean] = (counts[clean] || 0) + 3;
+            counts[clean] = (counts[clean] || 0) + 4;
           }
         });
       }
@@ -497,7 +503,7 @@ export default function HomeScreen({ onNavigate } = {}) {
         a.split(/,|&|feat\./i).forEach((sub) => {
           const clean = sub.trim();
           if (clean && clean.length > 2 && !/t-series|sony|records|music/i.test(clean)) {
-            counts[clean] = (counts[clean] || 0) + 2;
+            counts[clean] = (counts[clean] || 0) + 3;
           }
         });
       }
@@ -506,7 +512,7 @@ export default function HomeScreen({ onNavigate } = {}) {
     return Object.entries(counts)
       .sort((a, b) => b[1] - a[1])
       .map(([name]) => name);
-  }, [favoriteArtists, recentlyPlayed, likedSongs]);
+  }, [favoriteArtists, userArtistMovements, recentlyPlayed, likedSongs]);
 
   // 3. Known language artist registries for accurate affinity detection
   const PUNJABI_ARTISTS_SET = useMemo(() => new Set([
@@ -584,6 +590,74 @@ export default function HomeScreen({ onNavigate } = {}) {
     description: "Pick up right where you left off",
     items: recentlyPlayed,
   } : null;
+
+  // 5b. Dedicated "Trending on Staytup" Section (driven by app-wide community listening in RTDB + user history)
+  const trendingOnStaytupSection = useMemo(() => {
+    const raw = [...appTrending];
+    const seen = new Set();
+    const cleanList = [];
+
+    for (const t of raw) {
+      const vid = t.videoId || t.video_id || t.id;
+      if (!vid || seen.has(vid)) continue;
+      if (!hasPunjabiAffinity && isTrackPunjabi(t)) continue;
+      seen.add(vid);
+      cleanList.push(t);
+    }
+
+    // If appTrending is still building up, merge with top played from recentlyPlayed & feed
+    if (cleanList.length < 10) {
+      for (const t of recentlyPlayed) {
+        const vid = t.videoId || t.video_id || t.id;
+        if (!vid || seen.has(vid)) continue;
+        if (!hasPunjabiAffinity && isTrackPunjabi(t)) continue;
+        seen.add(vid);
+        cleanList.push(t);
+        if (cleanList.length >= 15) break;
+      }
+    }
+    if (cleanList.length < 10) {
+      const allSecs = feed?.sections || [];
+      const trendingSec = allSecs.find((s) => s.id === "trending_now" || s.title?.toLowerCase().includes("trending"));
+      const items = trendingSec?.items || trendingSec?.tracks || allSecs[0]?.items || [];
+      for (const t of items) {
+        const vid = t.videoId || t.video_id || t.id;
+        if (!vid || seen.has(vid)) continue;
+        if (!hasPunjabiAffinity && isTrackPunjabi(t)) continue;
+        seen.add(vid);
+        cleanList.push(t);
+        if (cleanList.length >= 15) break;
+      }
+    }
+
+    if (cleanList.length === 0) return null;
+
+    return {
+      id: "trending_on_staytup",
+      title: "Trending on Staytup",
+      description: "Most played songs across the Staytup community",
+      items: cleanList.slice(0, 15),
+    };
+  }, [appTrending, recentlyPlayed, feed?.sections, hasPunjabiAffinity, isTrackPunjabi]);
+
+  // 5c. Dedicated "Trending Now" Section (hottest Indian chart hits with real movie/single posters)
+  const trendingNowSection = useMemo(() => {
+    const allSecs = feed?.sections || [];
+    const found = allSecs.find(
+      (s) => s.id === "trending_now" || (s.title?.toLowerCase().includes("trending") && s.id !== "trending_on_staytup")
+    );
+    let items = found?.items || found?.tracks || [];
+    if (!hasPunjabiAffinity) {
+      items = items.filter((t) => !isTrackPunjabi(t));
+    }
+    if (items.length === 0) return null;
+    return {
+      id: "trending_now",
+      title: "Trending Now",
+      description: "Hottest chart-toppers and viral hits right now",
+      items: items.slice(0, 20),
+    };
+  }, [feed?.sections, hasPunjabiAffinity, isTrackPunjabi]);
 
   // 6. Intelligent Daily Mix (tailored dynamically to user's active languages & genres)
   const dailyMixSection = useMemo(() => {
@@ -787,6 +861,75 @@ export default function HomeScreen({ onNavigate } = {}) {
     };
   }, [topAffinityArtist, allFollowingTracks, recentlyPlayed, feed?.sections, hasPunjabiAffinity, isTrackPunjabi]);
 
+  // 7b. Multi-Artist & Collaborator Recommendation Intelligence
+  // If user follows/listens to an artist (e.g. Arijit Singh), surfaces their co-artists/collaborators
+  // (e.g. Sachin-Jigar, Pritam, Amitabh Bhattacharya, Mithoon) and their joint/individual tracks!
+  const collaborationsSection = useMemo(() => {
+    const topArtists = affinityArtists.slice(0, 3);
+    if (topArtists.length === 0) return null;
+
+    const pool = [
+      ...allFollowingTracks,
+      ...recentlyPlayed,
+      ...likedSongs,
+      ...(feed?.sections?.flatMap((s) => s.items || s.tracks || []) || []),
+    ];
+
+    // Find all collaborator names appearing alongside topArtists
+    const collaboratorNames = new Set();
+    topArtists.forEach((mainArt) => {
+      const mainLower = mainArt.toLowerCase();
+      pool.forEach((t) => {
+        const a = (t.artist || "").toLowerCase();
+        if (a.includes(mainLower)) {
+          a.split(/,|&|feat\./i).forEach((sub) => {
+            const clean = sub.trim();
+            if (clean && clean.length > 2 && !clean.includes(mainLower) && !/t-series|sony|records|music/i.test(clean)) {
+              collaboratorNames.add(clean);
+            }
+          });
+        }
+      });
+    });
+
+    // Also add any artist from user movements
+    Object.keys(userArtistMovements || {}).forEach((mName) => {
+      if (!topArtists.some((ta) => ta.toLowerCase() === mName.toLowerCase())) {
+        collaboratorNames.add(mName.toLowerCase());
+      }
+    });
+
+    if (collaboratorNames.size === 0) return null;
+
+    // Pick top tracks featuring these collaborators
+    const seenIds = new Set();
+    const collabTracks = [];
+
+    for (const t of pool) {
+      const tid = t.videoId || t.video_id || t.id;
+      if (!tid || seenIds.has(tid)) continue;
+      if (!hasPunjabiAffinity && isTrackPunjabi(t)) continue;
+
+      const tArtist = (t.artist || "").toLowerCase();
+      const hasCollab = Array.from(collaboratorNames).some((c) => tArtist.includes(c));
+      if (hasCollab) {
+        seenIds.add(tid);
+        collabTracks.push(t);
+        if (collabTracks.length >= 15) break;
+      }
+    }
+
+    if (collabTracks.length < 3) return null;
+
+    const leadArtist = topArtists[0];
+    return {
+      id: "collaborations_recommended",
+      title: "Collaborations & Recommended for You",
+      description: `Top tracks from collaborators and related artists you love`,
+      items: collabTracks,
+    };
+  }, [affinityArtists, allFollowingTracks, recentlyPlayed, likedSongs, feed?.sections, userArtistMovements, hasPunjabiAffinity, isTrackPunjabi]);
+
   // 8. Fresh New Releases (Gated by language affinity)
   const freshNewReleasesSection = useMemo(() => {
     const allSecs = feed?.sections || [];
@@ -930,11 +1073,14 @@ export default function HomeScreen({ onNavigate } = {}) {
   }, [feed?.sections, hasPunjabiAffinity, hasTamilAffinity, hasTeluguAffinity, hasEnglishAffinity, isTrackPunjabi]);
 
   // Combined Home / All Feed:
-  // 1. Jump Back In (if history) -> 2. Daily Mix -> 3. Because You Listen to [Top Artist] -> 4. Fresh New Releases -> 5. Friends are Listening To -> 6. Categorical Genres
+  // 1. Jump Back In -> 2. Trending on Staytup -> 3. Trending Now -> 4. Daily Mix -> 5. Because You Listen to [Top Artist] -> 6. Collaborations & Recommended for You -> 7. Fresh New Releases -> 8. Friends are Listening To -> 9. Categorical Genres
   const allDisplayedSections = [
     jumpBackInSection,
+    trendingOnStaytupSection,
+    trendingNowSection,
     dailyMixSection,
     becauseYouListenSection,
+    collaborationsSection,
     freshNewReleasesSection,
     friendsListeningSection,
     ...remainingBackendSections,
@@ -1119,7 +1265,10 @@ export default function HomeScreen({ onNavigate } = {}) {
                           <TouchableOpacity
                             key={`fav_artist_${idx}`}
                             style={styles.followedArtistItem}
-                            onPress={() => setSelectedArtistForModal(name)}
+                            onPress={() => {
+                              if (recordArtistMovement) recordArtistMovement(name);
+                              setSelectedArtistForModal(name);
+                            }}
                             activeOpacity={0.8}
                           >
                             {img ? (
@@ -1166,6 +1315,14 @@ export default function HomeScreen({ onNavigate } = {}) {
         onArtistImageResolved={(name, photo) => {
           if (name && photo) {
             setArtistImages((prev) => ({ ...prev, [name]: photo }));
+          }
+        }}
+        onSelectArtist={(name) => {
+          if (name) {
+            if (recordArtistMovement) {
+              recordArtistMovement(name);
+            }
+            setSelectedArtistForModal(name);
           }
         }}
         onClose={() => setSelectedArtistForModal(null)}

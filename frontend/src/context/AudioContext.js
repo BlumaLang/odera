@@ -13,6 +13,8 @@ import {
   addRecentlyPlayed,
   recordAppSongPlay,
   recordUserStream,
+  saveCachedTrackImage,
+  getCachedTrackImage,
 } from "../services/firebase";
 import { getAccurateDeviceInfo } from "./ResponsiveContext";
 
@@ -88,6 +90,7 @@ const AudioProvider = ({ children }) => {
   const volumeRef = useRef(0.85);
   const lastUpdatePosRef = useRef(0);
   const prevCurSecRef = useRef(0);
+  const lastMediaSessionPosUpdateRef = useRef(0);
 
   const playTrackRef = useRef(null);
   const togglePlayPauseRef = useRef(null);
@@ -233,7 +236,7 @@ const AudioProvider = ({ children }) => {
             ]
           : [],
       });
-      navigator.mediaSession.playbackState = "playing";
+      navigator.mediaSession.playbackState = isPlayingRef.current ? "playing" : "paused";
     } catch (e) {
       console.warn("Error updating MediaSession metadata:", e);
     }
@@ -248,7 +251,7 @@ const AudioProvider = ({ children }) => {
     } catch (_) {}
   };
 
-  const updateMediaSessionPosition = (posMs, durMs) => {
+  const updateMediaSessionPosition = (posMs, durMs, force = false) => {
     if (
       typeof window === "undefined" ||
       !("mediaSession" in navigator) ||
@@ -259,12 +262,16 @@ const AudioProvider = ({ children }) => {
       const posSec = Math.max(0, (posMs || 0) / 1000);
       const durSec = Math.max(0, (durMs || 0) / 1000);
       if (durSec > 0 && posSec <= durSec) {
-        if (webAudioRef.current && !webAudioRef.current.paused) {
-          navigator.mediaSession.playbackState = "playing";
+        const now = Date.now();
+        if (!force && now - lastMediaSessionPosUpdateRef.current < 4000) {
+          return;
         }
+        lastMediaSessionPosUpdateRef.current = now;
+
+        navigator.mediaSession.playbackState = isPlayingRef.current ? "playing" : "paused";
         navigator.mediaSession.setPositionState({
           duration: durSec,
-          playbackRate: webAudioRef.current && !webAudioRef.current.paused ? 1.0 : (isPlayingRef.current ? 1.0 : 0),
+          playbackRate: isPlayingRef.current ? 1.0 : 0.0,
           position: posSec,
         });
       }
@@ -285,6 +292,16 @@ const AudioProvider = ({ children }) => {
     } catch (_) {}
     audio.volume = volumeRef.current;
     audio.muted = false;
+    audio.loop = Boolean(isRepeatRef.current);
+
+    // Attach audio element to DOM so iOS Safari power management never suspends it in background
+    if (typeof document !== "undefined" && document.body) {
+      audio.id = "staytup-audio-player";
+      audio.style.display = "none";
+      if (!document.getElementById("staytup-audio-player")) {
+        document.body.appendChild(audio);
+      }
+    }
     webAudioRef.current = audio;
 
     const onPlay = () => {
@@ -298,6 +315,13 @@ const AudioProvider = ({ children }) => {
       setIsLoading(false);
       updateMediaSessionPlaybackState(true);
       setupMediaSessionHandlers();
+      if (currentTrackRef.current) {
+        updateMediaSessionMetadata(currentTrackRef.current);
+      }
+      const dur = authoritativeDurationRef.current || durationMillisRef.current || 0;
+      if (dur > 0) {
+        updateMediaSessionPosition(positionMillisRef.current, dur, true);
+      }
     };
 
     const onPause = () => {
@@ -306,6 +330,17 @@ const AudioProvider = ({ children }) => {
       // 2. If the audio element is NOT actually paused (it's actively outputting sound),
       // this event was a delayed synthetic pause from the previous track — DO NOT mark paused!
       if (audio && !audio.paused) return;
+
+      // 3. When iPhone screen locks, iOS WebKit can emit a synthetic pause during audio pipeline handover.
+      // If we are actively playing, re-assert playback so Lock Screen & Dynamic Island stay in 'playing' state!
+      if (typeof document !== "undefined" && document.visibilityState === "hidden" && isPlayingRef.current) {
+        if (audio && audio.src && audio.paused) {
+          audio.play().then(() => {
+            updateMediaSessionPlaybackState(true);
+          }).catch(() => {});
+          return;
+        }
+      }
 
       setIsPlaying(false);
       isPlayingRef.current = false;
@@ -323,6 +358,10 @@ const AudioProvider = ({ children }) => {
       updateMediaSessionPlaybackState(true);
       if (currentTrackRef.current) {
         updateMediaSessionMetadata(currentTrackRef.current);
+      }
+      const dur = authoritativeDurationRef.current || durationMillisRef.current || 0;
+      if (dur > 0) {
+        updateMediaSessionPosition(positionMillisRef.current, dur, true);
       }
     };
 
@@ -352,7 +391,7 @@ const AudioProvider = ({ children }) => {
           setDurationMillis(durMs);
           durationMillisRef.current = durMs;
         }
-        updateMediaSessionPosition(curMs, durMs);
+        updateMediaSessionPosition(curMs, durMs, false);
 
         // Pre-fetch upcoming streams 25s before track ends so URL is ready in cache well ahead of time
         const remainingSec = durSec - curSec;
@@ -532,6 +571,7 @@ const AudioProvider = ({ children }) => {
     let subPrev = null;
     let subPlay = null;
     let subPause = null;
+    let subToggle = null;
 
     try {
       subNext = LockScreenControls.addListener("onNextTrack", () => {
@@ -541,10 +581,19 @@ const AudioProvider = ({ children }) => {
         if (playPreviousRef.current) playPreviousRef.current();
       });
       subPlay = LockScreenControls.addListener("onPlay", () => {
-        if (togglePlayPauseRef.current) togglePlayPauseRef.current();
+        if (!isPlayingRef.current && togglePlayPauseRef.current) {
+          togglePlayPauseRef.current();
+        }
       });
       subPause = LockScreenControls.addListener("onPause", () => {
-        if (togglePlayPauseRef.current) togglePlayPauseRef.current();
+        if (isPlayingRef.current && togglePlayPauseRef.current) {
+          togglePlayPauseRef.current();
+        }
+      });
+      subToggle = LockScreenControls.addListener("onTogglePlayPause", () => {
+        if (togglePlayPauseRef.current) {
+          togglePlayPauseRef.current();
+        }
       });
     } catch (err) {
       console.warn("Lock screen controls setup error:", err);
@@ -555,6 +604,7 @@ const AudioProvider = ({ children }) => {
       subPrev?.remove?.();
       subPlay?.remove?.();
       subPause?.remove?.();
+      subToggle?.remove?.();
     };
   }, []);
 
@@ -677,9 +727,27 @@ const AudioProvider = ({ children }) => {
       return;
     }
 
+    const wasPlaying = isPlayingRef.current;
     setIsPlaying(status.isPlaying);
     isPlayingRef.current = status.isPlaying;
-    updateMediaSessionPlaybackState(status.isPlaying);
+
+    if (wasPlaying !== status.isPlaying) {
+      updateMediaSessionPlaybackState(status.isPlaying);
+
+      // Keep native lock screen & Dynamic Island in sync when state changes
+      if (LockScreenControls?.updateNowPlaying && currentTrackRef.current) {
+        try {
+          LockScreenControls.updateNowPlaying({
+            title: currentTrackRef.current.title || "Staytup Music",
+            artist: currentTrackRef.current.artist || "Unknown Artist",
+            duration: ((authoritativeDurationRef.current || durationMillisRef.current || 0) / 1000) || 0,
+            position: (status.positionMillis || 0) / 1000,
+            isPlaying: status.isPlaying,
+            artworkUrl: currentTrackRef.current.artwork_url || currentTrackRef.current.thumbnail || "",
+          });
+        } catch (_) {}
+      }
+    }
 
     const pos = Number.isFinite(status.positionMillis) ? Math.max(0, status.positionMillis) : 0;
     positionMillisRef.current = pos;
@@ -702,7 +770,7 @@ const AudioProvider = ({ children }) => {
     }
 
     const effectiveDur = authoritativeDurationRef.current || durationMillisRef.current || 0;
-    updateMediaSessionPosition(pos, effectiveDur);
+    updateMediaSessionPosition(pos, effectiveDur, false);
 
     if (status.didJustFinish && !status.isLooping) {
       if (advancingRef.current) return;
@@ -931,8 +999,18 @@ const AudioProvider = ({ children }) => {
     audioRetryCountRef.current = 0;
     setIsLoading(true);
     setErrorNotice(null);
-    setCurrentTrack(track);
-    currentTrackRef.current = track;
+
+    // Immediate 500x500 artwork upgrade if 50x50 or 150x150 is present
+    const rawArt = track.artwork_url || track.thumbnail || "";
+    const immediateArtwork = rawArt ? String(rawArt).replace(/(?:50x50|150x150)\.jpg/i, "500x500.jpg") : "";
+    const preparedTrack = {
+      ...track,
+      artwork_url: immediateArtwork || track.artwork_url || track.thumbnail || "",
+      thumbnail: immediateArtwork || track.thumbnail || track.artwork_url || "",
+    };
+
+    setCurrentTrack(preparedTrack);
+    currentTrackRef.current = preparedTrack;
     lastUpdatePosRef.current = 0;
     setPositionMillis(0);
     positionMillisRef.current = 0;
@@ -953,7 +1031,7 @@ const AudioProvider = ({ children }) => {
       authoritativeDurationRef.current = 0;
     }
 
-    updateMediaSessionMetadata(track);
+    updateMediaSessionMetadata(preparedTrack);
     updateMediaSessionPlaybackState(true);
     updateMediaSessionPosition(0, initDurationMs);
 
@@ -967,7 +1045,7 @@ const AudioProvider = ({ children }) => {
         effectiveQueue = existingQueue;
         index = foundIdx;
       } else {
-        effectiveQueue = [track];
+        effectiveQueue = [preparedTrack];
         index = 0;
       }
     }
@@ -980,7 +1058,7 @@ const AudioProvider = ({ children }) => {
         const tId = t?.videoId || t?.video_id || t?.id;
         return tId && cId ? tId !== cId : idx !== index;
       });
-      const shuffledQueue = [track, ...fisherYatesShuffle(others)];
+      const shuffledQueue = [preparedTrack, ...fisherYatesShuffle(others)];
       setQueue(shuffledQueue);
       queueRef.current = shuffledQueue;
       targetIdx = 0;
@@ -995,23 +1073,26 @@ const AudioProvider = ({ children }) => {
     }
 
     // Automatically enrich queue with artist songs, trending hits, and feed new releases
-    enrichQueueForTrack(track, effectiveQueue);
+    enrichQueueForTrack(preparedTrack, effectiveQueue);
+
+    const cleanId = String(trackId).replace(/^saavn_/, "").trim();
 
     // Persist current track & queue to Firebase Realtime Database
     // Strictly store metadata only — NEVER save stream_url to Firebase!
+    const sanitizedTrack = {
+      id: track.id || `saavn_${trackId}`,
+      videoId: cleanId,
+      title: preparedTrack.title || "",
+      artist: preparedTrack.artist || "",
+      artwork_url: preparedTrack.artwork_url || preparedTrack.thumbnail || "",
+      thumbnail: preparedTrack.thumbnail || preparedTrack.artwork_url || "",
+      duration: preparedTrack.duration || 0,
+      duration_seconds: preparedTrack.duration_seconds || preparedTrack.duration || 0,
+      source: "saavn",
+    };
+
     try {
       const uid = auth.currentUser?.uid || "guest";
-      const sanitizedTrack = {
-        id: track.id || `saavn_${trackId}`,
-        videoId: String(trackId).replace(/^saavn_/, ""),
-        title: track.title || "",
-        artist: track.artist || "",
-        artwork_url: track.artwork_url || track.thumbnail || "",
-        thumbnail: track.thumbnail || track.artwork_url || "",
-        duration: track.duration || 0,
-        duration_seconds: track.duration_seconds || track.duration || 0,
-        source: "saavn",
-      };
       saveLastPlayback(uid, sanitizedTrack, newQueue || queueRef.current);
       addRecentlyPlayed(uid, sanitizedTrack);
       recordAppSongPlay(sanitizedTrack);
@@ -1025,11 +1106,58 @@ const AudioProvider = ({ children }) => {
       });
     } catch (_) {}
 
+    // Resolve proper 500x500 high-res image from Server / RTDB / Staytup API
+    (async () => {
+      try {
+        const properImg = await api.getTrackImage(cleanId, sanitizedTrack.title, sanitizedTrack.artist);
+        if (properImg && properImg !== preparedTrack.artwork_url) {
+          setCurrentTrack((prev) => {
+            if (!prev) return prev;
+            const prevId = prev.videoId || prev.video_id || prev.id;
+            if (prevId === trackId || String(prevId).replace(/^saavn_/, "") === cleanId) {
+              return { ...prev, artwork_url: properImg, thumbnail: properImg };
+            }
+            return prev;
+          });
+          if (currentTrackRef.current) {
+            const curId = currentTrackRef.current.videoId || currentTrackRef.current.video_id || currentTrackRef.current.id;
+            if (curId === trackId || String(curId).replace(/^saavn_/, "") === cleanId) {
+              currentTrackRef.current.artwork_url = properImg;
+              currentTrackRef.current.thumbnail = properImg;
+              updateMediaSessionMetadata(currentTrackRef.current);
+              if (Platform.OS === "ios" && LockScreenControls?.updateNowPlaying) {
+                LockScreenControls.updateNowPlaying({
+                  title: currentTrackRef.current.title || "",
+                  artist: currentTrackRef.current.artist || "",
+                  artworkUrl: properImg,
+                  duration: durationMillisRef.current > 0 ? durationMillisRef.current / 1000 : 0,
+                  position: positionMillisRef.current > 0 ? positionMillisRef.current / 1000 : 0,
+                  playbackRate: 1.0,
+                  isPlaying: true,
+                });
+              }
+            }
+          }
+          try {
+            const uid = auth.currentUser?.uid || "guest";
+            const updatedSanitized = {
+              ...sanitizedTrack,
+              artwork_url: properImg,
+              thumbnail: properImg,
+            };
+            saveCachedTrackImage(cleanId, properImg).catch(() => {});
+            saveLastPlayback(uid, updatedSanitized, queueRef.current).catch(() => {});
+            addRecentlyPlayed(uid, updatedSanitized).catch(() => {});
+            recordAppSongPlay(updatedSanitized).catch(() => {});
+          } catch (_) {}
+        }
+      } catch (_) {}
+    })();
+
     // Resolve stream URL: Check in-memory cache first for instant synchronous resolution.
     // When a song auto-advances in background, pre-cached stream URLs allow audio.play()
     // to execute SYNCHRONOUSLY within the 'ended' event — which iOS & Android PWA allow without muting!
     let playableUrl = track.stream_url;
-    const cleanId = String(trackId).replace(/^saavn_/, "").trim();
 
     const cachedStream = globalStreamCache.get(cleanId);
     if (cachedStream && cachedStream.stream_url) {
@@ -1095,7 +1223,7 @@ const AudioProvider = ({ children }) => {
 
         // Keep loop enabled during playback so the browser & mobile OS (iOS/Android)
         // never terminate the hardware audio session upon reaching the end of the buffer.
-        audio.loop = true;
+        audio.loop = Boolean(isRepeatRef.current);
         audio.src = playableUrl;
         audio.muted = false;
         audio.volume = volumeRef.current;
@@ -1200,6 +1328,7 @@ const AudioProvider = ({ children }) => {
             duration: initDurationMs > 0 ? initDurationMs / 1000 : 0,
             position: 0,
             isPlaying: true,
+            artworkUrl: track.artwork_url || track.thumbnail || "",
           });
         } catch (_) {}
       }
@@ -1226,20 +1355,28 @@ const AudioProvider = ({ children }) => {
         setIsPlaying(false);
         isPlayingRef.current = false;
         updateMediaSessionPlaybackState(false);
+        const dur = authoritativeDurationRef.current || durationMillisRef.current || 0;
+        if (dur > 0) {
+          updateMediaSessionPosition(positionMillisRef.current, dur, true);
+        }
         updatePlaybackSession(uid, { deviceId: myDeviceId, deviceName: myDeviceName, isPlaying: false });
       } else {
         if (!audio.src && currentTrack) {
           playTrack(currentTrack);
           return;
         }
-        // Force-ensure unmuted and loop active before resuming
-        audio.loop = true;
+        // Force-ensure unmuted and loop matching repeat setting before resuming
+        audio.loop = Boolean(isRepeatRef.current);
         audio.muted = false;
         audio.volume = volumeRef.current;
         audio.play().catch(() => {});
         setIsPlaying(true);
         isPlayingRef.current = true;
         updateMediaSessionPlaybackState(true);
+        const dur = authoritativeDurationRef.current || durationMillisRef.current || 0;
+        if (dur > 0) {
+          updateMediaSessionPosition(positionMillisRef.current, dur, true);
+        }
         updatePlaybackSession(uid, {
           deviceId: myDeviceId,
           deviceName: myDeviceName,
@@ -1271,6 +1408,7 @@ const AudioProvider = ({ children }) => {
               duration: (authoritativeDurationRef.current || durationMillisRef.current || 0) / 1000,
               position: (positionMillisRef.current || 0) / 1000,
               isPlaying: false,
+              artworkUrl: currentTrackRef.current.artwork_url || currentTrackRef.current.thumbnail || "",
             });
           } catch (_) {}
         }
@@ -1294,6 +1432,7 @@ const AudioProvider = ({ children }) => {
               duration: (authoritativeDurationRef.current || durationMillisRef.current || 0) / 1000,
               position: (positionMillisRef.current || 0) / 1000,
               isPlaying: true,
+              artworkUrl: currentTrackRef.current.artwork_url || currentTrackRef.current.thumbnail || "",
             });
           } catch (_) {}
         }
@@ -1403,7 +1542,14 @@ const AudioProvider = ({ children }) => {
 
   // Toggle Repeat
   const toggleRepeat = () => {
-    setIsRepeat((prev) => !prev);
+    setIsRepeat((prev) => {
+      const next = !prev;
+      isRepeatRef.current = next;
+      if (Platform.OS === "web" && webAudioRef.current) {
+        webAudioRef.current.loop = next;
+      }
+      return next;
+    });
   };
 
   // Toggle Shuffle with queue preservation and Fisher-Yates randomization

@@ -55,6 +55,52 @@ const UserContext = createContext(null);
 export const STORAGE_ARTIST_PHOTOS_KEY = "@staytup_artist_photos_cache";
 export const ONBOARDING_COMPLETED_KEY = "@staytup_onboarding_completed";
 
+export const AVATAR_BG_COLORS = [
+  "#8C52FF", // Amethyst
+  "#2EBDD7", // Cyan
+  "#FFA500", // Amber
+  "#E8115B", // Rose
+  "#3A86FF", // Electric Blue
+  "#FF5722", // Coral
+  "#FFFFFF", // White
+  "#9D4EDD", // Purple
+  "#00B4D8", // Teal
+];
+
+export function getDeterministicAvatarColor(seedOrUid) {
+  if (!seedOrUid) return AVATAR_BG_COLORS[0];
+  const str = String(seedOrUid);
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return AVATAR_BG_COLORS[Math.abs(hash) % AVATAR_BG_COLORS.length];
+}
+
+export function formatPersonName(raw) {
+  if (!raw || typeof raw !== "string") return "";
+  const trimmed = raw.trim().slice(0, 15);
+  return trimmed
+    .split(/\s+/)
+    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : ""))
+    .join(" ")
+    .slice(0, 15);
+}
+
+export function formatUsername(raw) {
+  if (!raw || typeof raw !== "string") return "";
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_.]/g, "")
+    .slice(0, 15);
+}
+
+export function getDicebearToonHeadAvatar(seed) {
+  const clean = encodeURIComponent(String(seed || "Felix").trim());
+  return `https://api.dicebear.com/10.x/toon-head/svg?seed=${clean}`;
+}
+
 export const UserProvider = ({ children }) => {
   const isFreshLoginRef = useRef(
     typeof window !== "undefined" &&
@@ -79,7 +125,7 @@ export const UserProvider = ({ children }) => {
   const [userProfile, setUserProfile] = useState({
     username: "Music Lover",
     avatar: "initial",
-    avatarColor: "#1DB954",
+    avatarColor: "#8C52FF",
     languages: [],
     favoriteArtists: [],
   });
@@ -94,6 +140,7 @@ export const UserProvider = ({ children }) => {
   const [isPremium, setIsPremium] = useState(false);
   const [premiumPlan, setPremiumPlan] = useState("Free");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [userArtistMovements, setUserArtistMovements] = useState({});
 
   // Subscribe to Firebase Auth state
   useEffect(() => {
@@ -247,13 +294,16 @@ export const UserProvider = ({ children }) => {
           saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
         }
 
-        // Pre-populate initial profile so UI has basic info (Zero dummy seed data)
+        // Pre-populate initial profile so UI has basic info using Dicebear Toon Head
+        const cleanName =
+          firebaseUser.displayName ||
+          (firebaseUser.email ? firebaseUser.email.split("@")[0] : "Staytup Listener");
+        const defaultDicebear = getDicebearToonHeadAvatar(cleanName);
+
         const initialProfile = {
-          username:
-            firebaseUser.displayName ||
-            (firebaseUser.email ? firebaseUser.email.split("@")[0] : "Staytup Listener"),
-          avatar: firebaseUser.photoURL || "initial",
-          avatarColor: "#1DB954",
+          username: cleanName,
+          avatar: defaultDicebear,
+          avatarColor: getDeterministicAvatarColor(firebaseUser.uid || cleanName),
           languages: [],
           favoriteArtists: [],
         };
@@ -272,9 +322,50 @@ export const UserProvider = ({ children }) => {
         unsubscribeUserData = subscribeUserData(firebaseUser.uid, (data) => {
           if (data) {
             if (data.profile) {
+              const currentProfile = { ...data.profile };
+              const isGoogle = typeof currentProfile.avatar === "string" && currentProfile.avatar.includes("googleusercontent.com");
+              const is9x = typeof currentProfile.avatar === "string" && currentProfile.avatar.includes("9.x/toon-head");
+              const isOldGreen = currentProfile.avatarColor === "#1DB954";
+              let needsSave = false;
+
+              if (!currentProfile.avatar || isGoogle || is9x) {
+                if (is9x) {
+                  currentProfile.avatar = currentProfile.avatar.replace("9.x/toon-head", "10.x/toon-head");
+                } else {
+                  currentProfile.avatar = getDicebearToonHeadAvatar(currentProfile.username || cleanName);
+                }
+                needsSave = true;
+              }
+
+              if (!currentProfile.avatarColor || isOldGreen) {
+                currentProfile.avatarColor = getDeterministicAvatarColor(firebaseUser.uid || cleanName);
+                needsSave = true;
+              }
+
+              if (currentProfile.username) {
+                const formattedUser = formatUsername(currentProfile.username);
+                if (formattedUser && formattedUser !== currentProfile.username) {
+                  currentProfile.username = formattedUser;
+                  needsSave = true;
+                }
+              }
+
+              if (currentProfile.displayName || currentProfile.name) {
+                const formattedName = formatPersonName(currentProfile.displayName || currentProfile.name);
+                if (formattedName && (formattedName !== currentProfile.displayName || formattedName !== currentProfile.name)) {
+                  currentProfile.displayName = formattedName;
+                  currentProfile.name = formattedName;
+                  needsSave = true;
+                }
+              }
+
+              if (needsSave) {
+                fbSaveUserProfile(firebaseUser.uid, currentProfile);
+              }
+
               setUserProfile((prev) => ({
                 ...prev,
-                ...data.profile,
+                ...currentProfile,
               }));
             }
             if (isExplicitRetune) {
@@ -644,6 +735,30 @@ export const UserProvider = ({ children }) => {
     }
   };
 
+  // Track artist movements (artist profile viewed, similar artist tapped, co-artist discovered)
+  const recordArtistMovement = useCallback((artistInput, collaborators = []) => {
+    if (!artistInput) return;
+    const cleanMain = (typeof artistInput === "string" ? artistInput : artistInput?.name || "").trim();
+    if (!cleanMain) return;
+
+    setUserArtistMovements((prev) => {
+      const nextMap = { ...prev };
+      const mainKey = cleanMain.toLowerCase();
+      nextMap[mainKey] = (nextMap[mainKey] || 0) + 5;
+
+      if (Array.isArray(collaborators)) {
+        collaborators.forEach((c) => {
+          const cName = (typeof c === "string" ? c : c?.name || "").trim();
+          if (cName && cName.length > 2 && !/t-series|sony|records|music/i.test(cName)) {
+            const cKey = cName.toLowerCase();
+            nextMap[cKey] = (nextMap[cKey] || 0) + 2;
+          }
+        });
+      }
+      return nextMap;
+    });
+  }, []);
+
   // Open and close profile page
   const openProfile = () => setIsProfileOpen(true);
   const closeProfile = () => setIsProfileOpen(false);
@@ -651,9 +766,19 @@ export const UserProvider = ({ children }) => {
   // Update user profile fields (username, avatar, avatarColor, etc.)
   const updateProfile = async (updates) => {
     if (!updates || typeof updates !== "object") return;
+    const cleanUpdates = { ...updates };
+    if (cleanUpdates.username) {
+      cleanUpdates.username = formatUsername(cleanUpdates.username);
+    }
+    if (cleanUpdates.name) {
+      cleanUpdates.name = formatPersonName(cleanUpdates.name);
+    }
+    if (cleanUpdates.displayName) {
+      cleanUpdates.displayName = formatPersonName(cleanUpdates.displayName);
+    }
     const updatedProfile = {
       ...userProfile,
-      ...updates,
+      ...cleanUpdates,
     };
     setUserProfile(updatedProfile);
     const uid = currentUser?.uid || DEFAULT_USER_ID;
@@ -696,31 +821,33 @@ export const UserProvider = ({ children }) => {
     return res;
   };
 
-  const renamePlaylist = async (playlistId, newName) => {
+  const renamePlaylist = async (playlistId, newName, newCover = "") => {
     const trimmed = (newName || "").trim();
     if (!playlistId || !trimmed) return false;
     const uid = currentUser?.uid || DEFAULT_USER_ID;
+
+    const coverUpdates = newCover ? { cover_url: newCover, preview_artwork: newCover } : {};
 
     // Optimistically update local playlists & collabPlaylists state
     setPlaylists((prev) =>
       (prev || []).map((p) =>
         (p.id === playlistId || p.collabId === playlistId)
-          ? { ...p, name: trimmed, updatedAt: Date.now() }
+          ? { ...p, name: trimmed, ...coverUpdates, updatedAt: Date.now() }
           : p
       )
     );
     setCollabPlaylists((prev) =>
       (prev || []).map((p) =>
         (p.id === playlistId || p.collabId === playlistId)
-          ? { ...p, name: trimmed, updatedAt: Date.now() }
+          ? { ...p, name: trimmed, ...coverUpdates, updatedAt: Date.now() }
           : p
       )
     );
 
     if (String(playlistId).startsWith("collab_")) {
-      return await fbRenameCollabPlaylist(playlistId, trimmed);
+      return await fbRenameCollabPlaylist(playlistId, trimmed, newCover);
     }
-    return await renamePlaylistRTDB(uid, playlistId, trimmed);
+    return await renamePlaylistRTDB(uid, playlistId, trimmed, newCover);
   };
 
   const deletePlaylist = async (playlistId) => {
@@ -825,7 +952,7 @@ export const UserProvider = ({ children }) => {
       uid: currentUser?.uid || DEFAULT_USER_ID,
       username: userProfile?.username || currentUser?.displayName || "Staytup Listener",
       avatar: userProfile?.avatar || "initial",
-      avatarColor: userProfile?.avatarColor || "#1DB954",
+      avatarColor: userProfile?.avatarColor || getDeterministicAvatarColor(currentUser?.uid),
     };
     return await sendFriendRequestRTDB(sender, recipientUid, recipientUser);
   };
@@ -835,7 +962,7 @@ export const UserProvider = ({ children }) => {
       uid: currentUser?.uid || DEFAULT_USER_ID,
       username: userProfile?.username || currentUser?.displayName || "Staytup Listener",
       avatar: userProfile?.avatar || "initial",
-      avatarColor: userProfile?.avatarColor || "#1DB954",
+      avatarColor: userProfile?.avatarColor || getDeterministicAvatarColor(currentUser?.uid),
     };
     return await acceptFriendRequestRTDB(me, requestUser);
   };
@@ -926,6 +1053,8 @@ export const UserProvider = ({ children }) => {
         resetOnboarding,
         isFavoriteArtist,
         toggleFavoriteArtist,
+        userArtistMovements,
+        recordArtistMovement,
         isProfileOpen,
         openProfile,
         closeProfile,
@@ -1006,6 +1135,8 @@ const defaultUserContext = {
   getCollabPlaylistDetails: () => Promise.resolve(null),
   isFavoriteArtist: () => false,
   toggleFavoriteArtist: () => {},
+  userArtistMovements: {},
+  recordArtistMovement: () => {},
   isProfileOpen: false,
   openProfile: () => {},
   closeProfile: () => {},

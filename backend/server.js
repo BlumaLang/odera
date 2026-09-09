@@ -2286,6 +2286,107 @@ function extractStaytupArtistImage(imageObj) {
   return null;
 }
 
+// ─── Artist Songs Endpoint (Original movie/album tracks, no compilation spam, deduplicated) ─
+app.get(['/api/artists/:idOrName/songs', '/artists/:idOrName/songs', '/api/artist-songs'], async (req, res) => {
+  const queryParam = req.params.idOrName || req.query.id || req.query.name || req.query.q || '';
+  const page = parseInt(req.query.page, 10) || 0;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 25, 50);
+
+  if (!queryParam.trim()) {
+    return res.json({ tracks: [], results: [], has_more: false });
+  }
+
+  const cleanQuery = queryParam.trim();
+  let artistId = /^\d+$/.test(cleanQuery) ? cleanQuery : null;
+  let artistName = cleanQuery;
+
+  try {
+    // If not numeric id, resolve artist id from name
+    if (!artistId) {
+      const sUrl = `https://staytup-api.onrender.com/api/search/artists?query=${encodeURIComponent(cleanQuery)}&limit=1`;
+      const sResp = await fetch(sUrl, { signal: AbortSignal.timeout(5000) });
+      if (sResp.ok) {
+        const sJson = await sResp.json();
+        const first = sJson?.data?.results?.[0];
+        if (first && first.id) {
+          artistId = String(first.id);
+          artistName = first.name || artistName;
+        }
+      }
+    }
+
+    let tracks = [];
+    let hasMore = false;
+
+    // 1. Try official artist discography endpoint (/api/artists/:id/songs)
+    if (artistId) {
+      const aUrl = `https://staytup-api.onrender.com/api/artists/${artistId}/songs?page=${page}`;
+      const aResp = await fetch(aUrl, { signal: AbortSignal.timeout(6000) });
+      if (aResp.ok) {
+        const aJson = await aResp.json();
+        const rawSongs = aJson?.data?.songs || aJson?.songs || [];
+        const seenTitles = new Set();
+
+        for (const s of rawSongs) {
+          const album = s.album?.name || s.album || '';
+          const title = (s.name || s.title || '').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&');
+          const normTitle = title.toLowerCase().replace(/\s*\(.*?\)/g, '').trim();
+          if (seenTitles.has(normTitle)) continue;
+          if (isCompilationAlbum(album, title)) continue;
+          seenTitles.add(normTitle);
+          const normalized = normalizeSaavnSong(s, null);
+          if (normalized) tracks.push(normalized);
+        }
+
+        if (tracks.length > 0) {
+          hasMore = rawSongs.length >= 8;
+          return res.json({
+            tracks,
+            results: tracks,
+            artistId,
+            artistName,
+            page,
+            has_more: hasMore
+          });
+        }
+      }
+    }
+
+    // 2. Fallback to song search with title deduplication and compilation filtering
+    const searchUrl = `https://staytup-api.onrender.com/api/search/songs?query=${encodeURIComponent(artistName)}&limit=40`;
+    const searchResp = await fetch(searchUrl, { signal: AbortSignal.timeout(6000) });
+    if (searchResp.ok) {
+      const sJson = await searchResp.json();
+      const rawSongs = sJson?.data?.results || [];
+      const seenTitles = new Set();
+
+      for (const s of rawSongs) {
+        const album = s.album?.name || s.album || '';
+        const title = (s.name || s.title || '').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&');
+        const normTitle = title.toLowerCase().replace(/\s*\(.*?\)/g, '').trim();
+        if (seenTitles.has(normTitle)) continue;
+        if (isCompilationAlbum(album, title)) continue;
+        seenTitles.add(normTitle);
+        const normalized = normalizeSaavnSong(s, null);
+        if (normalized) tracks.push(normalized);
+        if (tracks.length >= limit) break;
+      }
+    }
+
+    return res.json({
+      tracks,
+      results: tracks,
+      artistId: artistId || '',
+      artistName,
+      page,
+      has_more: tracks.length >= limit
+    });
+  } catch (err) {
+    console.warn('[API /artists/:id/songs] Error:', err.message);
+    res.json({ tracks: [], results: [], has_more: false });
+  }
+});
+
 app.get('/artists/search', async (req, res) => {
   const q = req.query.q ? String(req.query.q).trim() : '';
   const limit = Math.min(parseInt(req.query.limit) || 10, 30);

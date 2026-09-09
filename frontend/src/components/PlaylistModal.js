@@ -21,7 +21,7 @@ import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
 import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
 import { useResponsive } from "../context/ResponsiveContext";
-import { useUser } from "../context/UserContext";
+import { useUser, getDeterministicAvatarColor } from "../context/UserContext";
 
 function getTrackDurationSeconds(t) {
   if (!t) return 0;
@@ -33,40 +33,27 @@ function getTrackDurationSeconds(t) {
   }
   if (typeof t.duration === "string") {
     const parts = t.duration.trim().split(":").map(Number);
-    if (parts.every((n) => !isNaN(n))) {
-      if (parts.length === 3) {
-        return parts[0] * 3600 + parts[1] * 60 + parts[2];
-      }
-      if (parts.length === 2) {
-        return parts[0] * 60 + parts[1];
-      }
-      if (parts.length === 1 && parts[0] > 0) {
-        return parts[0];
-      }
-    }
-  }
-  if (t.duration_ms && typeof t.duration_ms === "number") {
-    return Math.floor(t.duration_ms / 1000);
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   }
   return 0;
 }
 
-function formatTotalPlaylistDuration(tracks) {
-  if (!Array.isArray(tracks) || tracks.length === 0) return "";
-  let totalSec = 0;
-  for (const t of tracks) {
-    const s = getTrackDurationSeconds(t);
-    totalSec += s > 0 ? s : 200;
-  }
-  if (totalSec <= 0) return "";
-
-  const hours = Math.floor(totalSec / 3600);
-  const minutes = Math.floor((totalSec % 3600) / 60);
+function formatPlaylistDuration(seconds) {
+  if (!seconds || seconds <= 0) return "";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
 
   if (hours > 0) {
     return minutes > 0 ? `${hours} hr ${minutes} min` : `${hours} hr`;
   }
   return `${Math.max(1, minutes)} min`;
+}
+
+function formatTotalPlaylistDuration(tracks) {
+  if (!Array.isArray(tracks) || tracks.length === 0) return "";
+  const totalSeconds = tracks.reduce((acc, t) => acc + getTrackDurationSeconds(t), 0);
+  return formatPlaylistDuration(totalSeconds);
 }
 
 function UserAvatar({ user, size = 38, fontSize = 14, style }) {
@@ -76,29 +63,25 @@ function UserAvatar({ user, size = 38, fontSize = 14, style }) {
     setImgError(false);
   }, [user?.avatar, user?.photoURL, user?.avatarUrl]);
 
-  const avatarUri =
-    !imgError &&
-    ((user?.avatar && typeof user.avatar === "string" && user.avatar.startsWith("http"))
+  const name = user?.username || user?.name || user?.displayName || "Felix";
+  const seed = encodeURIComponent(name.trim() || "Felix");
+  const dicebearDefault = `https://api.dicebear.com/10.x/toon-head/svg?seed=${seed}`;
+
+  const rawAvatar =
+    user?.avatar && typeof user.avatar === "string" && user.avatar.startsWith("http") && !user.avatar.includes("googleusercontent.com")
       ? user.avatar
-      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http"))
+      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http") && !user.photoURL.includes("googleusercontent.com"))
       ? user.photoURL
-      : (user?.avatarUrl && typeof user.avatarUrl === "string" && user.avatarUrl.startsWith("http"))
+      : (user?.avatarUrl && typeof user.avatarUrl === "string" && user.avatarUrl.startsWith("http") && !user.avatarUrl.includes("googleusercontent.com"))
       ? user.avatarUrl
-      : null);
+      : dicebearDefault;
 
-  const iconName =
-    user?.avatar &&
-    user.avatar !== "initial" &&
-    typeof user.avatar === "string" &&
-    !user.avatar.startsWith("http")
-      ? user.avatar
-      : user?.icon && typeof user.icon === "string" && !user.icon.startsWith("http")
-      ? user.icon
-      : null;
+  const avatarUri = !imgError ? rawAvatar.replace(/\/9\.x\//, "/10.x/") : dicebearDefault;
 
-  const name = user?.username || user?.name || user?.displayName || "U";
-  const initial = (name[0] || "U").toUpperCase();
-  const bgColor = user?.avatarColor || colors.primary;
+  const bgColor =
+    user?.avatarColor && user.avatarColor !== "#1DB954"
+      ? user.avatarColor
+      : getDeterministicAvatarColor(user?.uid || name);
 
   return (
     <View
@@ -115,29 +98,12 @@ function UserAvatar({ user, size = 38, fontSize = 14, style }) {
         style,
       ]}
     >
-      {avatarUri ? (
-        <Image
-          source={{ uri: avatarUri }}
-          style={{ width: "100%", height: "100%" }}
-          resizeMode="cover"
-          onError={() => setImgError(true)}
-        />
-      ) : iconName ? (
-        <Ionicons name={iconName} size={Math.round(size * 0.44)} color="#000000" />
-      ) : (
-        <Text
-          style={{
-            fontFamily: fonts.bold,
-            fontWeight: "700",
-            fontSize,
-            color: "#000000",
-            textAlign: "center",
-            includeFontPadding: false,
-          }}
-        >
-          {initial}
-        </Text>
-      )}
+      <Image
+        source={{ uri: avatarUri }}
+        style={{ width: "100%", height: "100%" }}
+        resizeMode="cover"
+        onError={() => setImgError(true)}
+      />
     </View>
   );
 }
@@ -173,6 +139,7 @@ export default function PlaylistModal({
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showCollabDeleteModal, setShowCollabDeleteModal] = useState(false);
   const [showCollabModal, setShowCollabModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -248,12 +215,27 @@ export default function PlaylistModal({
   const getCollabUser = useCallback(
     (c) => {
       const match = c?.uid ? friendsMap[c.uid] : null;
+      const uname = c?.name || c?.username || match?.username || match?.name || "Listener";
+      const seed = encodeURIComponent(uname.trim() || "Felix");
+      const defaultToon = `https://api.dicebear.com/10.x/toon-head/svg?seed=${seed}`;
+      const rawAvatar = c?.avatar || match?.avatar || match?.photoURL || match?.avatarUrl || defaultToon;
+      const avatar =
+        typeof rawAvatar === "string" && !rawAvatar.includes("googleusercontent.com")
+          ? rawAvatar.replace(/\/9\.x\//, "/10.x/")
+          : defaultToon;
+
+      const rawColor = c?.avatarColor || match?.avatarColor;
+      const color =
+        rawColor && rawColor !== "#1DB954"
+          ? rawColor
+          : getDeterministicAvatarColor(c?.uid || uname);
+
       return {
         uid: c?.uid,
-        username: c?.name || c?.username || match?.username || match?.name || "Listener",
-        name: c?.name || c?.username || match?.username || match?.name || "Listener",
-        avatar: c?.avatar || match?.avatar || match?.photoURL || match?.avatarUrl,
-        avatarColor: c?.avatarColor || match?.avatarColor || colors.primary,
+        username: uname,
+        name: uname,
+        avatar,
+        avatarColor: color,
         photoURL: match?.photoURL,
         avatarUrl: match?.avatarUrl,
         role: c?.role,
@@ -288,17 +270,23 @@ export default function PlaylistModal({
   }, [playlistData?.tracks, playTrack, setShuffle]);
 
   const doDelete = useCallback(async () => {
-    if (!playlistData?.id) return;
+    const targetId = playlistData?.collabId || playlistData?.id;
+    if (!targetId) return;
     try {
-      await api.deletePlaylist(playlistData.id);
-      if (onDeletePlaylist) {
-        onDeletePlaylist(playlistData.id);
+      if (isCollab && deleteCollabPlaylist) {
+        await deleteCollabPlaylist(targetId);
+      } else {
+        await api.deletePlaylist(targetId);
       }
+      if (onDeletePlaylist) {
+        onDeletePlaylist(targetId);
+      }
+      setShowCollabModal(false);
       onClose();
     } catch (err) {
       console.warn("Failed to delete playlist:", err);
     }
-  }, [playlistData?.id, onDeletePlaylist, onClose]);
+  }, [playlistData?.id, playlistData?.collabId, isCollab, deleteCollabPlaylist, onDeletePlaylist, onClose]);
 
   const handleDelete = useCallback(() => {
     setShowDeleteModal(true);
@@ -337,21 +325,23 @@ export default function PlaylistModal({
   );
 
   const handleRenamePlaylist = useCallback(
-    async (newName) => {
+    async (newName, newCover = "") => {
       const trimmed = (newName || "").trim();
       const pId = playlistData?.id || playlistData?.collabId;
       if (!pId || !trimmed) return;
       try {
+        const coverUpdate = newCover ? { cover_url: newCover, preview_artwork: newCover } : {};
         const updated = {
           ...playlistData,
           name: trimmed,
+          ...coverUpdate,
         };
         setPlaylistData(updated);
 
         if (renamePlaylist) {
-          await renamePlaylist(pId, trimmed);
+          await renamePlaylist(pId, trimmed, newCover);
         } else {
-          await api.updatePlaylist(pId, { name: trimmed });
+          await api.updatePlaylist(pId, { name: trimmed, cover_url: newCover });
         }
 
         if (onPlaylistUpdated) {
@@ -594,9 +584,9 @@ export default function PlaylistModal({
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               activeOpacity={0.7}
               accessibilityRole="button"
-              accessibilityLabel="Delete Playlist"
+              accessibilityLabel="Playlist Options"
             >
-              <Ionicons name="close" size={24} color="#EB4335" />
+              <Ionicons name="ellipsis-horizontal" size={22} color="#A7A7A7" />
             </TouchableOpacity>
           </View>
         </View>
@@ -775,19 +765,8 @@ export default function PlaylistModal({
                 {/* Tracks Header */}
                 <View style={styles.tracksHeaderRow}>
                   <Text style={styles.tracksHeaderText}>Tracks</Text>
-                  {isLoadingTracks ? (
+                  {isLoadingTracks && (
                     <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 10 }} />
-                  ) : (
-                    <TouchableOpacity
-                      style={styles.tracksImportLink}
-                      onPress={() => setShowImportModal(true)}
-                      activeOpacity={0.7}
-                      accessibilityRole="button"
-                      accessibilityLabel="Import from link"
-                    >
-                      <Ionicons name="link-outline" size={14} color={colors.primary} style={{ marginRight: 5 }} />
-                      <Text style={styles.tracksImportLinkText}>Import from link</Text>
-                    </TouchableOpacity>
                   )}
                 </View>
               </View>
@@ -863,6 +842,7 @@ export default function PlaylistModal({
           onClose={() => setShowRenameModal(false)}
           onSubmit={handleRenamePlaylist}
           initialName={playlistData?.name}
+          initialCover={playlistData?.cover_url || playlistData?.preview_artwork || ""}
           mode="edit"
         />
 
@@ -944,7 +924,19 @@ export default function PlaylistModal({
               <Text style={styles.collabHeaderTitle} numberOfLines={1}>
                 Collaborate
               </Text>
-              <View style={{ width: 40 }} />
+              {isCollab ? (
+                <TouchableOpacity
+                  style={styles.collabBackBtn}
+                  onPress={() => setShowCollabDeleteModal(true)}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  activeOpacity={0.7}
+                  accessibilityLabel="Collab Options"
+                >
+                  <Ionicons name="ellipsis-horizontal" size={22} color="#A7A7A7" />
+                </TouchableOpacity>
+              ) : (
+                <View style={{ width: 40 }} />
+              )}
             </View>
 
             <ScrollView
@@ -1088,21 +1080,47 @@ export default function PlaylistModal({
                   </View>
                 )}
               </View>
-
-              {/* Stop Collaboration / Delete Collab Playlist */}
-              {isCollab && (
-                <View style={styles.stopCollabContainer}>
-                  <TouchableOpacity
-                    style={styles.stopCollabBtn}
-                    onPress={handleStopCollab}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="trash-outline" size={16} color="#EB4335" style={{ marginRight: 6 }} />
-                    <Text style={styles.stopCollabBtnText}>Stop Collab & Delete Playlist</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
             </ScrollView>
+
+            {/* Confirmation Modal for Collab Playlist Delete */}
+            {showCollabDeleteModal && (
+              <View style={styles.deleteModalBackdropOverlay}>
+                <TouchableOpacity
+                  style={StyleSheet.absoluteFillObject}
+                  activeOpacity={1}
+                  onPress={() => setShowCollabDeleteModal(false)}
+                />
+                <View style={styles.deleteModalCard} onStartShouldSetResponder={() => true}>
+                  <View style={styles.dragHandle} />
+                  <View style={styles.deleteModalIconWrap}>
+                    <Ionicons name="trash-outline" size={28} color={colors.error} />
+                  </View>
+                  <Text style={styles.deleteModalTitle}>Delete Playlist?</Text>
+                  <Text style={styles.deleteModalDesc}>
+                    Are you sure you want to delete "{playlistData?.name}"? All collaborators will lose access and this action cannot be undone.
+                  </Text>
+                  <View style={styles.deleteModalActions}>
+                    <TouchableOpacity
+                      style={styles.deleteModalCancelBtn}
+                      onPress={() => setShowCollabDeleteModal(false)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.deleteModalCancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.deleteModalConfirmBtn}
+                      onPress={() => {
+                        setShowCollabDeleteModal(false);
+                        handleStopCollab();
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.deleteModalConfirmText}>Delete</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            )}
           </View>
         </Modal>
       </View>
@@ -1172,7 +1190,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: "rgba(235, 67, 53, 0.12)",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
     alignItems: "center",
     justifyContent: "center",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
@@ -1207,9 +1225,10 @@ const styles = StyleSheet.create({
   heroArtwork: {
     width: 170,
     height: 170,
-    borderRadius: 14,
+    borderRadius: 12,
     backgroundColor: "#121212",
     marginBottom: 16,
+    overflow: "hidden",
   },
   heroArtworkFallback: {
     alignItems: "center",
@@ -1227,10 +1246,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   playlistBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     backgroundColor: "rgba(29, 185, 84, 0.18)",
-    borderRadius: 4,
+    borderRadius: 14,
   },
   playlistBadgeText: {
     fontFamily: fonts.bold,
@@ -1241,10 +1260,10 @@ const styles = StyleSheet.create({
   collabBadge: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     backgroundColor: "rgba(29, 185, 84, 0.25)",
-    borderRadius: 4,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: "rgba(29, 185, 84, 0.4)",
   },
@@ -1405,9 +1424,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255, 255, 255, 0.08)",
-    marginBottom: 10,
+    marginBottom: 8,
   },
   tracksHeaderText: {
     fontFamily: fonts.bold,
@@ -1496,6 +1513,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.75)",
     justifyContent: "flex-end",
+  },
+  deleteModalBackdropOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    justifyContent: "flex-end",
+    zIndex: 999,
   },
   deleteModalCard: {
     width: "100%",

@@ -274,3 +274,152 @@ export async function savePinUser(cleanUser, userData) {
   }
 }
 
+/**
+ * Save / upload trending feed to Firebase RTDB (node: trendingFeed)
+ */
+export async function saveTrendingFeed(feedData) {
+  if (!feedData) return false;
+  try {
+    const feedRef = ref(rtdb, 'trendingFeed');
+    await set(feedRef, {
+      ...feedData,
+      lastUpdated: new Date().toISOString(),
+    });
+    return true;
+  } catch (err) {
+    console.warn('[Firebase] saveTrendingFeed error:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Update all users in RTDB to use Dicebear Toon Head avatars
+ */
+export async function updateUsersToDicebear() {
+  try {
+    const usersSnap = await get(ref(rtdb, 'users'));
+    const publicSnap = await get(ref(rtdb, 'publicUsers'));
+    const updates = {};
+    let count = 0;
+
+    const AVATAR_BG_COLORS = [
+      "#8C52FF", // Amethyst
+      "#2EBDD7", // Cyan
+      "#FFA500", // Amber
+      "#E8115B", // Rose
+      "#3A86FF", // Electric Blue
+      "#FF5722", // Coral
+      "#9D4EDD", // Purple
+      "#00B4D8", // Teal
+    ];
+
+    const getColorForUid = (uid) => {
+      let hash = 0;
+      const str = String(uid || 'user');
+      for (let i = 0; i < str.length; i++) {
+        hash = (hash << 5) - hash + str.charCodeAt(i);
+        hash |= 0;
+      }
+      return AVATAR_BG_COLORS[Math.abs(hash) % AVATAR_BG_COLORS.length];
+    };
+
+    if (usersSnap.exists()) {
+      const users = usersSnap.val();
+      for (const [uid, uData] of Object.entries(users)) {
+        const avatar = uData.profile?.avatar;
+        const isDicebear10 = typeof avatar === 'string' && avatar.includes('api.dicebear.com/10.x');
+        if (!isDicebear10) {
+          const username = uData.profile?.username || 'Staytup Listener';
+          const seed = encodeURIComponent(username.trim() || 'Felix');
+          const dicebearAvatar = `https://api.dicebear.com/10.x/toon-head/svg?seed=${seed}`;
+          updates[`users/${uid}/profile/avatar`] = dicebearAvatar;
+          count++;
+        }
+        const color = uData.profile?.avatarColor;
+        if (!color || color === '#1DB954') {
+          updates[`users/${uid}/profile/avatarColor`] = getColorForUid(uid);
+        }
+        if (uData.friends) {
+          for (const [fUid, fData] of Object.entries(uData.friends)) {
+            const fAvatar = fData?.avatar;
+            if (!fAvatar || !fAvatar.includes('api.dicebear.com/10.x')) {
+              const fName = fData?.username || 'Friend';
+              const fSeed = encodeURIComponent(fName.trim() || 'Felix');
+              updates[`users/${uid}/friends/${fUid}/avatar`] = `https://api.dicebear.com/10.x/toon-head/svg?seed=${fSeed}`;
+            }
+            if (!fData?.avatarColor || fData?.avatarColor === '#1DB954') {
+              updates[`users/${uid}/friends/${fUid}/avatarColor`] = getColorForUid(fUid);
+            }
+          }
+        }
+      }
+    }
+
+    if (publicSnap.exists()) {
+      const pub = publicSnap.val();
+      for (const [uid, pData] of Object.entries(pub)) {
+        const avatar = pData?.avatar;
+        const isDicebear10 = typeof avatar === 'string' && avatar.includes('api.dicebear.com/10.x');
+        if (!isDicebear10) {
+          const username = pData?.username || 'Staytup Listener';
+          const seed = encodeURIComponent(username.trim() || 'Felix');
+          const dicebearAvatar = `https://api.dicebear.com/10.x/toon-head/svg?seed=${seed}`;
+          updates[`publicUsers/${uid}/avatar`] = dicebearAvatar;
+        }
+        const color = pData?.avatarColor;
+        if (!color || color === '#1DB954') {
+          updates[`publicUsers/${uid}/avatarColor`] = getColorForUid(uid);
+        }
+      }
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await update(ref(rtdb), updates);
+    }
+    return { success: true, updatedCount: count, totalUpdates: Object.keys(updates).length };
+  } catch (err) {
+    console.warn('[Firebase] updateUsersToDicebear error:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Cache high-res track artwork in Firebase RTDB
+ */
+export async function cacheTrackImage(videoId, imageUrl) {
+  if (!videoId || !imageUrl) return;
+  try {
+    const cleanId = String(videoId).replace(/^saavn_/, '').trim();
+    const highRes = String(imageUrl).replace(/(?:50x50|150x150)\.jpg/i, '500x500.jpg');
+    const imgRef = ref(rtdb, `track_images/${cleanId}`);
+    await set(imgRef, {
+      videoId: cleanId,
+      image: highRes,
+      updatedAt: Date.now()
+    });
+  } catch (err) {
+    console.warn('[Firebase] cacheTrackImage error:', err.message);
+  }
+}
+
+/**
+ * Get cached high-res track artwork from Firebase RTDB
+ */
+export async function getCachedTrackImage(videoId) {
+  if (!videoId) return null;
+  try {
+    const cleanId = String(videoId).replace(/^saavn_/, '').trim();
+    const imgRef = ref(rtdb, `track_images/${cleanId}`);
+    const snap = await get(imgRef);
+    if (snap.exists()) {
+      const data = snap.val();
+      if (typeof data === 'string') return data;
+      return data?.image || null;
+    }
+  } catch (err) {
+    console.warn('[Firebase] getCachedTrackImage error:', err.message);
+  }
+  return null;
+}
+
+

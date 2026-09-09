@@ -96,24 +96,26 @@
           'Banner not shown', 'beforeinstallprompt', 'powerPreference', 'requestAdapter',
           '369219127', 'postMessage', 'DOMWindow', 'target origin', 'www-widgetapi',
           'Failed to convert value to \'Response\'', 'FetchEvent for', 'network error response',
-          'doubleclick', 'googleads', 'ytimg', 'innertube'
+          'doubleclick', 'googleads', 'ytimg', 'innertube', 'startTime', 'reportAllChanges'
         ];
         function shouldIgnore(args) {
           try {
             var str = Array.prototype.slice.call(args).map(function(x) {
-              return typeof x === 'string' ? x : (x && typeof x === 'object' ? (x.message || '') + (x.stack || '') : String(x || ''));
+              return typeof x === 'string' ? x : (x && typeof x === 'object' ? (x.message || '') + ' ' + (x.stack || '') : String(x || ''));
             }).join(' ');
             return IGNORE.some(function(term) { return str.indexOf(term) !== -1; });
           } catch (_) { return false; }
         }
         if (typeof console !== 'undefined') {
-          var _w = console.warn, _e = console.error, _i = console.info;
+          var _w = console.warn, _e = console.error, _i = console.info, _l = console.log, _d = console.debug;
           console.warn = function() { if (!shouldIgnore(arguments)) _w.apply(console, arguments); };
           console.error = function() { if (!shouldIgnore(arguments)) _e.apply(console, arguments); };
           console.info = function() { if (!shouldIgnore(arguments)) _i.apply(console, arguments); };
+          console.log = function() { if (!shouldIgnore(arguments)) _l.apply(console, arguments); };
+          console.debug = function() { if (!shouldIgnore(arguments)) _d.apply(console, arguments); };
         }
         window.addEventListener('error', function(e) {
-          var m = (e && e.message) || '';
+          var m = ((e && e.message) || '') + ' ' + ((e && e.filename) || '') + ' ' + ((e && e.error && e.error.stack) || '');
           if (IGNORE.some(function(term) { return m.indexOf(term) !== -1; })) {
             e.preventDefault();
             if (e.stopImmediatePropagation) e.stopImmediatePropagation();
@@ -122,7 +124,7 @@
         }, true);
         window.addEventListener('unhandledrejection', function(e) {
           var r = (e && e.reason) || '';
-          var m = r && typeof r === 'object' ? (r.message || String(r)) : String(r || '');
+          var m = r && typeof r === 'object' ? ((r.message || '') + ' ' + (r.stack || String(r))) : String(r || '');
           if (IGNORE.some(function(term) { return m.indexOf(term) !== -1; })) {
             e.preventDefault();
             if (e.stopImmediatePropagation) e.stopImmediatePropagation();
@@ -149,7 +151,6 @@
     <script>
       window.deferredPWAInstallPrompt = null;
       window.addEventListener('beforeinstallprompt', function(e) {
-        e.preventDefault();
         window.deferredPWAInstallPrompt = e;
         window.dispatchEvent(new CustomEvent('pwa-prompt-ready'));
       });

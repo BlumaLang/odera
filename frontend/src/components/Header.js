@@ -47,16 +47,24 @@ export default function Header({
               activeOpacity={0.75}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              {avatarIcon && avatarIcon.startsWith("http") ? (
+              {userProfile?.avatar === "initial" ? (
+                <Text style={styles.profileAvatarText}>{userInitial}</Text>
+              ) : avatarIcon && avatarIcon.startsWith("http") && !avatarIcon.includes("googleusercontent.com") ? (
                 <Image
                   source={{ uri: avatarIcon }}
                   style={styles.profileAvatarImage}
                   resizeMode="cover"
                 />
-              ) : avatarIcon ? (
-                <Ionicons name={avatarIcon} size={16} color="#000000" />
               ) : (
-                <Text style={styles.profileAvatarText}>{userInitial}</Text>
+                <Image
+                  source={{
+                    uri: `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(
+                      userProfile?.username || "Felix"
+                    )}`,
+                  }}
+                  style={styles.profileAvatarImage}
+                  resizeMode="cover"
+                />
               )}
             </TouchableOpacity>
           </View>
@@ -69,7 +77,8 @@ export default function Header({
 const styles = StyleSheet.create({
   headerWrapper: {
     backgroundColor: "#000000",
-    paddingTop: Platform.OS === "web" ? 10 : 14,
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === "web" ? 12 : 14,
     paddingBottom: 8,
   },
   innerContainer: {
@@ -80,11 +89,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   topRow: {
+    height: 38,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    gap: 12,
   },
   pillRow: {
     flexDirection: "row",

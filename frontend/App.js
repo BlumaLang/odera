@@ -1,5 +1,5 @@
 import React, { useState, useEffect, Component, useCallback } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, Modal } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, Modal, BackHandler } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { NavigationContainer, DefaultTheme } from "@react-navigation/native";
@@ -188,10 +188,41 @@ function MainTabs() {
   const [activeTab, setActiveTab] = useState(() => getRouteFromPathname());
   const insets = useSafeAreaInsets();
 
+  const tabHistoryRef = React.useRef(["Home"]);
+
   const handleSelectTab = (tabName) => {
+    if (tabName !== activeTab) {
+      tabHistoryRef.current.push(tabName);
+    }
     setActiveTab(tabName);
     updateBrowserPathname(tabName);
   };
+
+  // Android hardware / gesture back handling
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+
+    const onHardwareBack = () => {
+      // If we are not on Home, navigate to previous tab in history or to Home
+      if (tabHistoryRef.current.length > 1) {
+        tabHistoryRef.current.pop(); // remove current
+        const prevTab = tabHistoryRef.current[tabHistoryRef.current.length - 1] || "Home";
+        setActiveTab(prevTab);
+        updateBrowserPathname(prevTab);
+        return true; // handled
+      }
+      if (activeTab !== "Home") {
+        tabHistoryRef.current = ["Home"];
+        setActiveTab("Home");
+        updateBrowserPathname("Home");
+        return true; // handled
+      }
+      return false; // let Android exit the app
+    };
+
+    const backSub = BackHandler.addEventListener("hardwareBackPress", onHardwareBack);
+    return () => backSub.remove();
+  }, [activeTab]);
 
   // Synchronize browser URL on load and handle Browser Back/Forward buttons (popstate)
   useEffect(() => {
@@ -308,6 +339,20 @@ function AppContent() {
   } = useUser();
 
   const [showUpdateChangelog, setShowUpdateChangelog] = useState(false);
+
+  // Android back gesture: close profile modal first if open
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const onBack = () => {
+      if (isProfileOpen) {
+        closeProfile();
+        return true;
+      }
+      return false;
+    };
+    const sub = BackHandler.addEventListener("hardwareBackPress", onBack);
+    return () => sub.remove();
+  }, [isProfileOpen, closeProfile]);
 
   // Enforce pure black PWA theme-color and status bar on Web and Mobile browsers
   useEffect(() => {

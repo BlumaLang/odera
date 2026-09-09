@@ -130,11 +130,11 @@ export default function LibraryScreen() {
     setSelectedPlaylist(playlist);
   };
 
-  const handleCreatePlaylist = async (name, description = "", tracks = [], coverUrl = "") => {
+  const handleCreatePlaylist = async (name, coverUrl = "") => {
     const trimmed = (name || "").trim();
     if (!trimmed) return;
     try {
-      const res = await createPlaylist(trimmed, description, tracks, coverUrl);
+      const res = await createPlaylist(trimmed, "", [], coverUrl);
       if (res) {
         setShowCreateModal(false);
         openPlaylist(res);
@@ -259,20 +259,28 @@ export default function LibraryScreen() {
                 activeOpacity={0.75}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                {userProfile?.avatar && userProfile.avatar !== "initial" ? (
-                  userProfile.avatar.startsWith("http") ? (
-                    <Image
-                      source={{ uri: userProfile.avatar }}
-                      style={styles.avatarImage}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <Ionicons name={userProfile.avatar} size={16} color="#000000" />
-                  )
-                ) : (
+                {userProfile?.avatar === "initial" ? (
                   <Text style={styles.avatarText}>
                     {(userProfile?.username?.[0] || "U").toUpperCase()}
                   </Text>
+                ) : userProfile?.avatar &&
+                  userProfile.avatar.startsWith("http") &&
+                  !userProfile.avatar.includes("googleusercontent.com") ? (
+                  <Image
+                    source={{ uri: userProfile.avatar }}
+                    style={styles.avatarImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <Image
+                    source={{
+                      uri: `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(
+                        userProfile?.username || "Felix"
+                      )}`,
+                    }}
+                    style={styles.avatarImage}
+                    resizeMode="cover"
+                  />
                 )}
               </TouchableOpacity>
             </View>
@@ -416,6 +424,17 @@ export default function LibraryScreen() {
                     <Ionicons name="play" size={16} color="#000000" style={{ marginRight: 4 }} />
                     <Text style={styles.playAllSmallBtnText}>Play All</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.shuffleSmallBtn}
+                    onPress={() =>
+                      handleShufflePlaylist(
+                        mergedHistory.map((h) => ({ ...h, videoId: h.video_id || h.videoId }))
+                      )
+                    }
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="shuffle" size={18} color="#FFFFFF" />
+                  </TouchableOpacity>
                 </View>
               )}
             </View>
@@ -430,6 +449,7 @@ export default function LibraryScreen() {
               showRank={false}
               showPlayButton={false}
               showDuration={false}
+              style={{ paddingHorizontal: 0 }}
               isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
               onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
               onRemove={() => removeFromHistory(item)}
@@ -494,6 +514,7 @@ export default function LibraryScreen() {
               layout="row"
               showRank={false}
               showDuration={false}
+              style={{ paddingHorizontal: 0 }}
               isActive={currentTrack?.videoId === item.video_id}
               onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
               onPress={() =>
@@ -701,7 +722,7 @@ const styles = StyleSheet.create({
     color: "#000000",
   },
   listContent: {
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingTop: 8,
   },
   topArtistsSection: {
@@ -886,7 +907,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 16,
-    paddingHorizontal: 4,
+    paddingHorizontal: 0,
   },
   sectionSubHeader: {
     fontFamily: fonts.regular,
@@ -959,9 +980,9 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(29, 185, 84, 0.15)",
     borderWidth: 1,
     borderColor: "rgba(29, 185, 84, 0.3)",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
     marginLeft: 8,
   },
   collabBadgeText: {
@@ -974,7 +995,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "transparent",
     paddingVertical: 10,
-    paddingHorizontal: 4,
+    paddingHorizontal: 0,
     borderRadius: 0,
     marginBottom: 0,
     borderWidth: 0,

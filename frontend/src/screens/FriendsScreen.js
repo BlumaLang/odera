@@ -14,7 +14,7 @@ import {
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { useResponsive } from "../context/ResponsiveContext";
-import { useUser } from "../context/UserContext";
+import { useUser, formatPersonName, formatUsername } from "../context/UserContext";
 import { useAudioPlayback } from "../context/AudioContext";
 import {
   subscribeFriendActivity,
@@ -26,7 +26,7 @@ import PlaylistModal from "../components/PlaylistModal";
 import CreatePlaylistModal from "../components/CreatePlaylistModal";
 
 /**
- * Robust UserAvatar component with image error fallback to initial
+ * Robust UserAvatar component using Dicebear Toon Head default preset
  */
 function UserAvatar({ user, size = 44, fontSize = 15, style }) {
   const [imgError, setImgError] = useState(false);
@@ -35,27 +35,23 @@ function UserAvatar({ user, size = 44, fontSize = 15, style }) {
     setImgError(false);
   }, [user?.avatar, user?.photoURL, user?.avatarUrl]);
 
-  const avatarUri =
-    !imgError &&
-    ((user?.avatar && typeof user.avatar === "string" && user.avatar.startsWith("http"))
+  const username = user?.username || user?.displayName || user?.name || "Friend";
+  const dicebearUrl = `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(username.trim())}`;
+
+  const candidateUri =
+    (user?.avatar && typeof user.avatar === "string" && user.avatar.startsWith("http"))
       ? user.avatar
-      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http"))
-      ? user.photoURL
       : (user?.avatarUrl && typeof user.avatarUrl === "string" && user.avatarUrl.startsWith("http"))
       ? user.avatarUrl
-      : null);
-
-  const iconName =
-    user?.avatar &&
-    user.avatar !== "initial" &&
-    typeof user.avatar === "string" &&
-    !user.avatar.startsWith("http")
-      ? user.avatar
-      : user?.icon && typeof user.icon === "string" && !user.icon.startsWith("http")
-      ? user.icon
+      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http"))
+      ? user.photoURL
       : null;
 
-  const initial = (user?.username?.[0] || user?.displayName?.[0] || user?.name?.[0] || "U").toUpperCase();
+  // Never use Google account photo; always display crisp Dicebear Toon Head
+  const isGoogle = candidateUri && candidateUri.includes("googleusercontent.com");
+  const isInitial = user?.avatar === "initial";
+  const initial = (username[0] || "U").toUpperCase();
+  const avatarUri = (!imgError && candidateUri && !isGoogle) ? candidateUri : dicebearUrl;
   const bgColor = user?.avatarColor || colors.primary;
 
   return (
@@ -73,28 +69,17 @@ function UserAvatar({ user, size = 44, fontSize = 15, style }) {
         style,
       ]}
     >
-      {avatarUri ? (
+      {isInitial ? (
+        <Text style={{ fontFamily: fonts.bold, fontSize, color: "#000000" }}>
+          {initial}
+        </Text>
+      ) : (
         <Image
           source={{ uri: avatarUri }}
           style={{ width: "100%", height: "100%" }}
           resizeMode="cover"
           onError={() => setImgError(true)}
         />
-      ) : iconName ? (
-        <Ionicons name={iconName} size={Math.round(size * 0.44)} color="#000000" />
-      ) : (
-        <Text
-          style={{
-            fontFamily: fonts.bold,
-            fontWeight: "700",
-            fontSize,
-            color: "#000000",
-            textAlign: "center",
-            includeFontPadding: false,
-          }}
-        >
-          {initial}
-        </Text>
       )}
     </View>
   );
@@ -633,14 +618,13 @@ export default function FriendsScreen({ onNavigate }) {
 
   return (
     <View style={styles.container}>
-      {/* Top Header with lifting search bar */}
-      <View style={styles.screenHeader}>
-        <View style={[styles.innerContent, (isDesktop || isTablet) && styles.desktopInnerContent]}>
-          <View style={[styles.headerTopRow, isSearchActive && styles.headerTopRowHidden]}>
-            <View>
-              <Text style={styles.screenTitle}>Friends</Text>
-            </View>
+      {/* Header Profile Row (Matching LibraryScreen exactly) */}
+      <View style={styles.header}>
+        <View style={[styles.headerInner, (isDesktop || isTablet) && styles.desktopHeaderInner]}>
+          <View style={[styles.profileRow, isSearchActive && styles.profileRowHidden]}>
+            <Text style={styles.profileName}>Friends</Text>
 
+            {/* Top Right Header Controls */}
             <View style={styles.headerRightGroup}>
               <TouchableOpacity
                 style={styles.headerCircleBtn}
@@ -658,21 +642,27 @@ export default function FriendsScreen({ onNavigate }) {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.profileAvatar, { backgroundColor: avatarBg }]}
+                style={[styles.avatarContainer, { backgroundColor: avatarBg }]}
                 onPress={() => openProfile && openProfile()}
                 activeOpacity={0.75}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                {avatarIcon && avatarIcon.startsWith("http") ? (
+                {userProfile?.avatar === "initial" ? (
+                  <Text style={styles.avatarText}>
+                    {(userProfile?.username?.[0] || "U").toUpperCase()}
+                  </Text>
+                ) : avatarIcon && avatarIcon.startsWith("http") && !avatarIcon.includes("googleusercontent.com") ? (
                   <Image
                     source={{ uri: avatarIcon }}
-                    style={styles.profileAvatarImage}
+                    style={styles.avatarImage}
                     resizeMode="cover"
                   />
-                ) : avatarIcon ? (
-                  <Ionicons name={avatarIcon} size={16} color="#000000" />
                 ) : (
-                  <Text style={styles.profileAvatarText}>{userInitial}</Text>
+                  <Image
+                    source={{ uri: `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(userProfile?.username || userInitial || "Felix")}` }}
+                    style={styles.avatarImage}
+                    resizeMode="cover"
+                  />
                 )}
               </TouchableOpacity>
             </View>
@@ -716,92 +706,95 @@ export default function FriendsScreen({ onNavigate }) {
                     setIsSearchActive(false);
                     setSearchQuery("");
                   }}
-                  style={styles.cancelSearchBtn}
+                  style={styles.cancelCircleBtn}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  activeOpacity={0.75}
+                  accessibilityLabel="Close search"
                 >
-                  <Text style={styles.cancelSearchBtnText}>Cancel</Text>
+                  <Ionicons name="close" size={18} color="#FFFFFF" />
                 </TouchableOpacity>
               </View>
             </View>
           )}
-
-          {/* Pill Tabs: Friends | Blend Radar | Requests | Collab Playlists */}
-          {!isSearchActive && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.tabsScrollContent}
-              style={styles.tabsScrollView}
-            >
-              <TouchableOpacity
-                style={[styles.tabPillBtn, activeTab === "friends" && styles.tabPillBtnActive]}
-                onPress={() => setActiveTab("friends")}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.tabPillText, activeTab === "friends" && styles.tabPillTextActive]}>
-                  Friends
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.tabPillBtn, activeTab === "blend" && styles.tabPillBtnActive]}
-                onPress={() => setActiveTab("blend")}
-                activeOpacity={0.8}
-              >
-                <View style={styles.tabPillLabelRow}>
-                  <Ionicons
-                    name="infinite"
-                    size={14}
-                    color={activeTab === "blend" ? "#000000" : "#1DB954"}
-                    style={{ marginRight: 4 }}
-                  />
-                  <Text style={[styles.tabPillText, activeTab === "blend" && styles.tabPillTextActive]}>
-                    Blend Radar
-                  </Text>
-                </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.tabPillBtn, activeTab === "requests" && styles.tabPillBtnActive]}
-                onPress={() => setActiveTab("requests")}
-                activeOpacity={0.8}
-              >
-                <View style={styles.tabPillLabelRow}>
-                  <Text style={[styles.tabPillText, activeTab === "requests" && styles.tabPillTextActive]}>
-                    Requests
-                  </Text>
-                  {incomingRequests.length > 0 && (
-                    <View style={[styles.tabPillBadge, activeTab === "requests" && styles.tabPillBadgeActive]}>
-                      <Text style={[styles.tabPillBadgeText, activeTab === "requests" && styles.tabPillBadgeTextActive]}>
-                        {incomingRequests.length}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.tabPillBtn, activeTab === "collab" && styles.tabPillBtnActive]}
-                onPress={() => setActiveTab("collab")}
-                activeOpacity={0.8}
-              >
-                <View style={styles.tabPillLabelRow}>
-                  <Text style={[styles.tabPillText, activeTab === "collab" && styles.tabPillTextActive]}>
-                    Collab Playlists
-                  </Text>
-                  {collabPlaylists?.length > 0 && (
-                    <View style={[styles.tabPillBadge, activeTab === "collab" && styles.tabPillBadgeActive]}>
-                      <Text style={[styles.tabPillBadgeText, activeTab === "collab" && styles.tabPillBadgeTextActive]}>
-                        {collabPlaylists.length}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-            </ScrollView>
-          )}
         </View>
       </View>
+
+      <View style={[styles.friendsInner, (isDesktop || isTablet) && styles.desktopFriendsInner]}>
+        {/* Spotify Pills (Matching LibraryScreen position and sizing exactly) */}
+        {!isSearchActive && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tabsRow}
+            style={styles.tabsRowContainer}
+          >
+            <TouchableOpacity
+              style={[styles.tabButton, activeTab === "friends" && styles.activeTabButton]}
+              onPress={() => setActiveTab("friends")}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.tabText, activeTab === "friends" && styles.activeTabText]}>
+                Friends
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.tabButton, activeTab === "blend" && styles.activeTabButton]}
+              onPress={() => setActiveTab("blend")}
+              activeOpacity={0.8}
+            >
+              <View style={styles.tabPillLabelRow}>
+                <Ionicons
+                  name="infinite"
+                  size={14}
+                  color={activeTab === "blend" ? "#000000" : "#1DB954"}
+                  style={{ marginRight: 4 }}
+                />
+                <Text style={[styles.tabText, activeTab === "blend" && styles.activeTabText]}>
+                  Blend Radar
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.tabButton, activeTab === "requests" && styles.activeTabButton]}
+              onPress={() => setActiveTab("requests")}
+              activeOpacity={0.8}
+            >
+              <View style={styles.tabPillLabelRow}>
+                <Text style={[styles.tabText, activeTab === "requests" && styles.activeTabText]}>
+                  Requests
+                </Text>
+                {incomingRequests.length > 0 && (
+                  <View style={[styles.tabPillBadge, activeTab === "requests" && styles.tabPillBadgeActive]}>
+                    <Text style={[styles.tabPillBadgeText, activeTab === "requests" && styles.tabPillBadgeTextActive]}>
+                      {incomingRequests.length}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.tabButton, activeTab === "collab" && styles.activeTabButton]}
+              onPress={() => setActiveTab("collab")}
+              activeOpacity={0.8}
+            >
+              <View style={styles.tabPillLabelRow}>
+                <Text style={[styles.tabText, activeTab === "collab" && styles.activeTabText]}>
+                  Collab
+                </Text>
+                {collabPlaylists?.length > 0 && (
+                  <View style={[styles.tabPillBadge, activeTab === "collab" && styles.tabPillBadgeActive]}>
+                    <Text style={[styles.tabPillBadgeText, activeTab === "collab" && styles.tabPillBadgeTextActive]}>
+                      {collabPlaylists.length}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </TouchableOpacity>
+          </ScrollView>
+        )}
 
       {/* Main Content Area */}
       <ScrollView
@@ -875,7 +868,7 @@ export default function FriendsScreen({ onNavigate }) {
 
                         <View style={styles.userInfoWrap}>
                           <Text style={styles.userNameText} numberOfLines={1}>
-                            {u.username}
+                            {formatPersonName(u.displayName || u.name || u.username || "")}
                           </Text>
                           {isLive ? (
                             <View style={styles.liveTrackRow}>
@@ -884,9 +877,13 @@ export default function FriendsScreen({ onNavigate }) {
                                 {activity.track.title}{activity.track.artist ? ` • ${activity.track.artist}` : ""}
                               </Text>
                             </View>
+                          ) : activity?.track ? (
+                            <Text style={styles.userHandleSubText} numberOfLines={1}>
+                              {activity.track.title}{activity.track.artist ? ` • ${activity.track.artist}` : ""}
+                            </Text>
                           ) : (
                             <Text style={styles.userHandleSubText} numberOfLines={1}>
-                              @{u.username}
+                              @{formatUsername(u.username || "")}
                             </Text>
                           )}
                         </View>
@@ -988,7 +985,7 @@ export default function FriendsScreen({ onNavigate }) {
                             {/* Friend Info & Song */}
                             <View style={styles.userInfoWrap}>
                               <Text style={styles.userNameText} numberOfLines={1}>
-                                {friend.username}
+                                {formatPersonName(friend.displayName || friend.name || friend.username || "")}
                               </Text>
 
                               {isLive ? (
@@ -1008,9 +1005,13 @@ export default function FriendsScreen({ onNavigate }) {
                                     </Text>
                                   ) : null}
                                 </View>
+                              ) : activity?.track ? (
+                                <Text style={styles.userHandleSubText} numberOfLines={1}>
+                                  {activity.track.title}{activity.track.artist ? ` • ${activity.track.artist}` : ""}
+                                </Text>
                               ) : (
                                 <Text style={styles.userHandleSubText} numberOfLines={1}>
-                                  {activity?.track ? `♫ ${activity.track.title}` : `@${friend.username}`}
+                                  Staytup Listener
                                 </Text>
                               )}
                             </View>
@@ -1321,6 +1322,7 @@ export default function FriendsScreen({ onNavigate }) {
           )}
         </View>
       </ScrollView>
+      </View>
 
       {/* ═══════════ FRIEND PROFILE MODAL (BOTTOM SHEET) ═══════════ */}
       <Modal
@@ -1339,16 +1341,9 @@ export default function FriendsScreen({ onNavigate }) {
             style={styles.profileModalCard}
             onStartShouldSetResponder={() => true}
           >
-            {/* Modal Top Bar with Drag Handle and Close Button */}
+            {/* Modal Top Bar with Drag Handle */}
             <View style={styles.profileModalTopBar}>
               <View style={styles.profileModalDragHandle} />
-              <TouchableOpacity
-                style={styles.modalCloseBtn}
-                onPress={() => setSelectedUserProfile(null)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="close" size={20} color="#FFFFFF" />
-              </TouchableOpacity>
             </View>
 
             {/* User Profile Header: Avatar on Left, Info on Right (Matching Profile layout) */}
@@ -1362,7 +1357,7 @@ export default function FriendsScreen({ onNavigate }) {
 
               <View style={styles.profileModalHeaderInfo}>
                 <Text style={styles.profileModalName} numberOfLines={1}>
-                  {selectedUserProfile?.username}
+                  {formatPersonName(selectedUserProfile?.displayName || selectedUserProfile?.name || selectedUserProfile?.username || "")}
                 </Text>
 
                 {/* Badges: PREMIUM / FREE + Listened Hours */}
@@ -1417,15 +1412,9 @@ export default function FriendsScreen({ onNavigate }) {
                 null;
 
               return (
-                <View style={styles.profileMusicBox}>
+                <View style={styles.profileMusicSection}>
                   {/* Activity Status Header */}
                   <View style={styles.profileMusicHeader}>
-                    <MaterialCommunityIcons
-                      name={isFriendPlaying ? "waveform" : "history"}
-                      size={15}
-                      color={isFriendPlaying ? "#1DB954" : "#888888"}
-                      style={{ marginRight: 6 }}
-                    />
                     <Text
                       style={[
                         styles.profileMusicHeaderText,
@@ -1442,7 +1431,7 @@ export default function FriendsScreen({ onNavigate }) {
                     )}
                   </View>
 
-                  {/* Modern Track Row */}
+                  {/* Modern Track Row - Seamless list item */}
                   <TouchableOpacity
                     style={styles.profileTrackRow}
                     onPress={() => {
@@ -1515,10 +1504,13 @@ export default function FriendsScreen({ onNavigate }) {
             <View style={styles.profileModalActions}>
               {isUserFriend(selectedUserProfile) ? (
                 <View style={styles.friendsCardSection}>
-                  <View style={styles.friendsBadgePill}>
-                    <Ionicons name="checkmark-circle" size={15} color="#1DB954" style={{ marginRight: 6 }} />
-                    <Text style={styles.friendsBadgeText}>Friends</Text>
-                  </View>
+                  <TouchableOpacity
+                    style={styles.profileCloseBtn}
+                    onPress={() => setSelectedUserProfile(null)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.profileCloseBtnText}>Close</Text>
+                  </TouchableOpacity>
 
                   <TouchableOpacity
                     style={styles.removeFriendBtn}
@@ -1534,35 +1526,62 @@ export default function FriendsScreen({ onNavigate }) {
                   </TouchableOpacity>
                 </View>
               ) : isUserIncoming(selectedUserProfile) ? (
-                <TouchableOpacity
-                  style={styles.profileMainBtn}
-                  onPress={() => {
-                    handleAcceptRequest(selectedUserProfile);
-                    setSelectedUserProfile(null);
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="checkmark" size={16} color="#000000" style={{ marginRight: 6 }} />
-                  <Text style={styles.profileMainBtnText}>Accept Friend Request</Text>
-                </TouchableOpacity>
+                <View style={{ width: "100%", gap: 10 }}>
+                  <TouchableOpacity
+                    style={styles.profileMainBtn}
+                    onPress={() => {
+                      handleAcceptRequest(selectedUserProfile);
+                      setSelectedUserProfile(null);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="checkmark" size={16} color="#000000" style={{ marginRight: 6 }} />
+                    <Text style={styles.profileMainBtnText}>Accept Friend Request</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.profileCloseBtn}
+                    onPress={() => setSelectedUserProfile(null)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.profileCloseBtnText}>Close</Text>
+                  </TouchableOpacity>
+                </View>
               ) : isUserOutgoing(selectedUserProfile) ? (
-                <View style={styles.pendingBadgeRow}>
-                  <Ionicons name="time-outline" size={16} color="#888888" style={{ marginRight: 6 }} />
-                  <Text style={styles.pendingBadgeText}>Friend Request Pending</Text>
+                <View style={{ width: "100%", gap: 10, alignItems: "center" }}>
+                  <View style={styles.pendingBadgeRow}>
+                    <Ionicons name="time-outline" size={16} color="#888888" style={{ marginRight: 6 }} />
+                    <Text style={styles.pendingBadgeText}>Friend Request Pending</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.profileCloseBtn, { width: "100%" }]}
+                    onPress={() => setSelectedUserProfile(null)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.profileCloseBtnText}>Close</Text>
+                  </TouchableOpacity>
                 </View>
               ) : (
-                <TouchableOpacity
-                  style={styles.profileMainBtn}
-                  onPress={() => {
-                    handleSendFriendDirect(selectedUserProfile);
-                    setSelectedUserProfile(null);
-                  }}
-                  disabled={isSending}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="person-add" size={16} color="#000000" style={{ marginRight: 6 }} />
-                  <Text style={styles.profileMainBtnText}>Add Friend</Text>
-                </TouchableOpacity>
+                <View style={{ width: "100%", gap: 10, flexDirection: "row" }}>
+                  <TouchableOpacity
+                    style={styles.profileCloseBtn}
+                    onPress={() => setSelectedUserProfile(null)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.profileCloseBtnText}>Close</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.profileMainBtn, { flex: 1 }]}
+                    onPress={() => {
+                      handleSendFriendDirect(selectedUserProfile);
+                      setSelectedUserProfile(null);
+                    }}
+                    disabled={isSending}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="person-add" size={16} color="#000000" style={{ marginRight: 6 }} />
+                    <Text style={styles.profileMainBtnText}>Add Friend</Text>
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
           </View>
@@ -1645,13 +1664,13 @@ export default function FriendsScreen({ onNavigate }) {
         visible={showCollabCreateModal}
         initialTab={collabModalTab}
         onClose={() => setShowCollabCreateModal(false)}
-        onSubmit={async (name, description = "", tracks = [], coverUrl = "") => {
+        onSubmit={async (name, coverUrl = "") => {
           if (!createCollabPlaylist) return;
           const res = await createCollabPlaylist({
             name,
-            description,
-            tracks,
-            cover_url: coverUrl,
+            description: "",
+            tracks: [],
+            cover_url: typeof coverUrl === "string" ? coverUrl : "",
           });
           if (res && res.success && res.playlist) {
             setSelectedCollabPlaylist(res.playlist);
@@ -1921,42 +1940,32 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#000000",
   },
-  screenHeader: {
+  header: {
     paddingHorizontal: 16,
     paddingTop: Platform.OS === "web" ? 12 : 14,
-    paddingBottom: 14,
+    paddingBottom: 8,
     backgroundColor: "#000000",
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255, 255, 255, 0.05)",
   },
-  innerContent: {
+  headerInner: {
     width: "100%",
   },
-  desktopInnerContent: {
+  desktopHeaderInner: {
     width: "100%",
     paddingHorizontal: 16,
   },
-  headerTopRow: {
+  profileRow: {
     height: 38,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
-    overflow: "hidden",
-    ...(Platform.OS === "web"
-      ? {
-          transition:
-            "height 0.24s cubic-bezier(0.2, 0, 0, 1), opacity 0.2s cubic-bezier(0.2, 0, 0, 1), margin-bottom 0.24s cubic-bezier(0.2, 0, 0, 1)",
-        }
-      : {}),
   },
-  headerTopRowHidden: {
+  profileRowHidden: {
     height: 0,
     opacity: 0,
     marginBottom: 0,
     pointerEvents: "none",
   },
-  screenTitle: {
+  profileName: {
     fontFamily: fonts.bold,
     fontSize: 26,
     color: "#FFFFFF",
@@ -1978,19 +1987,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  profileAvatar: {
+  avatarContainer: {
     width: 34,
     height: 34,
     borderRadius: 17,
+    backgroundColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  profileAvatarImage: {
+  avatarImage: {
     width: "100%",
     height: "100%",
   },
-  profileAvatarText: {
+  avatarText: {
     fontFamily: fonts.bold,
     fontWeight: "700",
     fontSize: 14,
@@ -2002,35 +2013,43 @@ const styles = StyleSheet.create({
   // Pill Search Bar
   topSearchWrapper: {
     width: "100%",
+    height: 38,
+    justifyContent: "center",
+    ...(Platform.OS === "web"
+      ? {
+          transition: "all 0.25s cubic-bezier(0.2, 0, 0, 1)",
+        }
+      : {}),
   },
   topSearchRow: {
     flexDirection: "row",
     alignItems: "center",
     width: "100%",
+    height: 38,
   },
   topSearchBar: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#161616",
-    borderRadius: 999,
+    borderRadius: 17,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.09)",
-    paddingHorizontal: 14,
-    height: 48,
+    paddingHorizontal: 12,
+    height: 34,
   },
   topSearchBarActive: {
     borderColor: "rgba(255,255,255,0.12)",
     backgroundColor: "#1c1c1c",
   },
   searchIcon: {
-    marginRight: 10,
+    marginRight: 8,
   },
   topSearchInput: {
     flex: 1,
     color: "#FFFFFF",
     fontFamily: fonts.medium,
-    fontSize: 15,
+    fontSize: 13.5,
     height: "100%",
     padding: 0,
     margin: 0,
@@ -2043,8 +2062,8 @@ const styles = StyleSheet.create({
       : {}),
   },
   searchClearBtn: {
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
     justifyContent: "center",
     alignItems: "center",
     flexShrink: 0,
@@ -2052,9 +2071,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   clearCircleBadge: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: "#8E8E93",
     alignItems: "center",
     justifyContent: "center",
@@ -2062,37 +2081,43 @@ const styles = StyleSheet.create({
   clearIconGlyph: {
     marginTop: Platform.OS === "android" ? -1 : 0,
   },
-  cancelSearchBtn: {
-    marginLeft: 12,
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-  },
-  cancelSearchBtnText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 14,
-    color: "#FFFFFF",
+  cancelCircleBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 10,
+    flexShrink: 0,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
 
-  // Friends / Requests Tabs (Matching Home page top All, Following, Feed pill buttons)
-  tabsScrollView: {
-    marginTop: 12,
-    flexGrow: 0,
+  // Friends Tabs (Matching LibraryScreen exactly)
+  friendsInner: {
+    flex: 1,
+    width: "100%",
+    userSelect: "none",
   },
-  tabsScrollContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 2,
-    paddingRight: 16,
+  desktopFriendsInner: {
+    width: "100%",
+    paddingHorizontal: 16,
+  },
+  tabsRowContainer: {
+    flexGrow: 0,
+    flexShrink: 0,
+    height: 50,
+    maxHeight: 50,
   },
   tabsRow: {
-    flexDirection: "row",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     alignItems: "center",
-    marginTop: 12,
     gap: 8,
-    paddingHorizontal: 2,
   },
-  tabPillBtn: {
+  tabButton: {
     height: 32,
     alignItems: "center",
     justifyContent: "center",
@@ -2104,23 +2129,23 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  tabPillBtnActive: {
+  activeTabButton: {
     backgroundColor: colors.primary,
     borderColor: colors.primary,
+  },
+  tabText: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "#FFFFFF",
+  },
+  activeTabText: {
+    fontFamily: fonts.bold,
+    color: "#000000",
   },
   tabPillLabelRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-  },
-  tabPillText: {
-    fontFamily: fonts.medium,
-    fontSize: 13,
-    color: "#FFFFFF",
-  },
-  tabPillTextActive: {
-    fontFamily: fonts.bold,
-    color: "#000000",
   },
   tabPillBadge: {
     minWidth: 18,
@@ -2148,7 +2173,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    paddingTop: 14,
+    paddingTop: 8,
     paddingBottom: 110,
     paddingHorizontal: 16,
   },
@@ -2582,14 +2607,10 @@ const styles = StyleSheet.create({
     color: "rgba(255, 255, 255, 0.3)",
     fontSize: 11,
   },
-  profileMusicBox: {
+  profileMusicSection: {
     width: "100%",
-    backgroundColor: "#121212",
-    borderRadius: 16,
-    padding: 12,
     marginBottom: 20,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.08)",
+    paddingTop: 12,
   },
   profileMusicHeader: {
     flexDirection: "row",
@@ -2629,16 +2650,14 @@ const styles = StyleSheet.create({
   profileTrackRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.04)",
-    padding: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.04)",
-    ...(Platform.OS === "web" ? { cursor: "pointer", transition: "background-color 0.15s ease" } : {}),
+    backgroundColor: "transparent",
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   profileTrackArtworkWrap: {
-    width: 52,
-    height: 52,
+    width: 50,
+    height: 50,
     borderRadius: 8,
     overflow: "hidden",
     position: "relative",
@@ -2702,21 +2721,22 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 12,
   },
-  friendsBadgePill: {
+  profileCloseBtn: {
     flex: 1,
     height: 44,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(29, 185, 84, 0.1)",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.25)",
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    ...(Platform.OS === "web" ? { cursor: "pointer", transition: "all 0.15s ease" } : {}),
   },
-  friendsBadgeText: {
+  profileCloseBtnText: {
     fontFamily: fonts.semiBold,
     fontSize: 14,
-    color: "#1DB954",
+    color: "#FFFFFF",
   },
   removeFriendBtn: {
     flex: 1,
@@ -2896,7 +2916,7 @@ const styles = StyleSheet.create({
   collabCardCoverWrap: {
     width: 60,
     height: 60,
-    borderRadius: 10,
+    borderRadius: 30,
     overflow: "hidden",
     position: "relative",
     backgroundColor: "#202020",
@@ -2940,9 +2960,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "rgba(29, 185, 84, 0.15)",
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
   },
   collabGreenBadgeText: {
     fontFamily: fonts.bold,

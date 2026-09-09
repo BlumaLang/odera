@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -29,6 +29,38 @@ const PAGE_SIZE = 25;
 // In-memory module cache for artist info and songs to prevent re-fetching and flicker
 const artistDataCache = new Map();
 
+// Deduplicate songs by both videoId and normalized title to prevent compilation album spam
+function dedupeArtistSongs(existing, incoming) {
+  const seenIds = new Set(existing.map((s) => s.videoId || s.video_id || s.id));
+  const seenTitles = new Set(
+    existing.map((s) =>
+      (s.title || "")
+        .toLowerCase()
+        .replace(/\s*\([^)]*\)/g, "")
+        .replace(/\s*\[[^\]]*\]/g, "")
+        .replace(/[^a-z0-9]/g, "")
+        .trim()
+    ).filter(Boolean)
+  );
+  const deduped = [];
+  for (const item of incoming) {
+    if (!item) continue;
+    const tid = item.videoId || item.video_id || item.id;
+    if (tid && seenIds.has(tid)) continue;
+    const cleanT = (item.title || "")
+      .toLowerCase()
+      .replace(/\s*\([^)]*\)/g, "")
+      .replace(/\s*\[[^\]]*\]/g, "")
+      .replace(/[^a-z0-9]/g, "")
+      .trim();
+    if (cleanT && seenTitles.has(cleanT)) continue;
+    if (tid) seenIds.add(tid);
+    if (cleanT) seenTitles.add(cleanT);
+    deduped.push(item);
+  }
+  return deduped;
+}
+
 // Memoized row component so song items do not re-render on audio playback ticks
 const ArtistSongRow = React.memo(function ArtistSongRow({
   item,
@@ -55,7 +87,7 @@ const ArtistSongRow = React.memo(function ArtistSongRow({
 export default function ArtistModal({ visible, onClose, artistName, initialPhoto, onSelectArtist, onArtistImageResolved }) {
   const { isDesktop, isTablet } = useResponsive();
   const { currentTrack, playTrack, setShuffle } = useAudioPlayback();
-  const { isFavoriteArtist, toggleFavoriteArtist } = useUser();
+  const { isFavoriteArtist, toggleFavoriteArtist, recordArtistMovement } = useUser();
 
   const cleanName = (artistName || "").trim();
   const cachedData = cleanName ? artistDataCache.get(cleanName) : null;
@@ -64,10 +96,12 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     initialPhoto || cachedData?.image || resolveLocalArtistImage(cleanName) || null
   );
   const [songs, setSongs] = useState(cachedData?.songs || []);
+  const [relatedArtists, setRelatedArtists] = useState(cachedData?.related || []);
   const [isLoading, setIsLoading] = useState(!cachedData?.songs?.length);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(cachedData ? cachedData.hasMore : true);
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
+  const pageRef = useRef(cachedData?.page || 0);
 
   const isFav = isFavoriteArtist(cleanName);
   const currentTrackId = currentTrack?.videoId;
@@ -78,11 +112,16 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     }
   }, [initialPhoto]);
 
-  // Fetch artist photo and songs
+  // Fetch artist photo, official songs, and related artists
   useEffect(() => {
     if (!visible || !cleanName) return;
 
     let isMounted = true;
+
+    // Track user movement on opening artist
+    if (recordArtistMovement) {
+      recordArtistMovement(cleanName);
+    }
 
     const cached = artistDataCache.get(cleanName);
     if (cached) {
@@ -92,6 +131,9 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
         setSongs(cached.songs);
         setHasMore(cached.hasMore);
         setIsLoading(false);
+        if (cached.related && cached.related.length > 0) {
+          setRelatedArtists(cached.related);
+        }
         if (cached.image) return;
       }
     }
@@ -99,6 +141,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     setIsLoading(true);
     setIsLoadingMore(false);
     setHasMore(true);
+    pageRef.current = 0;
 
     // 1. Resolve photo from local cache, props, or API
     const initialBest =
@@ -133,19 +176,37 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       })
       .catch(() => {});
 
-    // 2. Fetch top songs
+    // Fetch related/similar artists (collaborators and peers)
     api
-      .search(`${cleanName} songs`, 0, PAGE_SIZE)
+      .getRelatedArtists(cleanName, 10)
+      .then((res) => {
+        const list = res?.artists || res?.related || [];
+        if (isMounted && list.length > 0) {
+          setRelatedArtists(list);
+          artistDataCache.set(cleanName, {
+            ...(artistDataCache.get(cleanName) || {}),
+            related: list,
+          });
+        }
+      })
+      .catch(() => {});
+
+    // 2. Fetch top songs using official artist endpoint with deduplication
+    api
+      .getArtistSongs(cleanName, 0, PAGE_SIZE)
       .then((data) => {
         if (isMounted) {
           const list = data.tracks || data.results || [];
-          setSongs(list);
+          const deduped = dedupeArtistSongs([], list);
+          setSongs(deduped);
           const more = Boolean(data.has_more !== false && list.length >= PAGE_SIZE);
           setHasMore(more);
+          pageRef.current = 0;
           artistDataCache.set(cleanName, {
             ...(artistDataCache.get(cleanName) || {}),
-            songs: list,
+            songs: deduped,
             hasMore: more,
+            page: 0,
           });
         }
       })
@@ -157,7 +218,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       });
 
     return () => { isMounted = false; };
-  }, [visible, cleanName]);
+  }, [visible, cleanName, recordArtistMovement]);
 
   // Infinite scroll: fetch next page when user scrolls to bottom
   const handleLoadMore = useCallback(async () => {
@@ -167,19 +228,20 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
 
     setIsLoadingMore(true);
     try {
-      const nextOffset = songs.length;
-      const data = await api.search(`${cleanName} songs`, nextOffset, PAGE_SIZE);
+      const nextPage = pageRef.current + 1;
+      const data = await api.getArtistSongs(cleanName, nextPage, PAGE_SIZE);
       const newTracks = data.tracks || data.results || [];
 
       if (newTracks.length > 0) {
+        pageRef.current = nextPage;
         setSongs((prev) => {
-          const seen = new Set(prev.map((s) => s.videoId));
-          const uniqueNew = newTracks.filter((s) => !seen.has(s.videoId));
+          const uniqueNew = dedupeArtistSongs(prev, newTracks);
           const updated = [...prev, ...uniqueNew];
           artistDataCache.set(cleanName, {
             ...(artistDataCache.get(cleanName) || {}),
             songs: updated,
             hasMore: Boolean(newTracks.length >= PAGE_SIZE && data.has_more !== false),
+            page: nextPage,
           });
           return updated;
         });
@@ -196,19 +258,29 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     }
   }, [isLoading, isLoadingMore, hasMore, songs.length, cleanName]);
 
+  // Play a song and track movement (including collaborators)
+  const handlePlaySong = useCallback((item, index) => {
+    if (!item) return;
+    const collabs = item.artist ? item.artist.split(/,|&|feat\./i).map((s) => s.trim()) : [];
+    if (recordArtistMovement) {
+      recordArtistMovement(cleanName, collabs);
+    }
+    playTrack(item, songs, index);
+  }, [cleanName, songs, playTrack, recordArtistMovement]);
+
   // Play all songs starting from the first track
   const handlePlayAll = useCallback(() => {
     if (songs.length === 0) return;
-    playTrack(songs[0], songs, 0);
-  }, [songs, playTrack]);
+    handlePlaySong(songs[0], 0);
+  }, [songs, handlePlaySong]);
 
   // Shuffle and play all songs
   const handleShuffle = useCallback(() => {
     if (songs.length === 0) return;
     const shuffled = fisherYatesShuffle(songs);
     if (setShuffle) setShuffle(true);
-    playTrack(shuffled[0], shuffled, 0);
-  }, [songs, playTrack, setShuffle]);
+    handlePlaySong(shuffled[0], 0);
+  }, [songs, handlePlaySong, setShuffle]);
 
   // Memoized Header: Prevents header remount on playback ticks
   const headerComponent = useMemo(() => (
@@ -281,26 +353,66 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     </View>
   ), [artistImage, cleanName, isFav, handleShuffle, handlePlayAll]);
 
-  // Memoized Footer
+  // Memoized Footer with Related Artists & Collaborators
   const footerComponent = useMemo(() => {
-    if (isLoadingMore) {
-      return (
-        <View style={styles.loadingMoreFooter}>
-          <ActivityIndicator size="small" color={colors.primary} />
-          <Text style={styles.loadingMoreText}>Loading more songs...</Text>
-        </View>
-      );
-    }
-    if (!hasMore && songs.length > 0) {
-      return (
-        <View style={styles.endOfListFooter}>
-          <Text style={styles.endOfListText}>You've reached the end</Text>
-          <View style={{ height: 60 }} />
-        </View>
-      );
-    }
-    return <View style={{ height: 80 }} />;
-  }, [isLoadingMore, hasMore, songs.length]);
+    return (
+      <View>
+        {isLoadingMore && (
+          <View style={styles.loadingMoreFooter}>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={styles.loadingMoreText}>Loading more songs...</Text>
+          </View>
+        )}
+        {!isLoadingMore && !hasMore && songs.length > 0 && (
+          <View style={styles.endOfListFooter}>
+            <Text style={styles.endOfListText}>You've reached the end</Text>
+          </View>
+        )}
+        {relatedArtists && relatedArtists.length > 0 && (
+          <View style={styles.relatedSection}>
+            <Text style={styles.relatedSectionTitle}>Fans Also Like & Collaborators</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.relatedRow}
+            >
+              {relatedArtists.map((rel, rIdx) => {
+                const rName = rel.name || rel.artist;
+                const rImg = rel.image || rel.thumbnail;
+                return (
+                  <TouchableOpacity
+                    key={`rel_artist_${rIdx}`}
+                    style={styles.relatedArtistItem}
+                    onPress={() => {
+                      if (recordArtistMovement) {
+                        recordArtistMovement(rName);
+                      }
+                      if (onSelectArtist) {
+                        onSelectArtist(rName);
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    {rImg ? (
+                      <Image source={{ uri: rImg }} style={styles.relatedArtistImg} resizeMode="cover" />
+                    ) : (
+                      <View style={[styles.relatedArtistImg, styles.relatedArtistFallback]}>
+                        <Ionicons name="person" size={24} color="#777777" />
+                      </View>
+                    )}
+                    <Text style={styles.relatedArtistName} numberOfLines={1}>
+                      {rName}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+        <View style={{ height: 80 }} />
+      </View>
+    );
+  }, [isLoadingMore, hasMore, songs.length, relatedArtists, recordArtistMovement, onSelectArtist]);
 
   // Memoized Empty
   const emptyComponent = useMemo(() => {
@@ -327,11 +439,11 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
         item={item}
         index={index}
         isActive={currentTrackId === item.videoId}
-        onPlay={() => playTrack(item, songs, index)}
+        onPlay={() => handlePlaySong(item, index)}
         onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
       />
     ),
-    [currentTrackId, songs, playTrack]
+    [currentTrackId, handlePlaySong]
   );
 
   if (!visible || !cleanName) return null;
@@ -608,5 +720,44 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 12,
     color: "rgba(255, 255, 255, 0.4)",
+  },
+  relatedSection: {
+    marginTop: 28,
+    marginBottom: 16,
+    paddingHorizontal: 16,
+  },
+  relatedSectionTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: "#FFFFFF",
+    marginBottom: 14,
+    letterSpacing: -0.2,
+  },
+  relatedRow: {
+    flexDirection: "row",
+    gap: 16,
+    paddingRight: 20,
+  },
+  relatedArtistItem: {
+    width: 90,
+    alignItems: "center",
+  },
+  relatedArtistImg: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: "#222222",
+    marginBottom: 8,
+  },
+  relatedArtistFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  relatedArtistName: {
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    color: "#CCCCCC",
+    textAlign: "center",
+    width: 86,
   },
 });
