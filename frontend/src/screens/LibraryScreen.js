@@ -999,8 +999,6 @@ const styles = StyleSheet.create({
     borderRadius: 0,
     marginBottom: 0,
     borderWidth: 0,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255, 255, 255, 0.05)",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   playlistRowThumb: {
