@@ -410,7 +410,8 @@ const JIOSAAVN_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
   'Accept': 'application/json, text/plain, */*',
   'Accept-Language': 'en-US,en;q=0.9',
-  'Referer': 'https://www.jiosaavn.com/'
+  'Referer': 'https://www.jiosaavn.com/',
+  'Cookie': 'L=english;'
 };
 const SAAVN_API_PROVIDERS = [
   process.env.SAAVN_API_BASE_URL || 'https://staytup-api.onrender.com/api'
@@ -476,7 +477,9 @@ function normalizeSaavnSong(song, streamUrl = null) {
   const title = (song.name || song.title || song.song || '').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&');
   
   let artist = '';
-  if (song.artists?.primary && Array.isArray(song.artists.primary) && song.artists.primary.length > 0) {
+  if (song.more_info?.artistMap?.primary_artists && Array.isArray(song.more_info.artistMap.primary_artists) && song.more_info.artistMap.primary_artists.length > 0) {
+    artist = song.more_info.artistMap.primary_artists.map(a => a.name).filter(Boolean).join(', ');
+  } else if (song.artists?.primary && Array.isArray(song.artists.primary) && song.artists.primary.length > 0) {
     artist = song.artists.primary.map(a => a.name).filter(Boolean).join(', ');
   } else if (song.primaryArtists) {
     artist = String(song.primaryArtists);
@@ -493,13 +496,24 @@ function normalizeSaavnSong(song, streamUrl = null) {
     artist = String(song.artist);
   }
 
-  // Pick 500x500 image or highest quality
+  // Album name
+  const rawAlbum = song.more_info?.album || (typeof song.album === 'object' ? song.album?.name : song.album) || '';
+  const album = String(rawAlbum).replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&');
+
+  // Year & Language
+  const year = String(song.year || song.more_info?.year || song.release_date?.slice(0, 4) || '');
+  const language = String(song.language || song.more_info?.language || '');
+
+  // Exact original JioSaavn perma_url
+  const permaUrl = String(song.perma_url || song.url || '');
+
+  // Artwork: use JioSaavn image, prefer 500x500 or largest available
   let artworkUrl = '';
-  if (Array.isArray(song.image) && song.image.length > 0) {
+  if (typeof song.image === 'string') {
+    artworkUrl = song.image;
+  } else if (Array.isArray(song.image) && song.image.length > 0) {
     const fiveHundred = song.image.find(img => img.quality === '500x500');
     artworkUrl = fiveHundred?.url || song.image[song.image.length - 1]?.url || '';
-  } else if (typeof song.image === 'string') {
-    artworkUrl = song.image;
   }
   if (artworkUrl) {
     artworkUrl = artworkUrl.replace(/150x150\.jpg/g, '500x500.jpg').replace(/50x50\.jpg/g, '500x500.jpg');
@@ -507,10 +521,10 @@ function normalizeSaavnSong(song, streamUrl = null) {
 
   // Duration in seconds
   let duration = 0;
-  if (song.duration) {
-    duration = Number(song.duration) || 0;
-  } else if (song.more_info?.duration) {
+  if (song.more_info?.duration) {
     duration = Number(song.more_info.duration) || 0;
+  } else if (song.duration) {
+    duration = Number(song.duration) || 0;
   }
 
   // If streamUrl not passed, check if song.downloadUrl exists
@@ -521,19 +535,22 @@ function normalizeSaavnSong(song, streamUrl = null) {
   }
 
   return {
-    id: `saavn_${rawId}`,
+    id: rawId,
     source: 'saavn',
     videoId: rawId, // UI compatibility
     video_id: rawId,
     title,
     artist: artist || 'Staytup Artist',
+    album,
+    year,
+    language,
     artwork_url: artworkUrl,
     thumbnail: artworkUrl,
     duration,
     duration_seconds: duration,
     stream_url: resolvedStream || null,
     playCount: song.playCount || song.play_count || 0,
-    perma_url: song.url || song.perma_url || ''
+    perma_url: permaUrl
   };
 }
 
@@ -669,6 +686,7 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
 
       // Artist match scoring (critical when query is an artist name like "The Kid LAROI")
       if (artistLower === qLower) score += 250;
+      else if (artistLower.startsWith(qLower + ',') || artistLower.startsWith(qLower + ' &') || artistLower.startsWith(qLower + ' ft') || artistLower.startsWith(qLower + ' x ')) score += 240;
       else if (artistLower.includes(qLower)) score += 180;
       else if (qWords.length > 0 && qWords.every(w => artistLower.includes(w))) score += 120;
       else if (qWords.some(w => artistLower.includes(w))) score += 40;
@@ -682,9 +700,9 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       if (t.source === 'saavn') score += 15;
 
       const playCount = Number(t.playCount) || 0;
-      if (playCount > 10000000) score += 50;
-      else if (playCount > 1000000) score += 30;
-      else if (playCount > 100000) score += 15;
+      if (playCount > 10000000) score += 80;
+      else if (playCount > 1000000) score += 40;
+      else if (playCount > 100000) score += 20;
       else if (playCount > 10000) score += 5;
 
       return score;
@@ -697,7 +715,7 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
     const finalTracks = [];
 
     for (const t of normalized) {
-      const vid = t.videoId || t.video_id;
+      const vid = t.videoId || t.video_id || t.id;
       const cleanTitle = (t.title || '').toLowerCase().replace(/\s*\([^)]*\)/g, '').replace(/[^a-z0-9]/g, '').trim();
       const cleanArtist = (t.artist || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 15);
       const dedupeKey = `${cleanTitle}_${cleanArtist}`;
@@ -709,21 +727,26 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       if (finalTracks.length >= limit) break;
     }
 
-    const providersDebug = searchResponses.map((r, idx) => ({
-      idx,
-      status: r.status,
-      count: r.status === 'fulfilled' ? (r.value?.results?.length || r.value?.data?.results?.length || r.value?.songs?.data?.length || (Array.isArray(r.value) ? r.value.length : 0)) : (r.reason?.message || 'failed')
-    }));
+    // Determine total count from JioSaavn response if present
+    let totalCount = finalTracks.length;
+    for (const r of searchResponses) {
+      if (r.status === 'fulfilled' && r.value) {
+        const valTotal = Number(r.value?.total || r.value?.data?.total);
+        if (valTotal && valTotal > totalCount) {
+          totalCount = valTotal;
+        }
+      }
+    }
 
     res.json({
       query,
+      total: totalCount,
+      count: finalTracks.length,
       offset,
       page,
-      count: finalTracks.length,
       results: finalTracks,
       tracks: finalTracks,
-      has_more: normalized.length >= 10 || finalTracks.length >= 15,
-      debug_providers: providersDebug
+      has_more: normalized.length >= 10 || finalTracks.length >= 15
     });
   } catch (err) {
     console.error('Saavn search error:', err.message);
