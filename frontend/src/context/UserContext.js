@@ -497,7 +497,13 @@ export const UserProvider = ({ children }) => {
         setPremiumPlan("Free");
         setLikedSongs([]);
         setPlaylists([]);
-        setRecentlyPlayed([]);
+        if (unsubscribeRecents) {
+          unsubscribeRecents();
+          unsubscribeRecents = null;
+        }
+        unsubscribeRecents = subscribeRecentlyPlayed("guest", (recents) => {
+          setRecentlyPlayed(recents || []);
+        });
         setStreamCount(0);
         setFriends([]);
         setFriendRequests({ incoming: [], outgoing: [] });

@@ -829,6 +829,30 @@ function getLocalRecents(uid) {
   return [];
 }
 
+export function getActiveAuthUid() {
+  if (auth?.currentUser?.uid) return auth.currentUser.uid;
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.localStorage) {
+    try {
+      const fb = window.localStorage.getItem("@staytup_firebase_user");
+      if (fb) {
+        const p = JSON.parse(fb);
+        if (p?.uid) return p.uid;
+      }
+      const pin = window.localStorage.getItem("@staytup_pin_user");
+      if (pin) {
+        const p = JSON.parse(pin);
+        if (p?.uid) return p.uid;
+      }
+      const qr = window.localStorage.getItem("@staytup_qr_user");
+      if (qr) {
+        const p = JSON.parse(qr);
+        if (p?.uid) return p.uid;
+      }
+    } catch (_) {}
+  }
+  return "guest";
+}
+
 function setLocalRecents(uid, list) {
   const safeUid = uid || "guest";
   localRecentsCache.set(safeUid, list);
@@ -848,12 +872,14 @@ function setLocalRecents(uid, list) {
  * Record recently played track in RTDB (deduplicated, max 50 items)
  */
 export async function addRecentlyPlayed(uid, track) {
-  const safeUid = uid || "guest";
+  const activeUid = getActiveAuthUid();
+  const safeUid = (uid && uid !== "guest") ? uid : activeUid;
   if (!track) return;
-  const vid = track.videoId || track.video_id;
+  const vid = track.videoId || track.video_id || (track.id ? String(track.id).replace(/^saavn_/, "") : "");
   if (!vid) return;
 
   const cleanTrack = {
+    id: track.id || `saavn_${vid}`,
     videoId: vid,
     video_id: vid,
     title: track.title || "",
@@ -866,10 +892,13 @@ export async function addRecentlyPlayed(uid, track) {
     playedAt: new Date().toISOString(),
   };
 
-  // Immediate local update
+  // Immediate local update for active UID and guest
   const currentLocal = getLocalRecents(safeUid);
-  const updatedLocal = [cleanTrack, ...currentLocal.filter((t) => (t.videoId || t.video_id) !== vid)].slice(0, 50);
+  const updatedLocal = [cleanTrack, ...currentLocal.filter((t) => (t.videoId || t.video_id || t.id) !== vid && String(t.id || "").replace(/^saavn_/, "") !== vid)].slice(0, 50);
   setLocalRecents(safeUid, updatedLocal);
+  if (safeUid !== "guest") {
+    setLocalRecents("guest", updatedLocal);
+  }
 
   try {
     const recentRef = ref(db, `users/${safeUid}/recentlyPlayed`);
@@ -878,12 +907,15 @@ export async function addRecentlyPlayed(uid, track) {
     if (snapshot.exists() && Array.isArray(snapshot.val())) {
       list = snapshot.val();
     }
-    list = list.filter((t) => (t.videoId || t.video_id) !== vid);
+    list = list.filter((t) => (t.videoId || t.video_id || t.id) !== vid && String(t.id || "").replace(/^saavn_/, "") !== vid);
     list.unshift(cleanTrack);
     if (list.length > 50) list = list.slice(0, 50);
 
     await set(recentRef, list);
     setLocalRecents(safeUid, list);
+    if (safeUid !== "guest") {
+      setLocalRecents("guest", list);
+    }
   } catch (error) {
     console.warn("Failed to save recently played track to RTDB:", error.message);
   }
@@ -893,8 +925,12 @@ export async function addRecentlyPlayed(uid, track) {
 }
 
 export async function getRecentlyPlayed(uid) {
-  const safeUid = uid || "guest";
-  const local = getLocalRecents(safeUid);
+  const activeUid = getActiveAuthUid();
+  const safeUid = (uid && uid !== "guest") ? uid : activeUid;
+  let local = getLocalRecents(safeUid);
+  if ((!local || local.length === 0) && safeUid !== "guest") {
+    local = getLocalRecents("guest");
+  }
   if (local && local.length > 0) {
     // Return local immediately and refresh in background
     setTimeout(async () => {
@@ -918,25 +954,33 @@ export async function getRecentlyPlayed(uid) {
       setLocalRecents(safeUid, res);
       return res;
     }
+    if (safeUid !== "guest") {
+      const guestLocal = getLocalRecents("guest");
+      if (guestLocal && guestLocal.length > 0) return guestLocal;
+    }
     return [];
   } catch (error) {
     console.warn("Failed to get recently played from RTDB:", error.message);
-    return getLocalRecents(safeUid);
+    return getLocalRecents(safeUid) || getLocalRecents("guest") || [];
   }
 }
 
 export function subscribeRecentlyPlayed(uid, callback) {
-  const safeUid = uid || "guest";
+  const activeUid = getActiveAuthUid();
+  const safeUid = (uid && uid !== "guest") ? uid : activeUid;
   if (!callback) return () => {};
 
   // Immediate callback with cached items
-  const local = getLocalRecents(safeUid);
+  let local = getLocalRecents(safeUid);
+  if ((!local || local.length === 0) && safeUid !== "guest") {
+    local = getLocalRecents("guest");
+  }
   if (local && local.length > 0) {
     callback(local);
   }
 
   const localListener = (list, listenerUid) => {
-    if (listenerUid === safeUid) {
+    if (listenerUid === safeUid || listenerUid === "guest" || listenerUid === activeUid) {
       callback(list);
     }
   };
@@ -948,19 +992,27 @@ export function subscribeRecentlyPlayed(uid, callback) {
     (snapshot) => {
       const val = snapshot.val();
       const list = Array.isArray(val) ? val : [];
-      setLocalRecents(safeUid, list);
-      callback(list);
+      if (list.length > 0 || safeUid === "guest") {
+        setLocalRecents(safeUid, list);
+        callback(list);
+      } else {
+        const guestRecents = getLocalRecents("guest");
+        if (guestRecents && guestRecents.length > 0) {
+          callback(guestRecents);
+        } else {
+          callback([]);
+        }
+      }
     },
-    (error) => {
-      console.warn("RTDB recently played subscription error:", error.message);
+    (err) => {
+      console.warn("RTDB recently played subscription error:", err.message);
+      callback(getLocalRecents(safeUid) || getLocalRecents("guest") || []);
     }
   );
 
   return () => {
     localRecentsListeners.delete(localListener);
-    try {
-      off(recentRef, "value", listener);
-    } catch (_) {}
+    off(recentRef, "value", listener);
   };
 }
 

@@ -111,27 +111,7 @@ export const api = {
     try {
       const q = encodeURIComponent(cleanQ);
       const data = await request(`/api/search/saavn?q=${q}&offset=${offset}&limit=${limit}`);
-      let raw = data?.results || data?.tracks || [];
-
-      // If results are sparse or missing direct match on offset 0, query YouTube search to ensure no songs are missed
-      if (raw.length < 5 && offset === 0) {
-        try {
-          const ytData = await request(`/api/search?q=${q}&offset=${offset}&limit=${limit}`);
-          const ytRaw = ytData?.results || ytData?.tracks || [];
-          if (ytRaw.length > 0) {
-            const seen = new Set(
-              raw.map((item) => (item.title || "").toLowerCase().replace(/[^a-z0-9]/g, ""))
-            );
-            for (const item of ytRaw) {
-              const norm = (item.title || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-              if (!seen.has(norm)) {
-                seen.add(norm);
-                raw.push(item);
-              }
-            }
-          }
-        } catch (_) {}
-      }
+      const raw = data?.results || data?.tracks || [];
 
       const list = raw.map((item) => ({
         ...item,
@@ -148,15 +128,7 @@ export const api = {
       };
     } catch (err) {
       console.warn("Saavn search request error:", err.message);
-      // Fallback to standard search if Saavn endpoint fails
-      try {
-        const q = encodeURIComponent(cleanQ);
-        const data = await request(`/api/search?q=${q}&offset=${offset}&limit=${limit}`);
-        const raw = data?.results || data?.tracks || [];
-        return { query: cleanQ, count: raw.length, results: raw, tracks: raw, has_more: false };
-      } catch (_) {
-        return { query: cleanQ, count: 0, results: [], tracks: [], has_more: false };
-      }
+      return { query: cleanQ, count: 0, results: [], tracks: [], has_more: false };
     }
   },
 
@@ -265,7 +237,6 @@ export const api = {
         try {
           const directUrls = [
             `https://staytup-api.onrender.com/api/songs/${encodeURIComponent(cleanId)}`,
-            `https://saavn.sumit.co/api/songs/${encodeURIComponent(cleanId)}`,
           ];
           for (const dUrl of directUrls) {
             try {
@@ -326,7 +297,6 @@ export const api = {
         ...(searchQ
           ? [`https://staytup-api.onrender.com/api/search/songs?query=${encodeURIComponent(searchQ)}&limit=1`]
           : []),
-        `https://saavn.sumit.co/api/songs/${encodeURIComponent(cleanId)}`,
       ];
       for (const dUrl of directUrls) {
         try {
