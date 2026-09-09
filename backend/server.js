@@ -16,7 +16,11 @@ import {
   getUserListeningData,
   getAppTrendingTracks,
   getPinUser,
-  savePinUser
+  savePinUser,
+  saveTrendingFeed,
+  updateUsersToDicebear,
+  cacheTrackImage,
+  getCachedTrackImage
 } from './firebase.js';
 
 const app = express();
@@ -165,14 +169,38 @@ async function extractAudioStream(videoId) {
   return promise;
 }
 
+// Helper: Check if video was published within the last 30 days
+function isReleasedWithin30Days(publishedText) {
+  if (!publishedText || typeof publishedText !== 'string') return false;
+  const p = publishedText.toLowerCase().trim();
+  // Relative times: seconds, minutes, hours, days
+  if (p.includes('second') || p.includes('minute') || p.includes('hour') || p.includes('day')) {
+    return true;
+  }
+  // Up to 4 weeks ago
+  if (p.includes('week')) {
+    const match = p.match(/(\d+)\s*week/);
+    if (!match) return true;
+    const weeks = parseInt(match[1], 10);
+    return weeks <= 4;
+  }
+  // Roughly 1 month
+  if (p.startsWith('1 month') || p === '1 month ago') {
+    return true;
+  }
+  // 2+ months, years -> definitely old
+  return false;
+}
+
 // Scrape YouTube Music Search Helper
-async function scrapeYouTubeSearch(query) {
+async function scrapeYouTubeSearch(query, options = {}) {
+  const spParam = options.sp ? `&sp=${options.sp}` : '';
   const searchQuery = /music|audio|song|official/i.test(query)
     ? query
     : `${query} music`;
 
   const resp = await fetch(
-    `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`,
+    `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}${spParam}`,
     {
       headers: {
         'User-Agent':
@@ -217,6 +245,7 @@ async function scrapeYouTubeSearch(query) {
             const durationStr = v.lengthText?.simpleText || '';
             const durationSeconds = parseDurationToSeconds(durationStr);
             const views = v.viewCountText?.simpleText || '';
+            const published = v.publishedTimeText?.simpleText || '';
 
             // Skip videos longer than 20 minutes unless specified
             if (durationSeconds > 1200 && !query.toLowerCase().includes('hour') && !query.toLowerCase().includes('mix')) {
@@ -241,6 +270,7 @@ async function scrapeYouTubeSearch(query) {
               thumbnail: thumbUrl,
               artwork_url: thumbUrl,
               views,
+              published,
             });
 
             if (results.length >= 25) break;
@@ -252,6 +282,77 @@ async function scrapeYouTubeSearch(query) {
   }
 
   return results;
+}
+
+// Fetch verified Fresh New Releases released strictly within the last 30 days
+async function fetchFreshNewReleases() {
+  try {
+    const verified = await fetchHomeCategoryTracks('Latest Hindi Songs', null, 15);
+    if (verified && verified.length >= 6) {
+      return verified;
+    }
+
+    const currentYear = new Date().getFullYear();
+    const [hindiRes, punjabiRes, trendingRes] = await Promise.allSettled([
+      scrapeYouTubeSearch(`latest Hindi songs ${currentYear} official video`, { sp: 'CAI%253D' }),
+      scrapeYouTubeSearch(`new Punjabi songs ${currentYear} official music video`, { sp: 'CAI%253D' }),
+      scrapeYouTubeSearch(`latest Indian songs official music video ${currentYear}`, { sp: 'CAI%253D' }),
+    ]);
+
+    const allCandidate = [
+      ...(hindiRes.status === 'fulfilled' ? hindiRes.value : []),
+      ...(punjabiRes.status === 'fulfilled' ? punjabiRes.value : []),
+      ...(trendingRes.status === 'fulfilled' ? trendingRes.value : []),
+    ];
+
+    const seenIds = new Set();
+    const seenThumbs = new Set();
+    const freshTracks = [];
+
+    for (const t of allCandidate) {
+      if (!t || !t.videoId || seenIds.has(t.videoId)) continue;
+      const thumb = t.artwork_url || t.thumbnail || '';
+      if (thumb && seenThumbs.has(thumb)) continue;
+      // Filter out compilations, full album jukeboxes, or long playlists
+      const lowTitle = (t.title || '').toLowerCase();
+      if (/jukebox|all songs|mashup|compilation|collection|top 10|top 20|audio jukebox/i.test(lowTitle)) {
+        continue;
+      }
+      if (t.duration_seconds > 540) {
+        continue; // Exclude videos longer than 9 minutes
+      }
+
+      // Check strictly if published within 30 days
+      if (isReleasedWithin30Days(t.published)) {
+        seenIds.add(t.videoId);
+        if (thumb) seenThumbs.add(thumb);
+        freshTracks.push(t);
+      }
+    }
+
+    // If strictly filtered candidates are found, return them up to 15
+    if (freshTracks.length >= 6) {
+      return freshTracks.slice(0, 15);
+    }
+
+    // Fallback: if YouTube did not provide published text on enough tracks, include fresh candidate tracks
+    for (const t of allCandidate) {
+      if (!t || !t.videoId || seenIds.has(t.videoId)) continue;
+      const thumb = t.artwork_url || t.thumbnail || '';
+      if (thumb && seenThumbs.has(thumb)) continue;
+      const lowTitle = (t.title || '').toLowerCase();
+      if (/jukebox|all songs|mashup|compilation|collection/i.test(lowTitle) || t.duration_seconds > 540) continue;
+      seenIds.add(t.videoId);
+      if (thumb) seenThumbs.add(thumb);
+      freshTracks.push(t);
+      if (freshTracks.length >= 15) break;
+    }
+
+    return freshTracks.slice(0, 15);
+  } catch (err) {
+    console.warn('Error fetching fresh new releases:', err.message);
+    return [];
+  }
 }
 
 // ─── 1. Health check (/api/health and /health) with Firebase diagnostics ────────
@@ -310,6 +411,9 @@ const SAAVN_API_PROVIDERS = [
 let currentProviderIndex = 0;
 const saavnStreamCache = new Map(); // id -> { url, expiry }
 const SAAVN_STREAM_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+const trackImageCache = new Map(); // id -> { image, expiry }
+const TRACK_IMAGE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days in memory
 
 function getSaavnBaseUrl() {
   return SAAVN_API_PROVIDERS[currentProviderIndex];
@@ -501,6 +605,12 @@ app.get(['/api/stream/saavn/:id', '/stream/saavn/:id'], async (req, res) => {
     // Cache the result
     saavnStreamCache.set(rawId, { data: responseData, expiry: Date.now() + SAAVN_STREAM_CACHE_TTL });
 
+    // Cache high-res artwork in Firebase RTDB & memory
+    if (normalized?.artwork_url) {
+      cacheTrackImage(rawId, normalized.artwork_url).catch(() => {});
+      trackImageCache.set(rawId, { image: normalized.artwork_url, expiry: Date.now() + TRACK_IMAGE_CACHE_TTL });
+    }
+
     // Prune old entries periodically
     if (saavnStreamCache.size > 500) {
       for (const [key, val] of saavnStreamCache) {
@@ -551,6 +661,135 @@ app.get(['/api/stream/saavn/:id', '/stream/saavn/:id'], async (req, res) => {
     }
 
     res.status(502).json({ error: 'Failed to resolve Saavn audio stream', details: err.message, id: rawId });
+  }
+});
+
+// 2b. High-Res Track Image Route with Firebase RTDB Caching & Staytup-API
+app.get(['/api/track-image/:id', '/track-image/:id'], async (req, res) => {
+  const rawId = req.params.id ? String(req.params.id).replace(/^saavn_/, '').trim() : '';
+  if (!rawId) {
+    return res.status(400).json({ error: 'Song ID required' });
+  }
+
+  // 1. Check in-memory cache
+  const memCached = trackImageCache.get(rawId);
+  if (memCached && memCached.expiry > Date.now() && memCached.image) {
+    return res.json({ success: true, videoId: rawId, image: memCached.image, source: 'memory' });
+  }
+
+  // 2. Check Firebase RTDB (persisted across restarts and instances)
+  try {
+    const dbImage = await getCachedTrackImage(rawId);
+    if (dbImage) {
+      const highRes = String(dbImage).replace(/(?:50x50|150x150)\.jpg/i, '500x500.jpg');
+      trackImageCache.set(rawId, { image: highRes, expiry: Date.now() + TRACK_IMAGE_CACHE_TTL });
+      return res.json({ success: true, videoId: rawId, image: highRes, source: 'database' });
+    }
+  } catch (dbErr) {
+    console.warn(`[RTDB] Error checking track image for ${rawId}:`, dbErr.message);
+  }
+
+  // 3. Query Staytup API and Saavn providers
+  try {
+    let resolvedImage = null;
+    const providers = [
+      `https://staytup-api.onrender.com/api/songs/${encodeURIComponent(rawId)}`,
+      `https://saavn.sumit.co/api/songs/${encodeURIComponent(rawId)}`
+    ];
+
+    for (const pUrl of providers) {
+      try {
+        const fetchRes = await fetch(pUrl, { signal: AbortSignal.timeout(6000) });
+        if (fetchRes.ok) {
+          const sData = await fetchRes.json();
+          const song = Array.isArray(sData?.data) ? sData.data[0] : sData?.data;
+          if (song) {
+            if (Array.isArray(song.image) && song.image.length > 0) {
+              const fiveHundred = song.image.find(img => img.quality === '500x500');
+              resolvedImage = fiveHundred?.url || song.image[song.image.length - 1]?.url || '';
+            } else if (typeof song.image === 'string') {
+              resolvedImage = song.image;
+            }
+            if (resolvedImage) break;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!resolvedImage) {
+      try {
+        const data = await fetchSaavnJson(`/songs/${encodeURIComponent(rawId)}`);
+        const song = Array.isArray(data?.data) ? data.data[0] : data?.data;
+        if (song) {
+          if (Array.isArray(song.image) && song.image.length > 0) {
+            const fiveHundred = song.image.find(img => img.quality === '500x500');
+            resolvedImage = fiveHundred?.url || song.image[song.image.length - 1]?.url || '';
+          } else if (typeof song.image === 'string') {
+            resolvedImage = song.image;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 4. If not resolved by direct ID, search Staytup API by track title & artist
+    if (!resolvedImage) {
+      let queryToSearch = (req.query.q || req.query.query || "").trim();
+      if (!queryToSearch && (req.query.title || req.query.artist)) {
+        queryToSearch = `${req.query.title || ""} ${req.query.artist || ""}`.trim();
+      }
+
+      // If still no title and rawId is an 11-char YouTube ID, fetch title via oEmbed
+      if (!queryToSearch && rawId.length === 11) {
+        try {
+          const oeRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${rawId}&format=json`, { signal: AbortSignal.timeout(3500) });
+          if (oeRes.ok) {
+            const oeData = await oeRes.json();
+            if (oeData?.title) {
+              queryToSearch = cleanVideoTitle(oeData.title);
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (queryToSearch) {
+        const searchUrls = [
+          `https://staytup-api.onrender.com/api/search/songs?query=${encodeURIComponent(queryToSearch)}&limit=1`,
+          `https://saavn.sumit.co/api/search/songs?query=${encodeURIComponent(queryToSearch)}&limit=1`,
+        ];
+        for (const sUrl of searchUrls) {
+          try {
+            const sRes = await fetch(sUrl, { signal: AbortSignal.timeout(6000) });
+            if (sRes.ok) {
+              const sData = await sRes.json();
+              const results = sData?.data?.results || (Array.isArray(sData?.data) ? sData.data : []);
+              if (results && results.length > 0) {
+                const song = results[0];
+                if (Array.isArray(song.image) && song.image.length > 0) {
+                  const fiveHundred = song.image.find((img) => img.quality === "500x500");
+                  resolvedImage = fiveHundred?.url || song.image[song.image.length - 1]?.url || "";
+                } else if (typeof song.image === "string") {
+                  resolvedImage = song.image;
+                }
+                if (resolvedImage) break;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
+    if (resolvedImage) {
+      const highRes = String(resolvedImage).replace(/(?:50x50|150x150)\.jpg/i, '500x500.jpg');
+      // Store in Firebase RTDB so future requests load instantly from DB without calling API
+      await cacheTrackImage(rawId, highRes);
+      // Cache in memory
+      trackImageCache.set(rawId, { image: highRes, expiry: Date.now() + TRACK_IMAGE_CACHE_TTL });
+      return res.json({ success: true, videoId: rawId, image: highRes, source: 'api' });
+    }
+
+    return res.status(404).json({ error: 'Artwork not found', videoId: rawId });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to resolve artwork', details: err.message, videoId: rawId });
   }
 });
 
@@ -1198,25 +1437,30 @@ app.get(['/api/lyrics', '/lyrics'], async (req, res) => {
   }
 });
 
-// Helper: Deduplicate tracks by videoId across sections
+// Helper: Deduplicate tracks by videoId and avoid duplicate spam thumbnails across sections
 function dedupeTracks(allSections) {
   const seen = new Set();
+  const seenThumbnails = new Set();
   return allSections.map(section => {
     const unique = (section.tracks || []).filter(t => {
       const id = t.videoId || t.video_id;
       if (!id || seen.has(id)) return false;
+      const thumb = t.artwork_url || t.thumbnail;
+      if (thumb && seenThumbnails.has(thumb)) {
+        return false; // Skip duplicate album art (no spam channel repeat thumbnails)
+      }
       seen.add(id);
+      if (thumb) seenThumbnails.add(thumb);
       return true;
     });
     return { ...section, tracks: unique };
   }).filter(s => s.tracks.length > 0);
 }
 
-// Helper: Validate a YouTube thumbnail URL exists (HEAD request)
+// Helper: Validate a thumbnail URL exists
 async function validateThumbnail(videoId, thumbnailUrl) {
   try {
-    // If a yt3.googleusercontent.com URL is provided, it's from YouTube directly — trust it
-    if (thumbnailUrl && thumbnailUrl.includes('yt3.googleusercontent.com')) {
+    if (thumbnailUrl && (thumbnailUrl.includes('saavncdn.com') || thumbnailUrl.includes('googleusercontent.com') || thumbnailUrl.includes('pinimg.com'))) {
       return true;
     }
     const resp = await fetch(`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`, {
@@ -1244,14 +1488,39 @@ async function filterValidTracks(tracks) {
     .filter(Boolean);
 }
 
-// Helper: Run multiple search queries in parallel with individual timeouts
-async function parallelSearch(queries, limitPerQuery = 12) {
-  const results = await Promise.allSettled(
-    queries.map(q => scrapeYouTubeSearch(q).then(r => r.slice(0, limitPerQuery)))
-  );
-  return results
-    .filter(r => r.status === 'fulfilled' && Array.isArray(r.value))
-    .flatMap(r => r.value);
+// Helper: Fetch verified category tracks using Staytup API first (for authentic 500x500 album art) with clean YouTube fallback
+async function fetchHomeCategoryTracks(saavnQuery, ytFallbackQuery, limit = 15) {
+  if (saavnQuery) {
+    try {
+      const data = await fetchSaavnJson(`/search/songs?query=${encodeURIComponent(saavnQuery)}&limit=${limit}`);
+      const raw = data?.data?.results || (Array.isArray(data?.data) ? data.data : []);
+      if (Array.isArray(raw) && raw.length > 0) {
+        const normalized = raw.map(s => normalizeSaavnSong(s, null)).filter(Boolean);
+        if (normalized.length >= 4) {
+          return normalized.slice(0, limit);
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (ytFallbackQuery) {
+    try {
+      const yt = await scrapeYouTubeSearch(ytFallbackQuery);
+      const seenThumbs = new Set();
+      const cleanYt = [];
+      for (const t of (yt || [])) {
+        const thumb = t.artwork_url || t.thumbnail || '';
+        if (thumb && seenThumbs.has(thumb)) continue;
+        if (/jukebox|full album|top 10|top 20|compilation/i.test(t.title || '')) continue;
+        if (thumb) seenThumbs.add(thumb);
+        cleanYt.push(t);
+        if (cleanYt.length >= limit) break;
+      }
+      return cleanYt;
+    } catch (_) {}
+  }
+
+  return [];
 }
 
 // ─── 8. Daily Home Feed — India-focused rich sections ────────────────────────
@@ -1268,72 +1537,69 @@ app.get(['/home', '/home/:userId', '/api/home'], async (req, res) => {
     const now = new Date();
     const timestamp = now.toISOString();
 
-    // Parallel fetch: each query targets a specific Indian music category
+    // Parallel fetch: each category uses Staytup API first (for genuine 500x500 album art) with clean YouTube fallback
     const [
-      trendingIndia,
       hindiTop,
-      englishIndia,
+      newReleases,
+      romanticVibes,
       bollywoodBlockbusters,
       punjabiHits,
       tamilHits,
       teluguHits,
-      indieViral,
+      southIndianMix,
+      englishIndia,
+      desiHipHop,
+      indiePopIndia,
       partyAnthem,
-      romanticVibes,
-      workoutEnergy,
-      lateNightChill,
+      lofiChillHindi,
       devotional,
       retroClassics,
-      newReleases,
-      southIndianMix,
-      lofiChillHindi,
+      indieViral,
       romanticEnglish,
-      desiHipHop,
-      indiePopIndia
+      workoutEnergy,
+      lateNightChill
     ] = await Promise.allSettled([
-      scrapeYouTubeSearch('trending songs India 2025 2026').then(r => r.slice(0, 15)),
-      scrapeYouTubeSearch('top Hindi songs 2025 2026 latest').then(r => r.slice(0, 15)),
-      scrapeYouTubeSearch('top English songs India trending 2025 2026').then(r => r.slice(0, 12)),
-      scrapeYouTubeSearch('Bollywood blockbuster hit songs 2025 2026').then(r => r.slice(0, 15)),
-      scrapeYouTubeSearch('Punjabi hit songs 2025 2026 trending').then(r => r.slice(0, 12)),
-      scrapeYouTubeSearch('Tamil hit songs 2025 2026 latest').then(r => r.slice(0, 15)),
-      scrapeYouTubeSearch('Telugu hit songs 2025 2026 latest').then(r => r.slice(0, 15)),
-      scrapeYouTubeSearch('Indian indie viral songs 2025 2026').then(r => r.slice(0, 12)),
-      scrapeYouTubeSearch('party anthem Bollywood English Hindi 2025 2026').then(r => r.slice(0, 12)),
-      scrapeYouTubeSearch('top Bollywood romantic melodies Hindi songs 2025 2026').then(r => r.slice(0, 15)),
-      scrapeYouTubeSearch('workout gym motivation Indian English songs 2025').then(r => r.slice(0, 10)),
-      scrapeYouTubeSearch('late night chill Hindi English songs 2025 2026').then(r => r.slice(0, 10)),
-      scrapeYouTubeSearch('devotional spiritual songs Hindu bhajan 2025 2026').then(r => r.slice(0, 10)),
-      scrapeYouTubeSearch('retro Bollywood classic songs evergreen').then(r => r.slice(0, 10)),
-      scrapeYouTubeSearch('new release songs India September 2025 2026').then(r => r.slice(0, 15)),
-      scrapeYouTubeSearch('Malayalam Kannada Marathi hit songs 2025 2026').then(r => r.slice(0, 12)),
-      scrapeYouTubeSearch('lofi chill Hindi songs study relax 2025').then(r => r.slice(0, 10)),
-      scrapeYouTubeSearch('romantic English songs love 2025 2026').then(r => r.slice(0, 10)),
-      scrapeYouTubeSearch('desi hip hop rap Indian 2025 2026').then(r => r.slice(0, 10)),
-      scrapeYouTubeSearch('Indian indie pop songs 2025 2026').then(r => r.slice(0, 10)),
+      fetchHomeCategoryTracks('Top Hindi Songs Latest', 'top Hindi songs latest 2025 2026', 15),
+      fetchFreshNewReleases(),
+      fetchHomeCategoryTracks('Romantic Hindi Songs', 'top Bollywood romantic melodies Hindi songs', 15),
+      fetchHomeCategoryTracks('Latest Bollywood Songs', 'Bollywood blockbuster hit songs', 15),
+      fetchHomeCategoryTracks('Punjabi Hits Blockbusters', 'Punjabi hit songs', 15),
+      fetchHomeCategoryTracks('Top Tamil Hits', 'Tamil hit songs latest', 15),
+      fetchHomeCategoryTracks('Top Telugu Hits', 'Telugu hit songs latest', 15),
+      fetchHomeCategoryTracks('South Indian Top Hits', 'Malayalam Kannada Marathi hit songs', 15),
+      fetchHomeCategoryTracks('Top English Pop Hits', 'top English pop songs', 15),
+      fetchHomeCategoryTracks('Hindi Rap', 'desi hip hop rap Indian', 15),
+      fetchHomeCategoryTracks('Indie Pop Hindi', 'Indian indie pop songs', 15),
+      fetchHomeCategoryTracks('Bollywood Dance Hits', 'party anthem Bollywood Hindi', 15),
+      fetchHomeCategoryTracks('Hindi Lofi', 'lofi chill Hindi songs study relax', 15),
+      fetchHomeCategoryTracks('Popular Devotional Bhajans', 'devotional spiritual songs Hindu bhajan', 15),
+      fetchHomeCategoryTracks('Evergreen Hindi Songs', 'retro Bollywood classic songs evergreen', 15),
+      fetchHomeCategoryTracks('Indian Indie', 'Indian indie songs', 15),
+      fetchHomeCategoryTracks('English Love Songs', 'romantic English songs love', 15),
+      fetchHomeCategoryTracks('Workout Gym Motivation Beats', 'workout gym motivation Indian English songs', 12),
+      fetchHomeCategoryTracks('Late Night Chill Vibes', 'late night chill Hindi English songs', 12)
     ]);
 
     const get = (r) => r.status === 'fulfilled' ? r.value : [];
 
     const allSections = [
-      { id: 'trending_now', title: 'Trending Now India', tracks: get(trendingIndia) },
-      { id: 'new_releases', title: 'New Releases', tracks: get(newReleases) },
-      { id: 'top_hindi', title: 'Top Hindi Songs', tracks: get(hindiTop) },
-      { id: 'romantic_melodies', title: 'Romantic Melodies', tracks: get(romanticVibes) },
-      { id: 'bollywood_blockbusters', title: 'Bollywood Blockbusters', tracks: get(bollywoodBlockbusters) },
-      { id: 'punjabi_bangers', title: 'Punjabi Bangers', tracks: get(punjabiHits) },
-      { id: 'tamil_hits', title: 'Tamil Hits', tracks: get(tamilHits) },
-      { id: 'telugu_hits', title: 'Telugu Hits', tracks: get(teluguHits) },
-      { id: 'south_indian_mix', title: 'South Indian Mix', tracks: get(southIndianMix) },
-      { id: 'english_india', title: 'Top English India', tracks: get(englishIndia) },
-      { id: 'desi_hip_hop', title: 'Desi Hip Hop & Rap', tracks: get(desiHipHop) },
-      { id: 'indie_pop', title: 'Indie Pop India', tracks: get(indiePopIndia) },
-      { id: 'indie_viral', title: 'Indie & Viral', tracks: get(indieViral) },
-      { id: 'party_anthems', title: 'Party Anthems', tracks: get(partyAnthem) },
-      { id: 'romantic_english', title: 'Romantic English Songs', tracks: get(romanticEnglish) },
-      { id: 'lofi_chill_hindi', title: 'Lofi Chill Hindi', tracks: get(lofiChillHindi) },
-      { id: 'devotional', title: 'Devotional & Spiritual', tracks: get(devotional) },
-      { id: 'retro_classics', title: 'Retro Classics', tracks: get(retroClassics) },
+      { id: 'top_hindi', title: 'Top Hindi Songs', language: 'Hindi', genre: 'bollywood', tracks: get(hindiTop) },
+      { id: 'new_releases', title: 'Fresh New Releases', language: 'Hindi', genre: 'releases', tracks: get(newReleases) },
+      { id: 'romantic_melodies', title: 'Romantic Melodies', language: 'Hindi', genre: 'romantic', tracks: get(romanticVibes) },
+      { id: 'bollywood_blockbusters', title: 'Bollywood Blockbusters', language: 'Hindi', genre: 'bollywood', tracks: get(bollywoodBlockbusters) },
+      { id: 'punjabi_bangers', title: 'Punjabi Bangers', language: 'Punjabi', genre: 'punjabi', tracks: get(punjabiHits) },
+      { id: 'indie_pop', title: 'Indie Pop India', language: 'Hindi', genre: 'indie', tracks: get(indiePopIndia) },
+      { id: 'desi_hip_hop', title: 'Desi Hip Hop & Rap', language: 'Hindi', genre: 'hiphop', tracks: get(desiHipHop) },
+      { id: 'party_anthems', title: 'Party Anthems', language: 'Hindi', genre: 'party', tracks: get(partyAnthem) },
+      { id: 'lofi_chill_hindi', title: 'Lofi Chill Beats', language: 'Hindi', genre: 'lofi', tracks: get(lofiChillHindi) },
+      { id: 'tamil_hits', title: 'Tamil Hits', language: 'Tamil', genre: 'regional', tracks: get(tamilHits) },
+      { id: 'telugu_hits', title: 'Telugu Hits', language: 'Telugu', genre: 'regional', tracks: get(teluguHits) },
+      { id: 'south_indian_mix', title: 'South Indian Mix', language: 'South Indian', genre: 'regional', tracks: get(southIndianMix) },
+      { id: 'english_india', title: 'Top English Hits', language: 'English', genre: 'pop', tracks: get(englishIndia) },
+      { id: 'romantic_english', title: 'Romantic English Songs', language: 'English', genre: 'romantic', tracks: get(romanticEnglish) },
+      { id: 'indie_viral', title: 'Indie & Viral', language: 'Hindi', genre: 'indie', tracks: get(indieViral) },
+      { id: 'devotional', title: 'Devotional & Spiritual', language: 'Hindi', genre: 'devotional', tracks: get(devotional) },
+      { id: 'retro_classics', title: 'Retro Classics', language: 'Hindi', genre: 'retro', tracks: get(retroClassics) },
     ];
 
     // Deduplicate across all sections
@@ -1350,15 +1616,23 @@ app.get(['/home', '/home/:userId', '/api/home'], async (req, res) => {
       .map((r) => (r.status === 'fulfilled' ? r.value : null))
       .filter((s) => s && s.tracks.length > 0);
 
-    res.json({
+    const payload = {
       sections: validSections,
-      trending: validSections.find(s => s.id === 'trending_now')?.tracks || [],
+      trending: validSections.find(s => s.id === 'top_hindi')?.tracks || validSections[0]?.tracks || [],
       recommended: validSections.find(s => s.id === 'top_hindi')?.tracks || [],
       freshPicks: validSections.find(s => s.id === 'new_releases')?.tracks || [],
       moods: [],
       generated_at: timestamp,
       total_sections: sections.length,
-    });
+    };
+
+    // Upload & persist fresh feed to Firebase RTDB asynchronously
+    saveTrendingFeed({
+      ...payload,
+      lastUpdated: timestamp,
+    }).catch((err) => console.warn('Failed to upload feed to RTDB:', err.message));
+
+    res.json(payload);
   } catch (err) {
     console.error('Home feed error:', err.message);
     res.json({ sections: [], trending: [], recommended: [], freshPicks: [], moods: [] });
@@ -1999,6 +2273,97 @@ app.get('/artists/search', async (req, res) => {
   }
 
   res.json({ results: [], artists: [] });
+});
+
+// ─── Popular Artists by Language Endpoint (Staytup API Powered) ───────────────
+const popularArtistsCache = new Map();
+const POPULAR_ARTISTS_TTL = 1000 * 60 * 60 * 6; // 6 hours
+
+app.get(['/artists/popular', '/api/artists/popular'], async (req, res) => {
+  const language = req.query.language ? String(req.query.language).trim() : 'Hindi';
+  const limit = Math.min(parseInt(req.query.limit) || 12, 30);
+  const cacheKey = `${language.toLowerCase()}_${limit}`;
+
+  const cached = popularArtistsCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < POPULAR_ARTISTS_TTL) {
+    return res.json({ artists: cached.artists, results: cached.artists, cached: true });
+  }
+
+  try {
+    const url = `https://staytup-api.onrender.com/api/search/songs?query=${encodeURIComponent(language + ' top hits')}&limit=25`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    if (resp.ok) {
+      const json = await resp.json();
+      const songs = json?.data?.results || [];
+      const seenIds = new Set();
+      const seenNames = new Set();
+      const artists = [];
+
+      for (const song of songs) {
+        const primary = song.artists?.primary || [];
+        for (const a of primary) {
+          if (!a || !a.name) continue;
+          const cleanName = a.name.trim();
+          const cleanId = String(a.id || cleanName);
+          const nameLower = cleanName.toLowerCase();
+          if (seenIds.has(cleanId) || seenNames.has(nameLower)) continue;
+          seenIds.add(cleanId);
+          seenNames.add(nameLower);
+
+          const img = extractStaytupArtistImage(a.image);
+          if (img && !img.includes('artist-default-music.png') && !img.includes('default_artist')) {
+            artists.push({
+              id: cleanId,
+              name: cleanName,
+              image: img,
+              thumbnail: img,
+              role: 'Artist',
+              type: 'artist',
+            });
+          }
+        }
+      }
+
+      if (artists.length > 0) {
+        const sliced = artists.slice(0, limit);
+        popularArtistsCache.set(cacheKey, { artists: sliced, timestamp: Date.now() });
+        return res.json({ artists: sliced, results: sliced });
+      }
+    }
+  } catch (err) {
+    console.warn('[API /artists/popular] Staytup API error:', err.message);
+  }
+
+  // Fallback to searching artists directly
+  try {
+    const fallbackUrl = `https://staytup-api.onrender.com/api/search/artists?query=${encodeURIComponent(language)}&limit=${limit}`;
+    const resp = await fetch(fallbackUrl, { signal: AbortSignal.timeout(6000) });
+    if (resp.ok) {
+      const json = await resp.json();
+      const raw = json?.data?.results || [];
+      const artists = raw
+        .filter((a) => a && a.name)
+        .map((a) => ({
+          id: String(a.id || a.name),
+          name: a.name.trim(),
+          image: extractStaytupArtistImage(a.image),
+          thumbnail: extractStaytupArtistImage(a.image),
+          role: a.role || 'Artist',
+          type: 'artist',
+        }))
+        .filter((a) => a.image && !a.image.includes('artist-default-music.png') && !a.image.includes('default_artist'))
+        .slice(0, limit);
+
+      if (artists.length > 0) {
+        popularArtistsCache.set(cacheKey, { artists, timestamp: Date.now() });
+        return res.json({ artists, results: artists });
+      }
+    }
+  } catch (err) {
+    console.warn('[API /artists/popular] Fallback error:', err.message);
+  }
+
+  res.json({ artists: [], results: [] });
 });
 
 // ─── Similar Artists Endpoint (Staytup API Powered) ───────────────────────────

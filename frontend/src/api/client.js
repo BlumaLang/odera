@@ -277,6 +277,60 @@ export const api = {
     return api.getStream(id);
   },
 
+  // High-res track artwork resolution (Backend RTDB cache + Staytup-API)
+  getTrackImage: async (videoIdOrTrackId, title = "", artist = "") => {
+    if (!videoIdOrTrackId) return null;
+    const cleanId = String(videoIdOrTrackId).replace(/^saavn_/, "").trim();
+    if (!cleanId) return null;
+
+    // 1. Query backend server (which uses RTDB caching + Staytup API)
+    try {
+      const queryParams = [];
+      if (title) queryParams.push(`title=${encodeURIComponent(title)}`);
+      if (artist) queryParams.push(`artist=${encodeURIComponent(artist)}`);
+      const qStr = queryParams.length > 0 ? `?${queryParams.join("&")}` : "";
+      const data = await request(`/api/track-image/${encodeURIComponent(cleanId)}${qStr}`);
+      if (data?.image) {
+        return data.image;
+      }
+    } catch (_) {}
+
+    // 2. Direct fallback to Staytup API
+    try {
+      const searchQ = `${title} ${artist}`.trim();
+      const directUrls = [
+        `https://staytup-api.onrender.com/api/songs/${encodeURIComponent(cleanId)}`,
+        ...(searchQ
+          ? [`https://staytup-api.onrender.com/api/search/songs?query=${encodeURIComponent(searchQ)}&limit=1`]
+          : []),
+        `https://saavn.sumit.co/api/songs/${encodeURIComponent(cleanId)}`,
+      ];
+      for (const dUrl of directUrls) {
+        try {
+          const res = await fetch(dUrl, { signal: AbortSignal.timeout(5000) });
+          if (res.ok) {
+            const sData = await res.json();
+            const song = sData?.data?.results?.[0] || (Array.isArray(sData?.data) ? sData.data[0] : sData?.data);
+            if (song) {
+              let imgUrl = null;
+              if (Array.isArray(song.image) && song.image.length > 0) {
+                const fiveHundred = song.image.find((img) => img.quality === "500x500");
+                imgUrl = fiveHundred?.url || song.image[song.image.length - 1]?.url || null;
+              } else if (typeof song.image === "string") {
+                imgUrl = song.image;
+              }
+              if (imgUrl) {
+                return String(imgUrl).replace(/(?:50x50|150x150)\.jpg/i, "500x500.jpg");
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    return null;
+  },
+
   // Track info via oEmbed on backend
   getTrackInfo: (videoId) => request(`/api/track-info?v=${encodeURIComponent(videoId)}`),
 
@@ -487,6 +541,50 @@ export const api = {
       return { images: {} };
     }
   },
+
+  // Get popular artists for a language dynamically via backend / Staytup API
+  getPopularArtists: async (language = "Hindi", limit = 12) => {
+    try {
+      const data = await request(`/artists/popular?language=${encodeURIComponent(language)}&limit=${limit}`);
+      if (data?.artists?.length > 0) return data;
+    } catch (_) {}
+
+    try {
+      const url = `https://staytup-api.onrender.com/api/search/songs?query=${encodeURIComponent(language + " top hits")}&limit=25`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      if (resp.ok) {
+        const json = await resp.json();
+        const songs = json?.data?.results || [];
+        const seen = new Set();
+        const artists = [];
+        for (const song of songs) {
+          for (const a of (song.artists?.primary || [])) {
+            if (!a || !a.name) continue;
+            const name = a.name.trim();
+            if (seen.has(name.toLowerCase())) continue;
+            seen.add(name.toLowerCase());
+            const img = Array.isArray(a.image) ? (a.image[2]?.url || a.image[1]?.url || a.image[0]?.url) : a.image;
+            if (img && !img.includes("artist-default-music.png") && !img.includes("default_artist")) {
+              artists.push({
+                id: String(a.id || name),
+                name,
+                image: img,
+                thumbnail: img,
+                role: "Artist",
+                type: "artist",
+              });
+              saveCachedArtist({ id: String(a.id || name), name, imageUrl: img }).catch(() => {});
+            }
+          }
+        }
+        if (artists.length > 0) {
+          return { artists: artists.slice(0, limit), results: artists.slice(0, limit) };
+        }
+      }
+    } catch (_) {}
+    return { artists: [], results: [] };
+  },
+
   getUserPlaylists: () => Promise.resolve([]),
   createPlaylist: () => Promise.resolve({}),
   getPlaylistDetails: () => Promise.resolve({}),

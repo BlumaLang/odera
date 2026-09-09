@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -11,8 +11,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { useUser } from "../context/UserContext";
-import { DEFAULT_ARTIST_IMAGES } from "../theme/artistImages";
-
+import { api } from "../api/client";
 import { useResponsive } from "../context/ResponsiveContext";
 
 export default function DesktopSidebar({
@@ -23,6 +22,38 @@ export default function DesktopSidebar({
   const { isTablet } = useResponsive();
   const { userProfile } = useUser();
   const favoriteArtists = userProfile?.favoriteArtists || userProfile?.favorite_artists || [];
+  const [sidebarArtistImages, setSidebarArtistImages] = useState({});
+
+  useEffect(() => {
+    if (!favoriteArtists || favoriteArtists.length === 0) return;
+    const missing = favoriteArtists.filter((name) => !sidebarArtistImages[name]);
+    if (missing.length === 0) return;
+
+    api
+      .getBatchArtistImages(missing)
+      .then((res) => {
+        if (res?.images && Object.keys(res.images).length > 0) {
+          setSidebarArtistImages((prev) => ({ ...prev, ...res.images }));
+        }
+      })
+      .catch(() => {});
+
+    missing.forEach((name) => {
+      api
+        .getArtistImage(name)
+        .then((res) => {
+          const photo = res?.image || res?.image_url;
+          if (
+            photo &&
+            !photo.includes("artist-default-music.png") &&
+            !photo.includes("default_artist")
+          ) {
+            setSidebarArtistImages((prev) => ({ ...prev, [name]: photo }));
+          }
+        })
+        .catch(() => {});
+    });
+  }, [favoriteArtists]);
 
   const NAV_ITEMS = [
     { id: "Home", label: "Home", icon: "home", iconOutline: "home-outline" },
@@ -92,7 +123,7 @@ export default function DesktopSidebar({
       >
         {favoriteArtists.length > 0 ? (
           favoriteArtists.map((artistName) => {
-            const photoUrl = DEFAULT_ARTIST_IMAGES[artistName];
+            const photoUrl = sidebarArtistImages[artistName];
             return (
               <TouchableOpacity
                 key={artistName}

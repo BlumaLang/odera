@@ -22,7 +22,7 @@ import { api } from "../api/client";
 import AddToPlaylistModal from "./AddToPlaylistModal";
 import ArtistModal from "./ArtistModal";
 import LikeConfetti from "./LikeConfetti";
-import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
+import { resolveLocalArtistImage } from "../theme/artistImages";
 import { useResponsive } from "../context/ResponsiveContext";
 
 const { width, height } = Dimensions.get("window");
@@ -191,7 +191,7 @@ export default function FullPlayerModal() {
       return;
     }
 
-    const local = resolveLocalArtistImage(clean) || DEFAULT_ARTIST_IMAGES[clean];
+    const local = resolveLocalArtistImage(clean);
     if (local) {
       globalArtistPhotoCache.set(clean, local);
       setArtistPhotos((prev) => (prev[clean] === local ? prev : { ...prev, [clean]: local }));
@@ -1911,7 +1911,7 @@ export default function FullPlayerModal() {
                     artistPhotos[name] ||
                     globalArtistPhotoCache.get(name) ||
                     resolveLocalArtistImage(name) ||
-                    DEFAULT_ARTIST_IMAGES[name];
+                    null;
                   return (
                     <ArtistPickerRow
                       key={`${name}_${idx}`}
@@ -1939,7 +1939,6 @@ export default function FullPlayerModal() {
               ? artistPhotos[selectedArtistForModal] ||
                 globalArtistPhotoCache.get(selectedArtistForModal) ||
                 resolveLocalArtistImage(selectedArtistForModal) ||
-                DEFAULT_ARTIST_IMAGES[selectedArtistForModal] ||
                 null
               : null
           }

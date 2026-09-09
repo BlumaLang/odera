@@ -19,10 +19,9 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { api, getApiBaseUrl, setApiBaseUrl } from "../api/client";
-import { useUser } from "../context/UserContext";
+import { useUser, formatPersonName, formatUsername } from "../context/UserContext";
 import { useAudioPlayback } from "../context/AudioContext";
 import { useResponsive } from "../context/ResponsiveContext";
-import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
 import ArtistModal from "../components/ArtistModal";
 import SongCard from "../components/SongCard";
 import ChangelogModal from "../components/ChangelogModal";
@@ -31,24 +30,35 @@ import { APP_VERSION, BUILD_NUMBER, BUILD_DATE } from "../config/version";
 
 const globalArtistPhotoCache = {};
 
-const AVATAR_OPTIONS = [
-  { id: "initial", label: "Monogram", icon: null },
-  { id: "headset", label: "Audiophile", icon: "headset" },
-  { id: "flame", label: "Energy", icon: "flame" },
-  { id: "sparkles", label: "Magic", icon: "sparkles" },
-  { id: "musical-notes", label: "Melody", icon: "musical-notes" },
-  { id: "diamond", label: "VIP", icon: "diamond" },
-  { id: "disc", label: "Vinyl", icon: "disc" },
-  { id: "heart", label: "Heart", icon: "heart" },
-  { id: "star", label: "Rockstar", icon: "star" },
+export const DICEBEAR_TOON_SEEDS = [
+  { seed: "Felix", label: "Felix" },
+  { seed: "Sam", label: "Sam" },
+  { seed: "Ruby", label: "Ruby" },
+  { seed: "Jasper", label: "Jasper" },
+  { seed: "Luna", label: "Luna" },
+  { seed: "Milo", label: "Milo" },
+  { seed: "Oliver", label: "Oliver" },
+  { seed: "Aneka", label: "Aneka" },
+  { seed: "Maya", label: "Maya" },
+  { seed: "Leo", label: "Leo" },
 ];
 
-const COLOR_OPTIONS = [
-  { id: "#1DB954", label: "Emerald", color: "#1DB954" },
+export function getToonHeadUrl(seed) {
+  return `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(seed || "Felix")}`;
+}
+
+const AVATAR_OPTIONS = [
+  { id: "initial", label: "Monogram", icon: null },
+];
+
+export const COLOR_OPTIONS = [
   { id: "#8C52FF", label: "Amethyst", color: "#8C52FF" },
   { id: "#2EBDD7", label: "Cyan", color: "#2EBDD7" },
   { id: "#FFA500", label: "Amber", color: "#FFA500" },
   { id: "#E8115B", label: "Rose", color: "#E8115B" },
+  { id: "#3A86FF", label: "Electric Blue", color: "#3A86FF" },
+  { id: "#FF5722", label: "Coral", color: "#FF5722" },
+  { id: "#FFFFFF", label: "White", color: "#FFFFFF" },
 ];
 
 function getArtistInitials(name) {
@@ -95,6 +105,7 @@ function ArtistAvatar({ name, photoUrl, size = 80 }) {
 export default function ProfileScreen({ visible, onClose }) {
   const { isDesktop, isTablet, isPhone } = useResponsive();
   const {
+    currentUser,
     userProfile,
     isPremium,
     premiumPlan,
@@ -120,6 +131,7 @@ export default function ProfileScreen({ visible, onClose }) {
   // Customize Profile Modal
   const [showEditProfileModal, setShowEditProfileModal] = useState(false);
   const [tempUsername, setTempUsername] = useState("");
+  const [tempName, setTempName] = useState("");
   const [tempAvatar, setTempAvatar] = useState("initial");
   const [tempColor, setTempColor] = useState(colors.primary);
 
@@ -158,15 +170,29 @@ export default function ProfileScreen({ visible, onClose }) {
   const currentAvatarColor = userProfile?.avatarColor || colors.primary;
 
   const avatarOptions = useMemo(() => {
-    const list = [...AVATAR_OPTIONS];
-    if (userProfile?.avatar && userProfile.avatar.startsWith("http")) {
+    const list = [
+      ...DICEBEAR_TOON_SEEDS.map((item) => ({
+        id: getToonHeadUrl(item.seed),
+        label: item.label,
+        isPhoto: true,
+        photoUrl: getToonHeadUrl(item.seed),
+      })),
+      ...AVATAR_OPTIONS,
+    ];
+
+    if (
+      userProfile?.avatar &&
+      userProfile.avatar.startsWith("http") &&
+      !list.some((opt) => opt.id === userProfile.avatar)
+    ) {
       list.unshift({
         id: userProfile.avatar,
-        label: "Google Photo",
+        label: "Current Avatar",
         isPhoto: true,
         photoUrl: userProfile.avatar,
       });
     }
+
     return list;
   }, [userProfile?.avatar]);
 
@@ -302,17 +328,36 @@ export default function ProfileScreen({ visible, onClose }) {
   };
 
   const handleOpenEditModal = () => {
-    setTempUsername(username);
+    setTempUsername(formatUsername(userProfile?.username || username || "listener"));
+    setTempName(formatPersonName(userProfile?.displayName || userProfile?.name || currentUser?.displayName || ""));
     setTempAvatar(currentAvatar);
     setTempColor(currentAvatarColor);
     setShowEditProfileModal(true);
   };
 
-  const handleSaveProfile = async () => {
-    const trimmed = tempUsername.trim();
-    if (!trimmed) return;
+  const handleSelectAvatar = async (avatarId) => {
+    setTempAvatar(avatarId);
     await updateProfile({
-      username: trimmed,
+      avatar: avatarId,
+      avatarColor: tempColor,
+    }).catch(() => {});
+  };
+
+  const handleSelectColor = async (newColor) => {
+    setTempColor(newColor);
+    await updateProfile({
+      avatar: tempAvatar,
+      avatarColor: newColor,
+    }).catch(() => {});
+  };
+
+  const handleSaveProfile = async () => {
+    const finalUser = formatUsername(tempUsername.trim()) || "listener";
+    const finalName = formatPersonName(tempName.trim());
+    await updateProfile({
+      username: finalUser,
+      displayName: finalName || finalUser,
+      name: finalName || finalUser,
       avatar: tempAvatar,
       avatarColor: tempColor,
     });
@@ -684,17 +729,40 @@ export default function ProfileScreen({ visible, onClose }) {
 
             <View style={styles.editModalHeader}>
               <Text style={styles.editModalTitle}>Customize Profile</Text>
+              <TouchableOpacity
+                style={styles.modalCircleCloseBtn}
+                onPress={() => setShowEditProfileModal(false)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                activeOpacity={0.75}
+                accessibilityLabel="Close"
+              >
+                <Ionicons name="close" size={18} color="#FFFFFF" />
+              </TouchableOpacity>
             </View>
 
-            {/* Display Name Input */}
-            <Text style={styles.fieldLabel}>DISPLAY NAME</Text>
+            {/* Full Name Input (Capital first letter, max 15 characters) */}
+            <Text style={styles.fieldLabel}>FULL NAME (MAX 15 CHARACTERS)</Text>
+            <TextInput
+              style={styles.nameInput}
+              value={tempName}
+              onChangeText={(text) => setTempName(formatPersonName(text))}
+              placeholder="e.g. Felix"
+              placeholderTextColor="#777777"
+              maxLength={15}
+              autoCapitalize="words"
+            />
+
+            {/* Username Input (Strictly lowercase, max 15 characters) */}
+            <Text style={styles.fieldLabel}>USERNAME (ALWAYS LOWERCASE, MAX 15)</Text>
             <TextInput
               style={styles.nameInput}
               value={tempUsername}
-              onChangeText={setTempUsername}
-              placeholder="Enter your name"
+              onChangeText={(text) => setTempUsername(formatUsername(text))}
+              placeholder="e.g. felix"
               placeholderTextColor="#777777"
-              maxLength={30}
+              maxLength={15}
+              autoCapitalize="none"
+              autoCorrect={false}
             />
 
             {/* Avatar Icon Picker */}
@@ -711,7 +779,7 @@ export default function ProfileScreen({ visible, onClose }) {
                   <TouchableOpacity
                     key={item.id}
                     style={[styles.avatarOptionCard, isSelected && styles.avatarOptionCardActive]}
-                    onPress={() => setTempAvatar(item.id)}
+                    onPress={() => handleSelectAvatar(item.id)}
                     activeOpacity={0.8}
                   >
                     <View
@@ -758,19 +826,22 @@ export default function ProfileScreen({ visible, onClose }) {
             </ScrollView>
 
             {/* Accent Color Picker */}
-            <Text style={styles.fieldLabel}>THEME ACCENT</Text>
+            <Text style={styles.fieldLabel}>AVATAR BG COLOR</Text>
             <View style={styles.colorPickerRow}>
               {COLOR_OPTIONS.map((c) => {
                 const isSelected = tempColor === c.color;
+                const isWhite = c.color.toUpperCase() === "#FFFFFF";
                 return (
                   <TouchableOpacity
                     key={c.id}
                     style={[
                       styles.colorCircle,
                       { backgroundColor: c.color },
+                      isWhite && { borderWidth: 1, borderColor: "rgba(255, 255, 255, 0.35)" },
                       isSelected && styles.colorCircleActive,
+                      isSelected && isWhite && { borderColor: colors.primary },
                     ]}
-                    onPress={() => setTempColor(c.color)}
+                    onPress={() => handleSelectColor(c.color)}
                     activeOpacity={0.8}
                   >
                     {isSelected && <Ionicons name="checkmark" size={16} color="#000000" />}
@@ -782,14 +853,7 @@ export default function ProfileScreen({ visible, onClose }) {
             {/* Modal Buttons */}
             <View style={styles.editModalBtnRow}>
               <TouchableOpacity
-                style={styles.editCancelBtn}
-                onPress={() => setShowEditProfileModal(false)}
-              >
-                <Text style={styles.editCancelText}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.editSaveBtn, { backgroundColor: tempColor }]}
+                style={[styles.editSaveBtn, { flex: 1 }]}
                 onPress={handleSaveProfile}
               >
                 <Text style={styles.editSaveText}>Save Changes</Text>
@@ -1963,6 +2027,17 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: "#FFFFFF",
   },
+  modalCircleCloseBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
   fieldLabel: {
     fontFamily: fonts.bold,
     fontSize: 11,
@@ -2055,8 +2130,10 @@ const styles = StyleSheet.create({
   editSaveBtn: {
     backgroundColor: colors.primary,
     paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingVertical: 12,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
   },
   editSaveText: {
     fontFamily: fonts.bold,

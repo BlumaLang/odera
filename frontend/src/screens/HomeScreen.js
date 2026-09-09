@@ -20,7 +20,7 @@ import { api } from "../api/client";
 import { useAudioPlayback } from "../context/AudioContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useUser } from "../context/UserContext";
-import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
+import { resolveLocalArtistImage } from "../theme/artistImages";
 import {
   auth,
   getTrendingFeedRTDB,
@@ -102,27 +102,23 @@ function UserAvatar({ user, size = 44, fontSize = 15, style }) {
     setImgError(false);
   }, [user?.avatar, user?.photoURL, user?.avatarUrl]);
 
-  const avatarUri =
-    !imgError &&
-    ((user?.avatar && typeof user.avatar === "string" && user.avatar.startsWith("http"))
+  const username = user?.username || user?.displayName || user?.name || "Friend";
+  const dicebearUrl = `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(username.trim())}`;
+
+  const candidateUri =
+    (user?.avatar && typeof user.avatar === "string" && user.avatar.startsWith("http"))
       ? user.avatar
-      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http"))
-      ? user.photoURL
       : (user?.avatarUrl && typeof user.avatarUrl === "string" && user.avatarUrl.startsWith("http"))
       ? user.avatarUrl
-      : null);
-
-  const iconName =
-    user?.avatar &&
-    user.avatar !== "initial" &&
-    typeof user.avatar === "string" &&
-    !user.avatar.startsWith("http")
-      ? user.avatar
-      : user?.icon && typeof user.icon === "string" && !user.icon.startsWith("http")
-      ? user.icon
+      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http"))
+      ? user.photoURL
       : null;
 
-  const initial = (user?.username?.[0] || user?.displayName?.[0] || user?.name?.[0] || "U").toUpperCase();
+  // Never use Google account photo; always display crisp Dicebear Toon Head
+  const isGoogle = candidateUri && candidateUri.includes("googleusercontent.com");
+  const isInitial = user?.avatar === "initial";
+  const initial = (username[0] || "U").toUpperCase();
+  const avatarUri = (!imgError && candidateUri && !isGoogle) ? candidateUri : dicebearUrl;
   const bgColor = user?.avatarColor || colors.primary;
 
   return (
@@ -140,28 +136,17 @@ function UserAvatar({ user, size = 44, fontSize = 15, style }) {
         style,
       ]}
     >
-      {avatarUri ? (
+      {isInitial ? (
+        <Text style={{ fontFamily: fonts.bold, fontSize, color: "#000000" }}>
+          {initial}
+        </Text>
+      ) : (
         <Image
           source={{ uri: avatarUri }}
           style={{ width: "100%", height: "100%" }}
           resizeMode="cover"
           onError={() => setImgError(true)}
         />
-      ) : iconName ? (
-        <Ionicons name={iconName} size={fontSize + 2} color="#000000" />
-      ) : (
-        <Text
-          style={{
-            fontFamily: fonts.bold,
-            fontWeight: "700",
-            fontSize: fontSize,
-            color: "#000000",
-            textAlign: "center",
-            includeFontPadding: false,
-          }}
-        >
-          {initial}
-        </Text>
       )}
     </View>
   );
@@ -176,7 +161,7 @@ export default function HomeScreen({ onNavigate } = {}) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
-  const { userProfile, friends } = useUser() || {};
+  const { userProfile, friends, likedSongs } = useUser() || {};
   const favoriteArtists = userProfile?.favoriteArtists || userProfile?.favorite_artists || [];
   const friendsList = friends || [];
   const [followingSections, setFollowingSections] = useState([]);
@@ -478,13 +463,340 @@ export default function HomeScreen({ onNavigate } = {}) {
     });
   }, [favoriteArtists]);
 
-  // 1. Fresh New Releases (First section on Home / All)
+  // ─── USER TASTE & LANGUAGE AFFINITY ENGINE ─────────────────────────────────
+
+  // 1. User Preferred Languages
+  const userLanguages = useMemo(() => {
+    const langs = userProfile?.languages || [];
+    if (Array.isArray(langs) && langs.length > 0) {
+      return langs.map((l) => l.trim());
+    }
+    return ["Hindi", "English"];
+  }, [userProfile?.languages]);
+
+  // 2. Ranked Artist Affinities (combining followed artists + recently played + liked songs)
+  const affinityArtists = useMemo(() => {
+    const counts = {};
+    (favoriteArtists || []).forEach((name) => {
+      if (name) counts[name.trim()] = (counts[name.trim()] || 0) + 15;
+    });
+    (recentlyPlayed || []).forEach((t) => {
+      const a = t?.artist;
+      if (a) {
+        a.split(/,|&|feat\./i).forEach((sub) => {
+          const clean = sub.trim();
+          if (clean && clean.length > 2 && !/t-series|sony|records|music/i.test(clean)) {
+            counts[clean] = (counts[clean] || 0) + 3;
+          }
+        });
+      }
+    });
+    (likedSongs || []).forEach((t) => {
+      const a = t?.artist;
+      if (a) {
+        a.split(/,|&|feat\./i).forEach((sub) => {
+          const clean = sub.trim();
+          if (clean && clean.length > 2 && !/t-series|sony|records|music/i.test(clean)) {
+            counts[clean] = (counts[clean] || 0) + 2;
+          }
+        });
+      }
+    });
+
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name]) => name);
+  }, [favoriteArtists, recentlyPlayed, likedSongs]);
+
+  // 3. Known language artist registries for accurate affinity detection
+  const PUNJABI_ARTISTS_SET = useMemo(() => new Set([
+    "diljit dosanjh", "karan aujla", "ap dhillon", "sidhu moose wala", "ammy virk", "shubh",
+    "guru randhawa", "b praak", "harrdy sandhu", "jordan sandhu", "sunanda sharma", "jasmine sandlas",
+    "mankirt aulakh", "jassie gill", "parmish verma", "kulwinder billa", "tarsem jassar", "yo yo honey singh",
+    "bohemia", "sukhe", "mika singh", "khan bhaini", "nimrat khaira"
+  ]), []);
+
+  const TELUGU_ARTISTS_SET = useMemo(() => new Set([
+    "sid sriram", "anirudh ravichander", "devi sri prasad", "thaman s", "armaan malik", "spb", "ram miriyala"
+  ]), []);
+
+  const TAMIL_ARTISTS_SET = useMemo(() => new Set([
+    "anirudh ravichander", "ar rahman", "yuvan shankar raja", "harris jayaraj", "sid sriram", "ilayaraja", "d imman", "santhosh narayanan"
+  ]), []);
+
+  // 4. Affinity flags: whether user cares about each language
+  const hasPunjabiAffinity = useMemo(() => {
+    return (
+      userLanguages.some((l) => l.toLowerCase() === "punjabi") ||
+      affinityArtists.some((a) => PUNJABI_ARTISTS_SET.has(a.toLowerCase()))
+    );
+  }, [userLanguages, affinityArtists, PUNJABI_ARTISTS_SET]);
+
+  const hasTeluguAffinity = useMemo(() => {
+    return (
+      userLanguages.some((l) => l.toLowerCase() === "telugu") ||
+      affinityArtists.some((a) => TELUGU_ARTISTS_SET.has(a.toLowerCase()))
+    );
+  }, [userLanguages, affinityArtists, TELUGU_ARTISTS_SET]);
+
+  const hasTamilAffinity = useMemo(() => {
+    return (
+      userLanguages.some((l) => l.toLowerCase() === "tamil") ||
+      affinityArtists.some((a) => TAMIL_ARTISTS_SET.has(a.toLowerCase()))
+    );
+  }, [userLanguages, affinityArtists, TAMIL_ARTISTS_SET]);
+
+  const hasEnglishAffinity = useMemo(() => {
+    return (
+      userLanguages.some((l) => l.toLowerCase().includes("english") || l.toLowerCase().includes("pop")) ||
+      affinityArtists.some((a) => [
+        "taylor swift", "the weeknd", "drake", "ed sheeran", "billie eilish", "bruno mars",
+        "post malone", "travis scott", "21 savage", "future", "kendrick lamar", "sza", "olivia rodrigo", "sabrina carpenter"
+      ].includes(a.toLowerCase()))
+    );
+  }, [userLanguages, affinityArtists]);
+
+  const hasHindiAffinity = useMemo(() => {
+    return (
+      userLanguages.some((l) => l.toLowerCase() === "hindi") ||
+      affinityArtists.length === 0 ||
+      affinityArtists.some((a) => [
+        "arijit singh", "shreya ghoshal", "pritam", "atif aslam", "anuv jain", "mohit chauhan",
+        "jubin nautiyal", "kk", "sunidhi chauhan", "neha kakkar", "prateek kuhad", "sonu nigam"
+      ].includes(a.toLowerCase()))
+    );
+  }, [userLanguages, affinityArtists]);
+
+  // Helper: check if a track is Punjabi
+  const isTrackPunjabi = useCallback((track) => {
+    if (!track) return false;
+    const artistStr = (track.artist || "").toLowerCase();
+    for (const pa of PUNJABI_ARTISTS_SET) {
+      if (artistStr.includes(pa)) return true;
+    }
+    return false;
+  }, [PUNJABI_ARTISTS_SET]);
+
+  // 5. Personal "Jump Back In" from user's listening history
+  const jumpBackInSection = recentlyPlayed.length > 0 ? {
+    id: "jump_back_in",
+    title: "Jump Back In",
+    description: "Pick up right where you left off",
+    items: recentlyPlayed,
+  } : null;
+
+  // 6. Intelligent Daily Mix (tailored dynamically to user's active languages & genres)
+  const dailyMixSection = useMemo(() => {
+    const sections = feed?.sections || [];
+    if (sections.length === 0 && recentlyPlayed.length === 0 && appTrending.length === 0) return null;
+
+    const getTracksForGenre = (keyword, fallbackIndex) => {
+      const matched = sections.filter((s) =>
+        s.id?.toLowerCase().includes(keyword) || s.title?.toLowerCase().includes(keyword)
+      );
+      let tracks = matched.flatMap((s) => s.items || s.tracks || []);
+      if (tracks.length < 5 && sections[fallbackIndex]) {
+        tracks = [...tracks, ...(sections[fallbackIndex].items || sections[fallbackIndex].tracks || [])];
+      }
+      return tracks;
+    };
+
+    const genreMixConfigs = [];
+    let mixNum = 1;
+
+    if (hasHindiAffinity) {
+      genreMixConfigs.push({
+        id: "daily_mix_bollywood",
+        title: `Daily Mix ${mixNum++}`,
+        genreKeyword: "bollywood",
+        fallbackIndex: 0,
+        badgeColor: "#1DB954",
+        defaultGenre: "Bollywood & Hindi Hits",
+      });
+      genreMixConfigs.push({
+        id: "daily_mix_romantic",
+        title: `Daily Mix ${mixNum++}`,
+        genreKeyword: "romantic",
+        fallbackIndex: 1,
+        badgeColor: "#E91E63",
+        defaultGenre: "Romantic Melodies",
+      });
+    }
+
+    // Only create Punjabi mix if user selected Punjabi or follows Punjabi artists
+    if (hasPunjabiAffinity) {
+      genreMixConfigs.push({
+        id: "daily_mix_punjabi",
+        title: `Daily Mix ${mixNum++}`,
+        genreKeyword: "punjabi",
+        fallbackIndex: 2,
+        badgeColor: "#FF9800",
+        defaultGenre: "Punjabi Bangers",
+      });
+    }
+
+    genreMixConfigs.push({
+      id: "daily_mix_indie",
+      title: `Daily Mix ${mixNum++}`,
+      genreKeyword: "indie",
+      fallbackIndex: 3,
+      badgeColor: "#9C27B0",
+      defaultGenre: "Indie Pop & Acoustic",
+    });
+
+    genreMixConfigs.push({
+      id: "daily_mix_lofi",
+      title: `Daily Mix ${mixNum++}`,
+      genreKeyword: "lofi",
+      fallbackIndex: 4,
+      badgeColor: "#00BCD4",
+      defaultGenre: "Lo-Fi Chill & Beats",
+    });
+
+    if (hasEnglishAffinity) {
+      genreMixConfigs.push({
+        id: "daily_mix_english",
+        title: `Daily Mix ${mixNum++}`,
+        genreKeyword: "english",
+        fallbackIndex: 5,
+        badgeColor: "#3A86FF",
+        defaultGenre: "Global & English Pop",
+      });
+    } else if (hasHindiAffinity) {
+      genreMixConfigs.push({
+        id: "daily_mix_hiphop",
+        title: `Daily Mix ${mixNum++}`,
+        genreKeyword: "hip_hop",
+        fallbackIndex: 5,
+        badgeColor: "#FF5722",
+        defaultGenre: "Desi Hip Hop & Energy",
+      });
+    }
+
+    const usedArtworks = new Set();
+    const mixes = [];
+
+    for (const config of genreMixConfigs) {
+      let rawTracks = getTracksForGenre(config.genreKeyword, config.fallbackIndex);
+
+      // If user has NO Punjabi affinity, strictly filter out Punjabi tracks
+      if (!hasPunjabiAffinity) {
+        rawTracks = rawTracks.filter((t) => !isTrackPunjabi(t));
+      }
+
+      // Deduplicate tracks within the mix
+      const seenTrackIds = new Set();
+      const mixTracks = [];
+      for (const t of rawTracks) {
+        const tid = t.videoId || t.video_id || t.id;
+        if (tid && !seenTrackIds.has(tid)) {
+          seenTrackIds.add(tid);
+          mixTracks.push(t);
+        }
+      }
+
+      if (mixTracks.length === 0) continue;
+
+      // Find an artwork that hasn't been used yet to guarantee NO DUPLICATE COVERS
+      let chosenArtwork = null;
+      let leadTrack = mixTracks[0];
+      for (const t of mixTracks) {
+        const art = t.artwork_url || t.thumbnail;
+        if (art && !usedArtworks.has(art)) {
+          chosenArtwork = art;
+          leadTrack = t;
+          usedArtworks.add(art);
+          break;
+        }
+      }
+      if (!chosenArtwork) {
+        chosenArtwork = mixTracks[0]?.artwork_url || mixTracks[0]?.thumbnail;
+      }
+
+      // Collect top distinct artists
+      const artists = Array.from(
+        new Set(
+          mixTracks
+            .map((t) => t.artist)
+            .filter(Boolean)
+            .flatMap((a) => a.split(/,|&|feat\./i).map((s) => s.trim()))
+            .filter((s) => s.length > 1 && !/t-series|sony|music|records/i.test(s))
+        )
+      ).slice(0, 3).join(", ");
+
+      mixes.push({
+        id: config.id,
+        videoId: leadTrack?.videoId || leadTrack?.video_id || config.id,
+        title: config.title,
+        artist: artists ? `${artists} and more` : config.defaultGenre,
+        artwork_url: chosenArtwork,
+        thumbnail: chosenArtwork,
+        mixTracks: mixTracks.slice(0, 25),
+        badgeColor: config.badgeColor,
+      });
+    }
+
+    if (mixes.length === 0) return null;
+
+    return {
+      id: "daily_mix",
+      title: "Daily Mix",
+      description: "Curated specifically for your taste and favorite artists",
+      items: mixes,
+    };
+  }, [hasHindiAffinity, hasPunjabiAffinity, hasEnglishAffinity, isTrackPunjabi, recentlyPlayed, appTrending, feed?.sections]);
+
+  // 7. Dynamic "Because You Listen To [Top Artist]" Section
+  const topAffinityArtist = affinityArtists[0];
+  const becauseYouListenSection = useMemo(() => {
+    if (!topAffinityArtist) return null;
+
+    const pool = [
+      ...allFollowingTracks,
+      ...recentlyPlayed,
+      ...(feed?.sections?.flatMap((s) => s.items || s.tracks || []) || []),
+    ];
+
+    const artistLower = topAffinityArtist.toLowerCase();
+    const seenIds = new Set();
+    const directMatches = [];
+    const relatedMatches = [];
+
+    for (const t of pool) {
+      const tid = t.videoId || t.video_id || t.id;
+      if (!tid || seenIds.has(tid)) continue;
+      if (!hasPunjabiAffinity && isTrackPunjabi(t)) continue;
+
+      const tArtist = (t.artist || "").toLowerCase();
+      if (tArtist.includes(artistLower)) {
+        seenIds.add(tid);
+        directMatches.push(t);
+      } else {
+        relatedMatches.push(t);
+      }
+    }
+
+    const combined = [...directMatches, ...relatedMatches];
+    if (combined.length < 3) return null;
+
+    return {
+      id: `because_you_listen_${topAffinityArtist.toLowerCase().replace(/[^a-z0-9]/g, "_")}`,
+      title: `Because You Listen to ${topAffinityArtist}`,
+      description: `Top tracks and recommendations inspired by your love for ${topAffinityArtist}`,
+      items: combined.slice(0, 15),
+    };
+  }, [topAffinityArtist, allFollowingTracks, recentlyPlayed, feed?.sections, hasPunjabiAffinity, isTrackPunjabi]);
+
+  // 8. Fresh New Releases (Gated by language affinity)
   const freshNewReleasesSection = useMemo(() => {
     const allSecs = feed?.sections || [];
     const found = allSecs.find(
       (s) => s.id === "new_releases" || s.title?.toLowerCase().includes("new release")
     );
-    const items = found?.items || found?.tracks || allSecs[0]?.items || allSecs[0]?.tracks || [];
+    let items = found?.items || found?.tracks || allSecs[0]?.items || allSecs[0]?.tracks || [];
+    if (!hasPunjabiAffinity) {
+      items = items.filter((t) => !isTrackPunjabi(t));
+    }
     if (items.length === 0) return null;
     return {
       id: "fresh_new_releases",
@@ -492,121 +804,17 @@ export default function HomeScreen({ onNavigate } = {}) {
       description: "Brand new singles and albums out today",
       items,
     };
-  }, [feed?.sections]);
+  }, [feed?.sections, hasPunjabiAffinity, isTrackPunjabi]);
 
-  // 2. Daily Mix: 3-4 personal curated mix playlists based on history & favorite artists
-  const dailyMixSection = useMemo(() => {
-    const pool = [
-      ...recentlyPlayed,
-      ...allFollowingTracks,
-      ...appTrending,
-      ...(feed?.sections?.flatMap((s) => s.items || s.tracks || []) || []),
-    ];
-
-    if (pool.length === 0) return null;
-
-    const uniqueMap = new Map();
-    pool.forEach((t) => {
-      const vid = t.videoId || t.video_id || t.id;
-      if (vid && !uniqueMap.has(vid)) {
-        uniqueMap.set(vid, t);
-      }
-    });
-    const uniquePool = Array.from(uniqueMap.values());
-    if (uniquePool.length < 3) return null;
-
-    const mix1Tracks = uniquePool.slice(0, 15);
-    const mix1Artists = Array.from(new Set(mix1Tracks.map((t) => t.artist).filter(Boolean))).slice(0, 3).join(", ");
-
-    const mix2Tracks = uniquePool.slice(8, 23).length >= 5 ? uniquePool.slice(8, 23) : uniquePool.slice(0, 15);
-    const mix2Artists = Array.from(new Set(mix2Tracks.map((t) => t.artist).filter(Boolean))).slice(0, 3).join(", ");
-
-    const mix3Tracks = uniquePool.slice(16, 31).length >= 5 ? uniquePool.slice(16, 31) : uniquePool.slice(4, 19);
-    const mix3Artists = Array.from(new Set(mix3Tracks.map((t) => t.artist).filter(Boolean))).slice(0, 3).join(", ");
-
-    const mixes = [
-      {
-        id: "daily_mix_1",
-        videoId: mix1Tracks[0]?.videoId || mix1Tracks[0]?.video_id || "mix_1",
-        title: "Daily Mix 1",
-        artist: mix1Artists ? `${mix1Artists} and more` : "Curated for you",
-        artwork_url: mix1Tracks[0]?.artwork_url || mix1Tracks[0]?.thumbnail,
-        thumbnail: mix1Tracks[0]?.thumbnail || mix1Tracks[0]?.artwork_url,
-        mixTracks: mix1Tracks,
-        badgeColor: "#1DB954",
-      },
-      {
-        id: "daily_mix_2",
-        videoId: mix2Tracks[0]?.videoId || mix2Tracks[0]?.video_id || "mix_2",
-        title: "Daily Mix 2",
-        artist: mix2Artists ? `${mix2Artists} and more` : "Curated for you",
-        artwork_url: mix2Tracks[0]?.artwork_url || mix2Tracks[0]?.thumbnail,
-        thumbnail: mix2Tracks[0]?.thumbnail || mix2Tracks[0]?.artwork_url,
-        mixTracks: mix2Tracks,
-        badgeColor: "#8C52FF",
-      },
-      {
-        id: "daily_mix_3",
-        videoId: mix3Tracks[0]?.videoId || mix3Tracks[0]?.video_id || "mix_3",
-        title: "Daily Mix 3",
-        artist: mix3Artists ? `${mix3Artists} and more` : "Curated for you",
-        artwork_url: mix3Tracks[0]?.artwork_url || mix3Tracks[0]?.thumbnail,
-        thumbnail: mix3Tracks[0]?.thumbnail || mix3Tracks[0]?.artwork_url,
-        mixTracks: mix3Tracks,
-        badgeColor: "#2EBDD7",
-      },
-    ];
-
-    return {
-      id: "daily_mix",
-      title: "Daily Mix",
-      description: "Made for you based on your listening",
-      items: mixes,
-    };
-  }, [recentlyPlayed, allFollowingTracks, appTrending, feed?.sections]);
-
-  // 3. Trending Now
-  const trendingNowSection = useMemo(() => {
-    const feedTrending = (feed?.sections || []).find(
-      (s) => s.id === "trending_now" || s.title?.toLowerCase().includes("trending")
-    );
-    const items = appTrending.length > 0
-      ? appTrending
-      : feedTrending?.items || feedTrending?.tracks || [];
-
-    if (items.length === 0) return null;
-    return {
-      id: "trending_now",
-      title: "Trending Now",
-      description: "Most played by listeners across the app right now",
-      items,
-    };
-  }, [appTrending, feed?.sections]);
-
-  // 4. Romantic Melodies Section
-  const romanticMelodiesSection = useMemo(() => {
-    const sec = (feed?.sections || []).find(
-      (s) =>
-        s.id === "romantic_melodies" ||
-        s.id === "romantic_vibes" ||
-        s.title?.toLowerCase().includes("romantic")
-    );
-    const items = sec?.items || sec?.tracks || [];
-    if (items.length === 0) return null;
-    return {
-      id: "romantic_melodies",
-      title: "Romantic Melodies",
-      description: "Heartwarming Bollywood love songs and heartfelt melodies",
-      items,
-    };
-  }, [feed?.sections]);
-
-  // 5. Friends' Listening Activity Section
+  // 9. Friends' Listening Activity Section
   const friendsListeningTracks = useMemo(() => {
     const list = [];
     const seen = new Set();
     Object.entries(friendsActivity || {}).forEach(([fUid, act]) => {
-      if (act?.track) {
+      if (act?.isPlaying && act?.track) {
+        const isRecent = !act.updatedAt || (Date.now() - act.updatedAt < 1000 * 60 * 10);
+        if (!isRecent) return;
+
         const vid = act.track.videoId || act.track.video_id;
         if (vid && !seen.has(vid)) {
           seen.add(vid);
@@ -630,16 +838,26 @@ export default function HomeScreen({ onNavigate } = {}) {
     items: friendsListeningTracks,
   } : null;
 
-  // 6. Personal "Jump Back In" from user's listening history
-  const jumpBackInSection = recentlyPlayed.length > 0 ? {
-    id: "jump_back_in",
-    title: "Jump Back In",
-    description: "Pick up right where you left off",
-    items: recentlyPlayed,
-  } : null;
+  // 10. Categorical Backend Sections sorted logically and filtered strictly by User Taste
+  const GENRE_PRIORITY = [
+    "top_hindi",
+    "romantic_melodies",
+    "bollywood_blockbusters",
+    "punjabi_bangers",
+    "indie_pop",
+    "desi_hip_hop",
+    "party_anthems",
+    "lofi_chill_hindi",
+    "tamil_hits",
+    "telugu_hits",
+    "south_indian_mix",
+    "english_india",
+    "romantic_english",
+    "indie_viral",
+    "devotional",
+    "retro_classics",
+  ];
 
-  // 7. Remaining Categorical Backend Sections (shuffled once per day)
-  const daySeed = getDaySeed();
   const remainingBackendSections = useMemo(() => {
     const raw = (feed?.sections || [])
       .filter((section) => {
@@ -650,35 +868,75 @@ export default function HomeScreen({ onNavigate } = {}) {
         if (section.id === "trending_global" || section.title?.toLowerCase().includes("global")) return false;
         if (section.id === "trending_india" || section.title?.toLowerCase().includes("youtube india")) return false;
         if (
-          section.id === "romantic_melodies" ||
-          section.id === "romantic_vibes" ||
-          section.title?.toLowerCase().includes("romantic")
-        ) return false;
-        if (
           section.id?.startsWith("mood_") ||
           section.id?.includes("morning") ||
           section.id?.includes("chill") ||
           section.title?.toLowerCase().includes("morning energy") ||
           section.title?.toLowerCase().includes("chill vibes")
         ) return false;
+
+        // Language Gating:
+        const secLang = (section.language || "").toLowerCase();
+        const secId = (section.id || "").toLowerCase();
+        const secTitle = (section.title || "").toLowerCase();
+
+        // 1. Punjabi: if user has no Punjabi affinity, completely drop section
+        if (secLang === "punjabi" || secId.includes("punjabi") || secTitle.includes("punjabi")) {
+          if (!hasPunjabiAffinity) return false;
+        }
+
+        // 2. Tamil: if user has no Tamil affinity, drop section
+        if (secLang === "tamil" || secId.includes("tamil") || secTitle.includes("tamil")) {
+          if (!hasTamilAffinity) return false;
+        }
+
+        // 3. Telugu: if user has no Telugu affinity, drop section
+        if (secLang === "telugu" || secId.includes("telugu") || secTitle.includes("telugu")) {
+          if (!hasTeluguAffinity) return false;
+        }
+
+        // 4. South Indian: if user has neither Tamil nor Telugu affinity, drop section
+        if (secLang.includes("south") || secId.includes("south") || secTitle.includes("south indian")) {
+          if (!hasTamilAffinity && !hasTeluguAffinity) return false;
+        }
+
+        // 5. English: if user has no English affinity, drop section
+        if (secLang === "english" || secId.includes("english") || secTitle.includes("english")) {
+          if (!hasEnglishAffinity) return false;
+        }
+
         return true;
       })
-      .map((section) => ({
-        ...section,
-        items: section.items || section.tracks || [],
-      }));
-    return seededShuffle(raw, daySeed);
-  }, [feed?.sections, daySeed]);
+      .map((section) => {
+        let items = section.items || section.tracks || [];
+        // If user has no Punjabi affinity, strip any Punjabi tracks that snuck into other sections
+        if (!hasPunjabiAffinity) {
+          items = items.filter((t) => !isTrackPunjabi(t));
+        }
+        return {
+          ...section,
+          items,
+        };
+      })
+      .filter((s) => s.items.length > 0);
+
+    return raw.sort((a, b) => {
+      const idxA = GENRE_PRIORITY.indexOf(a.id);
+      const idxB = GENRE_PRIORITY.indexOf(b.id);
+      const orderA = idxA !== -1 ? idxA : 999;
+      const orderB = idxB !== -1 ? idxB : 999;
+      return orderA - orderB;
+    });
+  }, [feed?.sections, hasPunjabiAffinity, hasTamilAffinity, hasTeluguAffinity, hasEnglishAffinity, isTrackPunjabi]);
 
   // Combined Home / All Feed:
-  // 1. Fresh New Releases -> 2. Daily Mix -> 3. Trending Now -> 4. Romantic Melodies -> 5. Friends are Listening To -> 6. Jump Back In -> 7. Remaining Genres
+  // 1. Jump Back In (if history) -> 2. Daily Mix -> 3. Because You Listen to [Top Artist] -> 4. Fresh New Releases -> 5. Friends are Listening To -> 6. Categorical Genres
   const allDisplayedSections = [
-    freshNewReleasesSection,
-    dailyMixSection,
-    trendingNowSection,
-    romanticMelodiesSection,
-    friendsListeningSection,
     jumpBackInSection,
+    dailyMixSection,
+    becauseYouListenSection,
+    freshNewReleasesSection,
+    friendsListeningSection,
     ...remainingBackendSections,
   ].filter(Boolean).filter((section) => section.items && section.items.length > 0);
 
@@ -723,7 +981,8 @@ export default function HomeScreen({ onNavigate } = {}) {
                 {(() => {
                   const listeningFriends = friendsList.filter((f) => {
                     const act = friendsActivity[f.uid];
-                    return Boolean(act?.isPlaying && act?.track);
+                    const isRecent = !act?.updatedAt || (Date.now() - act.updatedAt < 1000 * 60 * 10);
+                    return Boolean(act?.isPlaying && act?.track && isRecent);
                   });
 
                   if (listeningFriends.length === 0) return null;
@@ -1166,7 +1425,7 @@ const styles = StyleSheet.create({
   // Following
   followingContainer: {
     width: "100%",
-    paddingTop: 8,
+    paddingTop: 0,
   },
   followingLoadingBox: {
     alignItems: "center",
@@ -1185,7 +1444,7 @@ const styles = StyleSheet.create({
   followedArtistsRow: {
     flexDirection: "row",
     gap: 16,
-    paddingHorizontal: 4,
+    paddingHorizontal: 16,
     paddingBottom: 14,
     alignItems: "center",
   },
@@ -1242,7 +1501,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 4,
+    paddingHorizontal: 16,
     marginBottom: 12,
   },
   followingFriendsTitleGroup: {
@@ -1263,10 +1522,10 @@ const styles = StyleSheet.create({
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   listeningPillsScrollView: {
-    marginHorizontal: -4,
+    marginHorizontal: 0,
   },
   listeningPillsScrollContent: {
-    paddingHorizontal: 4,
+    paddingHorizontal: 16,
     gap: 10,
     alignItems: "center",
   },
@@ -1439,7 +1698,7 @@ const styles = StyleSheet.create({
     fontSize: 19,
     color: "#FFFFFF",
     letterSpacing: -0.3,
-    paddingHorizontal: 4,
+    paddingHorizontal: 16,
     marginBottom: 12,
   },
 });

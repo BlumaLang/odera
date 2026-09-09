@@ -19,7 +19,7 @@ import {
 import { Ionicons, MaterialCommunityIcons, Feather } from "@expo/vector-icons";
 import AddToPlaylistModal from "../components/AddToPlaylistModal";
 import ArtistModal from "../components/ArtistModal";
-import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
+import { resolveLocalArtistImage } from "../theme/artistImages";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
 import { useAudioPlayback } from "../context/AudioContext";
@@ -278,6 +278,34 @@ export default function SearchScreen() {
   const requestVersionRef = useRef(0);
   const searchTimeoutRef = useRef(null);
   const searchInputRef = useRef(null);
+
+  // Dynamically fetch official high-res photos for featured artists
+  useEffect(() => {
+    api
+      .getBatchArtistImages(FEATURED_ARTISTS)
+      .then((res) => {
+        if (res?.images && Object.keys(res.images).length > 0) {
+          setArtistImagesMap((prev) => ({ ...prev, ...res.images }));
+        }
+      })
+      .catch(() => {});
+
+    FEATURED_ARTISTS.forEach((name) => {
+      api
+        .getArtistImage(name)
+        .then((res) => {
+          const photo = res?.image || res?.image_url;
+          if (
+            photo &&
+            !photo.includes("artist-default-music.png") &&
+            !photo.includes("default_artist")
+          ) {
+            setArtistImagesMap((prev) => ({ ...prev, [name]: photo }));
+          }
+        })
+        .catch(() => {});
+    });
+  }, []);
 
   // Load and subscribe to real-time Recently Played songs from Firebase RTDB
   useEffect(() => {
@@ -555,15 +583,10 @@ export default function SearchScreen() {
   };
 
   const handleFocusSearch = () => {
-    if (Platform.OS !== "web" && UIManager?.setLayoutAnimationEnabledExperimental) {
-      try {
-        UIManager.setLayoutAnimationEnabledExperimental(true);
-      } catch (e) {}
-    }
-    if (Platform.OS !== "web") {
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    }
     setIsSearchActive(true);
+    setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 100);
   };
 
   const handleSelectQuery = (q) => {
@@ -575,15 +598,12 @@ export default function SearchScreen() {
   };
 
   const handleCancelSearch = () => {
-    if (Platform.OS !== "web") {
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    }
-    setQuery("");
-    setIsSearchActive(false);
     if (searchInputRef.current) {
       searchInputRef.current.blur();
     }
     Keyboard.dismiss();
+    setQuery("");
+    setIsSearchActive(false);
   };
 
   const isQueryActive = Boolean(query.trim());
@@ -601,16 +621,18 @@ export default function SearchScreen() {
       <View style={[styles.screenHeader, isSearchActive && styles.screenHeaderActive]}>
         <View style={[styles.innerContent, (isDesktop || isTablet) && styles.desktopInnerContent]}>
           {/* Collapsible Header Top Row: Title & Profile */}
-          <View style={[styles.headerTopRow, isSearchActive && styles.headerTopRowHidden]}>
+          <View
+            style={[
+              styles.headerTopRow,
+              isSearchActive && styles.headerTopRowHidden,
+            ]}
+          >
             <Text style={styles.screenTitle}>Search</Text>
             <View style={styles.headerRightGroup}>
               <TouchableOpacity
                 style={styles.headerCircleBtn}
                 onPress={() => {
                   handleFocusSearch();
-                  setTimeout(() => {
-                    searchInputRef.current?.focus();
-                  }, 100);
                 }}
                 activeOpacity={0.75}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -624,12 +646,24 @@ export default function SearchScreen() {
                 activeOpacity={0.75}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                {avatarIcon && avatarIcon.startsWith("http") ? (
-                  <Image source={{ uri: avatarIcon }} style={styles.profileAvatarImage} resizeMode="cover" />
-                ) : avatarIcon ? (
-                  <Ionicons name={avatarIcon} size={16} color="#000000" />
-                ) : (
+                {userProfile?.avatar === "initial" ? (
                   <Text style={styles.profileAvatarText}>{userInitial}</Text>
+                ) : avatarIcon && avatarIcon.startsWith("http") && !avatarIcon.includes("googleusercontent.com") ? (
+                  <Image
+                    source={{ uri: avatarIcon }}
+                    style={styles.profileAvatarImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <Image
+                    source={{
+                      uri: `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(
+                        userProfile?.username || "Felix"
+                      )}`,
+                    }}
+                    style={styles.profileAvatarImage}
+                    resizeMode="cover"
+                  />
                 )}
               </TouchableOpacity>
             </View>
@@ -671,11 +705,13 @@ export default function SearchScreen() {
               </View>
 
               <TouchableOpacity
-                style={styles.cancelSearchBtn}
+                style={styles.cancelCircleBtn}
                 onPress={handleCancelSearch}
-                activeOpacity={0.7}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                activeOpacity={0.75}
+                accessibilityLabel="Close search"
               >
-                <Text style={styles.cancelSearchText}>Cancel</Text>
+                <Ionicons name="close" size={18} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
           )}
@@ -745,7 +781,7 @@ export default function SearchScreen() {
                   artistImagesMap[topArtist.name] ||
                   artistImagesMap[topArtist.id] ||
                   resolveLocalArtistImage(topArtist.name) ||
-                  DEFAULT_ARTIST_IMAGES[topArtist.name];
+                  null;
                 return (
                   <TouchableOpacity
                     style={styles.topArtistCard}
@@ -789,7 +825,7 @@ export default function SearchScreen() {
                         artistImagesMap[art.name] ||
                         artistImagesMap[art.id] ||
                         resolveLocalArtistImage(art.name) ||
-                        DEFAULT_ARTIST_IMAGES[art.name];
+                        null;
                       return (
                         <TouchableOpacity
                           key={(art.id || art.name) + "_" + idx}
@@ -1012,7 +1048,7 @@ export default function SearchScreen() {
                   const img =
                     artistImagesMap[artistName] ||
                     resolveLocalArtistImage(artistName) ||
-                    DEFAULT_ARTIST_IMAGES[artistName];
+                    null;
                   return (
                     <TouchableOpacity
                       key={artistName}
@@ -1101,7 +1137,7 @@ export default function SearchScreen() {
           selectedArtistForModal
             ? artistImagesMap[selectedArtistForModal] ||
               resolveLocalArtistImage(selectedArtistForModal) ||
-              DEFAULT_ARTIST_IMAGES[selectedArtistForModal]
+              null
             : null
         }
         onSelectArtist={(name) => setSelectedArtistForModal(name)}
@@ -1120,13 +1156,6 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === "web" ? 12 : 14,
     paddingBottom: 14,
     backgroundColor: "#000000",
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255, 255, 255, 0.05)",
-    ...(Platform.OS === "web"
-      ? {
-          transition: "padding 0.25s cubic-bezier(0.2, 0, 0, 1)",
-        }
-      : {}),
   },
   screenHeaderActive: {
     paddingBottom: 10,
@@ -1135,29 +1164,31 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     width: "100%",
+    height: 38,
   },
   flexSearchBox: {
     flex: 1,
   },
   liftedSearchBox: {
-    height: 48,
-    borderRadius: 999,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: "#1c1c1c",
     borderColor: "rgba(255, 255, 255, 0.12)",
+    paddingLeft: 10,
+    paddingRight: 6,
   },
-  cancelSearchBtn: {
-    marginLeft: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-    justifyContent: "center",
+  cancelCircleBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
     alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 10,
     flexShrink: 0,
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  cancelSearchText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 15,
-    color: "#FFFFFF",
   },
   innerContent: {
     width: "100%",
@@ -1173,12 +1204,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 2,
     overflow: "hidden",
-    ...(Platform.OS === "web"
-      ? {
-          transition:
-            "height 0.26s cubic-bezier(0.2, 0, 0, 1), opacity 0.2s cubic-bezier(0.2, 0, 0, 1), margin-bottom 0.26s cubic-bezier(0.2, 0, 0, 1)",
-        }
-      : {}),
   },
   headerTopRowHidden: {
     height: 0,
@@ -1230,10 +1255,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#161616",
-    borderRadius: 999,
-    paddingLeft: 14,
+    borderRadius: 17,
+    paddingLeft: 12,
     paddingRight: 6,
-    height: 48,
+    height: 34,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.09)",
   },
@@ -1241,7 +1266,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontFamily: fonts.medium,
     color: "#FFFFFF",
-    fontSize: 15,
+    fontSize: 13.5,
     height: "100%",
     paddingVertical: 0,
     paddingHorizontal: 0,
@@ -1662,7 +1687,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   mainScrollContent: {
-    paddingTop: 14,
+    paddingTop: 4,
     paddingHorizontal: 16,
   },
   resultsList: {

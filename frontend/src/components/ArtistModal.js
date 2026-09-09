@@ -19,7 +19,7 @@ import { api } from "../api/client";
 import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
-import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
+import { resolveLocalArtistImage } from "../theme/artistImages";
 import SongCard from "./SongCard";
 import AddToPlaylistModal from "./AddToPlaylistModal";
 
@@ -68,7 +68,6 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(cachedData ? cachedData.hasMore : true);
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
-  const [similarArtists, setSimilarArtists] = useState(cachedData?.similar || []);
 
   const isFav = isFavoriteArtist(cleanName);
   const currentTrackId = currentTrack?.videoId;
@@ -79,7 +78,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     }
   }, [initialPhoto]);
 
-  // Fetch artist photo, songs, and similar artists
+  // Fetch artist photo and songs
   useEffect(() => {
     if (!visible || !cleanName) return;
 
@@ -92,7 +91,6 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       if (cached.songs && cached.songs.length > 0) {
         setSongs(cached.songs);
         setHasMore(cached.hasMore);
-        setSimilarArtists(cached.similar || []);
         setIsLoading(false);
         if (cached.image) return;
       }
@@ -101,14 +99,13 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     setIsLoading(true);
     setIsLoadingMore(false);
     setHasMore(true);
-    setSimilarArtists([]);
 
     // 1. Resolve photo from local cache, props, or API
     const initialBest =
       initialPhoto ||
       cached?.image ||
       resolveLocalArtistImage(cleanName) ||
-      DEFAULT_ARTIST_IMAGES[cleanName];
+      null;
     if (initialBest) {
       setArtistImage(initialBest);
     }
@@ -158,43 +155,6 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       .finally(() => {
         if (isMounted) setIsLoading(false);
       });
-
-    // 3. Fetch similar artists and resolve their images from DB cache & Staytup API
-    api
-      .getRelatedArtists(cleanName)
-      .then(async (data) => {
-        if (!isMounted) return;
-        const list = data.artists || [];
-        if (list.length === 0) return;
-
-        // Fetch missing artist images from DB cache / Staytup API
-        const artistNames = list.map((a) => a.name).filter(Boolean);
-        const { images } = await api.getBatchArtistImages(artistNames).catch(() => ({ images: {} }));
-        if (!isMounted) return;
-
-        const normalized = list.map((sa) => {
-          const resolvedImg =
-            images?.[sa.name] ||
-            images?.[sa.id] ||
-            sa.image ||
-            sa.thumbnail ||
-            resolveLocalArtistImage(sa.name) ||
-            DEFAULT_ARTIST_IMAGES[sa.name] ||
-            null;
-          return {
-            ...sa,
-            thumbnail: resolvedImg,
-            image: resolvedImg,
-          };
-        });
-
-        setSimilarArtists(normalized);
-        artistDataCache.set(cleanName, {
-          ...(artistDataCache.get(cleanName) || {}),
-          similar: normalized,
-        });
-      })
-      .catch(() => {});
 
     return () => { isMounted = false; };
   }, [visible, cleanName]);
@@ -318,47 +278,8 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
         <Text style={styles.sectionTitle}>Popular Songs</Text>
       </View>
 
-      {/* Similar Artists */}
-      {similarArtists.length > 0 && (
-        <View style={styles.similarSection}>
-          <Text style={styles.sectionTitle}>Similar Artists</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.similarScroll}
-          >
-            {similarArtists.map((sa, idx) => (
-              <TouchableOpacity
-                key={`similar_${sa.name}_${idx}`}
-                style={styles.similarCard}
-                activeOpacity={0.8}
-                onPress={() => {
-                  if (onSelectArtist) {
-                    onSelectArtist(sa.name);
-                  }
-                }}
-              >
-                {sa.thumbnail || sa.image ? (
-                  <Image
-                    source={{ uri: sa.thumbnail || sa.image }}
-                    style={styles.similarAvatar}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View style={[styles.similarAvatar, styles.similarAvatarFallback]}>
-                    <Ionicons name="person" size={22} color={colors.primary} />
-                  </View>
-                )}
-                <Text style={styles.similarName} numberOfLines={1}>
-                  {sa.name}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-      )}
     </View>
-  ), [artistImage, cleanName, isFav, handleShuffle, handlePlayAll, similarArtists, onSelectArtist]);
+  ), [artistImage, cleanName, isFav, handleShuffle, handlePlayAll]);
 
   // Memoized Footer
   const footerComponent = useMemo(() => {
@@ -687,34 +608,5 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 12,
     color: "rgba(255, 255, 255, 0.4)",
-  },
-  similarSection: {
-    marginTop: 20,
-    paddingHorizontal: 0,
-  },
-  similarScroll: {
-    paddingHorizontal: 12,
-    gap: 14,
-  },
-  similarCard: {
-    alignItems: "center",
-    width: 72,
-  },
-  similarAvatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: "#1a1a1a",
-  },
-  similarAvatarFallback: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  similarName: {
-    fontFamily: fonts.medium,
-    fontSize: 11,
-    color: "#FFFFFF",
-    marginTop: 6,
-    textAlign: "center",
   },
 });
