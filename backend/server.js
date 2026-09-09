@@ -418,7 +418,7 @@ const SAAVN_API_PROVIDERS = [
 ];
 
 // BlumaLang JioSaavn API (clean normalized responses with perma_url, artists, artwork)
-const BLUMALANG_API_BASE = process.env.BLUMALANG_API_BASE || 'https://saavn.dev';
+const BLUMALANG_API_BASE = process.env.BLUMALANG_API_BASE || 'https://staytup-api.onrender.com';
 
 let currentProviderIndex = 0;
 const saavnStreamCache = new Map(); // id -> { url, expiry }
