@@ -2598,20 +2598,47 @@ export function subscribeCollabPlaylists(uid, callback) {
 export async function sendCollabInvite(senderUid, senderProfile = {}, targetUid, playlistData = {}) {
   if (!senderUid || !targetUid) return { success: false, error: "Missing sender or target" };
   try {
-    const res = await createCollabPlaylist(senderUid, senderProfile, playlistData);
-    if (!res.success) return res;
+    let collabId = playlistData.collabId || playlistData.playlistId || playlistData.id;
+    let playlist = playlistData.playlist || null;
 
-    const collabId = res.collabId;
+    // Check if collab playlist already exists
+    if (collabId) {
+      try {
+        const snap = await get(ref(db, `collab_playlists/${collabId}`));
+        if (snap.exists()) {
+          playlist = snap.val();
+        }
+      } catch (_) {}
+    }
+
+    // If not found, create new collab playlist
+    if (!playlist) {
+      const createData = {
+        ...playlistData,
+        name: playlistData.name || playlistData.playlistName || "Collaborative Blend",
+        tracks: playlistData.tracks || [],
+      };
+      const res = await createCollabPlaylist(senderUid, senderProfile, createData);
+      if (!res.success) return res;
+      collabId = res.collabId;
+      playlist = res.playlist;
+    }
+
     const inviteId = `invite_${collabId}`;
+    const pName = playlist?.name || playlistData.name || playlistData.playlistName || "Collaborative Blend";
+    const pDesc = playlist?.description || playlistData.description || "";
+    const pCover = playlist?.cover_url || playlistData.cover_url || playlistData.preview_artwork || "";
 
     const inviteRecord = {
       id: inviteId,
+      inviteId,
       collabId,
-      playlistName: playlistData.name || "Collaborative Blend",
-      description: playlistData.description || "",
-      coverUrl: playlistData.cover_url || playlistData.preview_artwork || "",
+      playlistId: collabId,
+      playlistName: pName,
+      description: pDesc,
+      coverUrl: pCover,
       matchPercentage: playlistData.matchPercentage || null,
-      type: playlistData.type || (playlistData.name?.startsWith("Blend:") ? "blend" : "collab"),
+      type: playlistData.type || (pName.startsWith("Blend:") ? "blend" : "collab"),
       senderUid,
       senderName: senderProfile?.username || senderProfile?.displayName || "Friend",
       senderAvatar: senderProfile?.avatar || "initial",
@@ -2620,7 +2647,7 @@ export async function sendCollabInvite(senderUid, senderProfile = {}, targetUid,
     };
 
     await set(ref(db, `users/${targetUid}/collab_invites/${collabId}`), inviteRecord);
-    return { success: true, collabId, playlist: res.playlist };
+    return { success: true, collabId, playlist };
   } catch (err) {
     console.warn("sendCollabInvite error:", err);
     return { success: false, error: err.message };
@@ -2652,11 +2679,24 @@ export function subscribeCollabInvites(uid, callback) {
 /**
  * Accept a collaborative playlist invitation
  */
-export async function acceptCollabInvite(uid, userProfile = {}, collabId) {
-  if (!uid || !collabId) return { success: false };
+export async function acceptCollabInvite(uid, userProfile = {}, collabIdOrInvite) {
+  if (!uid || !collabIdOrInvite) return { success: false, error: "Missing parameters" };
   try {
+    const rawId = typeof collabIdOrInvite === "string"
+      ? collabIdOrInvite
+      : (collabIdOrInvite.collabId || collabIdOrInvite.playlistId || collabIdOrInvite.id || "");
+    const collabId = rawId.replace(/^invite_/, "").trim();
+    if (!collabId) return { success: false, error: "Invalid collab ID" };
+
     const res = await joinCollabPlaylist(uid, userProfile, collabId);
-    await set(ref(db, `users/${uid}/collab_invites/${collabId}`), null);
+
+    // Clean up invite under all possible keys
+    await set(ref(db, `users/${uid}/collab_invites/${collabId}`), null).catch(() => {});
+    await set(ref(db, `users/${uid}/collab_invites/invite_${collabId}`), null).catch(() => {});
+    if (rawId && rawId !== collabId) {
+      await set(ref(db, `users/${uid}/collab_invites/${rawId}`), null).catch(() => {});
+    }
+
     return res;
   } catch (err) {
     console.warn("acceptCollabInvite error:", err);
@@ -2667,10 +2707,20 @@ export async function acceptCollabInvite(uid, userProfile = {}, collabId) {
 /**
  * Decline a collaborative playlist invitation
  */
-export async function declineCollabInvite(uid, collabId) {
-  if (!uid || !collabId) return { success: false };
+export async function declineCollabInvite(uid, collabIdOrInvite) {
+  if (!uid || !collabIdOrInvite) return { success: false };
   try {
-    await set(ref(db, `users/${uid}/collab_invites/${collabId}`), null);
+    const rawId = typeof collabIdOrInvite === "string"
+      ? collabIdOrInvite
+      : (collabIdOrInvite.collabId || collabIdOrInvite.playlistId || collabIdOrInvite.id || "");
+    const collabId = rawId.replace(/^invite_/, "").trim();
+    if (!collabId) return { success: false };
+
+    await set(ref(db, `users/${uid}/collab_invites/${collabId}`), null).catch(() => {});
+    await set(ref(db, `users/${uid}/collab_invites/invite_${collabId}`), null).catch(() => {});
+    if (rawId && rawId !== collabId) {
+      await set(ref(db, `users/${uid}/collab_invites/${rawId}`), null).catch(() => {});
+    }
     return { success: true };
   } catch (err) {
     console.warn("declineCollabInvite error:", err);

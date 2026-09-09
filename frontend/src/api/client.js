@@ -87,6 +87,14 @@ async function request(endpoint, options = {}, retries = 1) {
     return await response.json();
   } catch (err) {
     if (timeoutId) clearTimeout(timeoutId);
+    // If local backend is down or unreachable, fallback to Render production backend
+    if (base !== RENDER_BASE_URL && !endpoint.startsWith("http") && (err.name === "TypeError" || err.message?.includes("fetch"))) {
+      try {
+        const fallbackUrl = `${RENDER_BASE_URL}${endpoint}`;
+        const fbRes = await fetch(fallbackUrl, config);
+        if (fbRes.ok) return await fbRes.json();
+      } catch (_) {}
+    }
     if (err.name === "AbortError" && retries > 0) {
       await new Promise((r) => setTimeout(r, 1200));
       return request(endpoint, options, retries - 1);
@@ -94,8 +102,6 @@ async function request(endpoint, options = {}, retries = 1) {
     throw err;
   }
 }
-
-
 
 // Ping backend on app launch to keep Render instance warm
 export const warmupBackend = () => {
@@ -106,7 +112,7 @@ export const api = {
   // Health check
   getHealth: () => request("/api/health"),
 
-  // Search songs via Saavn direct audio catalog with automatic YouTube enrichment
+  // Search songs via Saavn direct audio catalog with automatic YouTube enrichment & fallback
   search: async (query, offset = 0, limit = 30) => {
     if (!query || !query.trim()) {
       return { query: "", count: 0, results: [], tracks: [], has_more: false };
@@ -117,23 +123,47 @@ export const api = {
       const data = await request(`/api/search/saavn?q=${q}&offset=${offset}&limit=${limit}`);
       const raw = data?.results || data?.tracks || [];
 
-      const list = raw.map((item) => ({
-        ...item,
-        artwork_url: item.artwork_url || item.thumbnail || "",
-        thumbnail: item.thumbnail || item.artwork_url || "",
-      }));
+      if (raw.length > 0) {
+        const list = raw.map((item) => ({
+          ...item,
+          artwork_url: item.artwork_url || item.thumbnail || "",
+          thumbnail: item.thumbnail || item.artwork_url || "",
+        }));
 
-      return {
-        query: cleanQ,
-        count: list.length,
-        results: list,
-        tracks: list,
-        has_more: Boolean(data?.has_more ?? (list.length >= 20)),
-      };
+        return {
+          query: cleanQ,
+          count: list.length,
+          results: list,
+          tracks: list,
+          has_more: Boolean(data?.has_more ?? (list.length >= 20)),
+        };
+      }
     } catch (err) {
       console.warn("Saavn search request error:", err.message);
-      return { query: cleanQ, count: 0, results: [], tracks: [], has_more: false };
     }
+
+    // Resilient fallback to YouTube search if Saavn returned 0 songs or failed
+    try {
+      const ytData = await request(`/api/search?q=${encodeURIComponent(cleanQ)}`);
+      const ytRaw = ytData?.results || ytData?.tracks || [];
+      if (ytRaw.length > 0) {
+        const list = ytRaw.map((item) => ({
+          ...item,
+          artwork_url: item.artwork_url || item.thumbnail || "",
+          thumbnail: item.thumbnail || item.artwork_url || "",
+          source: item.source || "youtube",
+        }));
+        return {
+          query: cleanQ,
+          count: list.length,
+          results: list,
+          tracks: list,
+          has_more: Boolean(ytData?.has_more ?? (list.length >= 20)),
+        };
+      }
+    } catch (_) {}
+
+    return { query: cleanQ, count: 0, results: [], tracks: [], has_more: false };
   },
 
   // Autocomplete suggestions
@@ -266,6 +296,22 @@ export const api = {
             } catch (_) {}
           }
         } catch (_) {}
+
+        // 3. If cleanId looks like a YouTube video ID, try YouTube stream endpoint directly
+        if (/^[a-zA-Z0-9_-]{11}$/.test(cleanId)) {
+          try {
+            const ytStream = await request(`/stream/${encodeURIComponent(cleanId)}`);
+            if (ytStream && ytStream.stream_url) {
+              return {
+                ...ytStream,
+                stream_url: ytStream.stream_url,
+                videoId: cleanId,
+                id: cleanId,
+              };
+            }
+          } catch (_) {}
+        }
+
         throw err;
       }
     }
@@ -450,7 +496,7 @@ export const api = {
     try {
       const param = encodeURIComponent(String(artistIdOrName).trim());
       const data = await request(`/artists/${param}/songs?page=${page}&limit=${limit}`);
-      if (data && Array.isArray(data.tracks) && data.tracks.length > 0) {
+      if (data && Array.isArray(data.tracks) && data.tracks.length > 1) {
         return data;
       }
     } catch (_) {}
@@ -458,7 +504,10 @@ export const api = {
     // Fallback to standard search
     try {
       const data = await api.search(`${artistIdOrName} songs`, page * limit, limit);
-      return data;
+      if (data && Array.isArray(data.tracks) && data.tracks.length > 0) {
+        return data;
+      }
+      return await api.search(String(artistIdOrName).trim(), page * limit, limit);
     } catch (_) {
       return { tracks: [], results: [], has_more: false };
     }

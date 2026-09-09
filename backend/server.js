@@ -672,6 +672,41 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       if (finalTracks.length >= limit) break;
     }
 
+    // If tracks are missing or sparse (e.g. international artists, unreleased/phonk, Kid LAROI, PROS BANDIDO), supplement via YouTube
+    if (finalTracks.length < limit) {
+      try {
+        const ytResults = await scrapeYouTubeSearch(query);
+        for (const yt of ytResults) {
+          if (!yt) continue;
+          const vid = yt.videoId || yt.id;
+          const cleanT = cleanVideoTitle(yt.title);
+          const cleanTitle = cleanT.toLowerCase().replace(/\s*\([^)]*\)/g, '').replace(/[^a-z0-9]/g, '').trim();
+          const cleanArtist = (yt.artist || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 15);
+          const dedupeKey = `${cleanTitle}_${cleanArtist}`;
+          if (!vid || seenIds.has(vid)) continue;
+          if (dedupeKey && seenKeys.has(dedupeKey)) continue;
+          seenIds.add(vid);
+          if (dedupeKey) seenKeys.add(dedupeKey);
+          finalTracks.push({
+            id: vid,
+            videoId: vid,
+            video_id: vid,
+            title: cleanT,
+            artist: yt.artist || 'YouTube Artist',
+            album: '',
+            thumbnail: yt.thumbnail || yt.artwork_url || '',
+            artwork_url: yt.artwork_url || yt.thumbnail || '',
+            duration: yt.duration || 0,
+            duration_seconds: yt.duration_seconds || 0,
+            source: 'youtube'
+          });
+          if (finalTracks.length >= limit) break;
+        }
+      } catch (ytErr) {
+        console.warn('YouTube search supplement error:', ytErr.message);
+      }
+    }
+
     res.json({
       query,
       offset,
@@ -691,7 +726,7 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
 app.get(['/api/stream/saavn/:id', '/stream/saavn/:id'], async (req, res) => {
   const rawId = req.params.id ? String(req.params.id).replace(/^saavn_/, '').trim() : '';
   if (!rawId) {
-    return res.status(400).json({ error: 'Saavn song ID required' });
+    return res.status(400).json({ error: 'Song ID required' });
   }
 
   // Check cache first
@@ -700,98 +735,112 @@ app.get(['/api/stream/saavn/:id', '/stream/saavn/:id'], async (req, res) => {
     return res.json(cached.data);
   }
 
+  // If rawId is an 11-char YouTube video ID, resolve directly via yt-dlp
+  if (/^[a-zA-Z0-9_-]{11}$/.test(rawId)) {
+    try {
+      const ytStream = await extractAudioStream(rawId);
+      if (ytStream && ytStream.url) {
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+        const host = req.get('host') || `localhost:${PORT}`;
+        const responseData = {
+          id: rawId,
+          videoId: rawId,
+          title: ytStream.title || 'Audio Track',
+          artist: ytStream.artist || 'Artist',
+          thumbnail: ytStream.thumbnail || `https://i.ytimg.com/vi/${rawId}/hqdefault.jpg`,
+          artwork_url: ytStream.thumbnail || `https://i.ytimg.com/vi/${rawId}/hqdefault.jpg`,
+          duration: ytStream.duration,
+          duration_seconds: ytStream.duration,
+          stream_url: ytStream.url,
+          proxy_url: `${protocol}://${host}/stream/${rawId}/audio`,
+          bitrate: '320kbps',
+          contentType: ytStream.contentType || 'audio/mp4',
+          source: 'youtube'
+        };
+        saavnStreamCache.set(rawId, { data: responseData, expiry: Date.now() + SAAVN_STREAM_CACHE_TTL });
+        return res.json(responseData);
+      }
+    } catch (err) {
+      console.warn(`Direct YouTube stream extraction for ${rawId} failed:`, err.message);
+    }
+  }
+
+  let resolvedSong = null;
   try {
     const data = await fetchSaavnJson(`/songs/${encodeURIComponent(rawId)}`);
-    if (!data || !data.success || !data.data) {
-      return res.status(404).json({ error: 'Song details not found on Saavn', id: rawId });
-    }
-
-    const song = Array.isArray(data.data) ? data.data[0] : data.data;
-    if (!song) {
-      return res.status(404).json({ error: 'Song not found', id: rawId });
-    }
-
-    // Pick highest bitrate stream URL (320kbps > 160kbps > ...)
-    let streamUrl = null;
-    let bitrate = '320kbps';
-    if (Array.isArray(song.downloadUrl) && song.downloadUrl.length > 0) {
-      const sorted = [...song.downloadUrl].sort((a, b) => (parseInt(b.quality, 10) || 0) - (parseInt(a.quality, 10) || 0));
-      streamUrl = sorted[0]?.url || null;
-      bitrate = sorted[0]?.quality || '320kbps';
-    }
-
-    if (!streamUrl) {
-      return res.status(502).json({ error: 'No playable stream URL available for this song', id: rawId });
-    }
-
-    const normalized = normalizeSaavnSong(song, streamUrl);
-    const responseData = {
-      ...normalized,
-      stream_url: streamUrl,
-      bitrate,
-      contentType: 'audio/mp4'
-    };
-
-    // Cache the result
-    saavnStreamCache.set(rawId, { data: responseData, expiry: Date.now() + SAAVN_STREAM_CACHE_TTL });
-
-    // Cache high-res artwork in Firebase RTDB & memory
-    if (normalized?.artwork_url) {
-      cacheTrackImage(rawId, normalized.artwork_url).catch(() => {});
-      trackImageCache.set(rawId, { image: normalized.artwork_url, expiry: Date.now() + TRACK_IMAGE_CACHE_TTL });
-    }
-
-    // Prune old entries periodically
-    if (saavnStreamCache.size > 500) {
-      for (const [key, val] of saavnStreamCache) {
-        if (val.expiry <= Date.now()) saavnStreamCache.delete(key);
-      }
-    }
-
-    res.json(responseData);
-  } catch (err) {
-    const isRateLimited = err.message?.includes('429');
-    console.error(`Saavn stream resolution error for ${rawId} (${isRateLimited ? 'RATE LIMITED' : err.message}):`);
-
-    // Fallback: try YouTube search using song metadata
-    if (isRateLimited) {
-      try {
-        const songTitle = song?.name || song?.title || rawId;
-        const songArtist = song?.artists?.primary?.[0]?.name || song?.primaryArtists || '';
-        const searchQuery = `${songArtist} ${songTitle} official audio`.trim();
-        console.log(`YouTube fallback search: "${searchQuery}"`);
-        const ytResults = await scrapeYouTubeSearch(searchQuery);
-        if (ytResults && ytResults.length > 0) {
-          const bestResult = ytResults[0];
-          const ytStream = await extractAudioStream(bestResult.videoId);
-          if (ytStream && ytStream.url) {
-            const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-            const host = req.get('host') || `localhost:${PORT}`;
-            const artwork = song?.image?.find?.(img => img.quality === '500x500')?.url || bestResult.thumbnail || '';
-            const fallbackData = {
-              id: `saavn_${rawId}`,
-              videoId: rawId,
-              title: songTitle,
-              artist: songArtist,
-              artwork_url: artwork,
-              thumbnail: artwork,
-              stream_url: ytStream.url,
-              proxy_url: `${protocol}://${host}/stream/${bestResult.videoId}/audio`,
-              bitrate: '320kbps',
-              contentType: ytStream.contentType || 'audio/webm',
-              source: 'yt-dlp-fallback'
-            };
-            saavnStreamCache.set(rawId, { data: fallbackData, expiry: Date.now() + SAAVN_STREAM_CACHE_TTL });
-            return res.json(fallbackData);
-          }
+    if (data && data.success && data.data) {
+      const song = Array.isArray(data.data) ? data.data[0] : data.data;
+      if (song) {
+        resolvedSong = song;
+        let streamUrl = null;
+        let bitrate = '320kbps';
+        if (Array.isArray(song.downloadUrl) && song.downloadUrl.length > 0) {
+          const sorted = [...song.downloadUrl].sort((a, b) => (parseInt(b.quality, 10) || 0) - (parseInt(a.quality, 10) || 0));
+          streamUrl = sorted[0]?.url || null;
+          bitrate = sorted[0]?.quality || '320kbps';
         }
-      } catch (ytErr) {
-        console.error(`YouTube fallback also failed for ${rawId}:`, ytErr.message);
+
+        if (streamUrl) {
+          const normalized = normalizeSaavnSong(song, streamUrl);
+          const responseData = {
+            ...normalized,
+            stream_url: streamUrl,
+            bitrate,
+            contentType: 'audio/mp4'
+          };
+
+          // Cache the result
+          saavnStreamCache.set(rawId, { data: responseData, expiry: Date.now() + SAAVN_STREAM_CACHE_TTL });
+
+          // Cache high-res artwork
+          if (normalized?.artwork_url) {
+            cacheTrackImage(rawId, normalized.artwork_url).catch(() => {});
+            trackImageCache.set(rawId, { image: normalized.artwork_url, expiry: Date.now() + TRACK_IMAGE_CACHE_TTL });
+          }
+
+          return res.json(responseData);
+        }
       }
     }
-
-    res.status(502).json({ error: 'Failed to resolve Saavn audio stream', details: err.message, id: rawId });
+  } catch (err) {
+    console.warn(`Saavn stream resolution failed for ${rawId}:`, err.message);
   }
+
+  // Fallback: try YouTube search using song metadata or raw ID
+  try {
+    const songTitle = resolvedSong?.name || resolvedSong?.title || rawId;
+    const songArtist = resolvedSong?.artists?.primary?.[0]?.name || resolvedSong?.primaryArtists || '';
+    const searchQuery = `${songArtist} ${songTitle} official audio`.trim();
+    const ytResults = await scrapeYouTubeSearch(searchQuery);
+    if (ytResults && ytResults.length > 0) {
+      const bestResult = ytResults[0];
+      const ytStream = await extractAudioStream(bestResult.videoId);
+      if (ytStream && ytStream.url) {
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+        const host = req.get('host') || `localhost:${PORT}`;
+        const artwork = resolvedSong?.image?.find?.(img => img.quality === '500x500')?.url || bestResult.thumbnail || '';
+        const fallbackData = {
+          id: `saavn_${rawId}`,
+          videoId: rawId,
+          title: songTitle,
+          artist: songArtist || bestResult.artist,
+          artwork_url: artwork,
+          thumbnail: artwork,
+          stream_url: ytStream.url,
+          proxy_url: `${protocol}://${host}/stream/${bestResult.videoId}/audio`,
+          bitrate: '320kbps',
+          contentType: ytStream.contentType || 'audio/mp4',
+          source: 'yt-dlp-fallback'
+        };
+        saavnStreamCache.set(rawId, { data: fallbackData, expiry: Date.now() + SAAVN_STREAM_CACHE_TTL });
+        return res.json(fallbackData);
+      }
+    }
+  } catch (ytErr) {
+    console.error(`YouTube fallback also failed for ${rawId}:`, ytErr.message);
+  }
+
+  res.status(502).json({ error: 'Failed to resolve audio stream', id: rawId });
 });
 
 // 2b. High-Res Track Image Route with Firebase RTDB Caching & Staytup-API
@@ -2523,6 +2572,36 @@ app.get(['/api/artists/:idOrName/songs', '/artists/:idOrName/songs', '/api/artis
           addCandidateSongs(list);
           if (tracks.length >= limit) break;
         }
+      }
+    }
+
+    // 3. If still under limit tracks (e.g. The Kid LAROI, PROS BANDIDO, Western/Indie artists), supplement with YouTube
+    if (tracks.length < limit) {
+      try {
+        const ytResults = await scrapeYouTubeSearch(`${artistName} songs official`);
+        for (const t of ytResults) {
+          if (!t) continue;
+          const cleanT = cleanVideoTitle(t.title);
+          const normTitle = cleanT.toLowerCase().replace(/\s*\(.*?\)/g, '').replace(/[^a-z0-9]/g, '').trim();
+          if (!normTitle || seenTitles.has(normTitle)) continue;
+          seenTitles.add(normTitle);
+          tracks.push({
+            id: t.videoId,
+            videoId: t.videoId,
+            video_id: t.videoId,
+            title: cleanT,
+            artist: t.artist || artistName,
+            album: '',
+            thumbnail: t.thumbnail || t.artwork_url || '',
+            artwork_url: t.artwork_url || t.thumbnail || '',
+            duration: t.duration || 0,
+            duration_seconds: t.duration_seconds || 0,
+            source: 'youtube',
+          });
+          if (tracks.length >= limit) break;
+        }
+      } catch (err) {
+        console.warn('YouTube fallback in artist songs error:', err.message);
       }
     }
 

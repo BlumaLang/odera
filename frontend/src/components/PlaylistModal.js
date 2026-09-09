@@ -131,6 +131,7 @@ export default function PlaylistModal({
     removeTrackFromCollabPlaylist,
     removeCollaboratorFromCollabPlaylist,
     deleteCollabPlaylist,
+    sendCollabInvite,
     renamePlaylist,
     setPlaylists,
   } = useUser() || {};
@@ -534,8 +535,15 @@ export default function PlaylistModal({
     setInvitingUids((prev) => new Set([...prev, friend.uid]));
     try {
       const targetId = playlistData?.collabId || playlistData?.id;
-      if (joinCollabPlaylist) {
-        await joinCollabPlaylist(targetId);
+      if (sendCollabInvite) {
+        await sendCollabInvite(friend.uid, {
+          collabId: targetId,
+          playlistId: targetId,
+          name: playlistData?.name || "Collab Playlist",
+          cover_url: playlistData?.cover_url || playlistData?.preview_artwork || "",
+          tracks: playlistData?.tracks || [],
+          playlist: playlistData,
+        });
       }
       // Optimistically add to collaborators
       const newCollabs = {

@@ -633,14 +633,21 @@ export default function FriendsScreen({ onNavigate }) {
         });
       }
 
+      const activeCollabId = created?.collabId || created?.playlist?.id || created?.id;
+
       if (sendCollabInvite && selectedBlendFriend.uid) {
         await sendCollabInvite(selectedBlendFriend.uid, {
-          playlistId: created?.id || `blend_${Date.now()}`,
+          collabId: activeCollabId,
+          playlistId: activeCollabId,
+          id: activeCollabId,
+          name: `Blend: ${myName} + ${friendName}`,
           playlistName: `Blend: ${myName} + ${friendName}`,
+          tracks: formattedTracks,
           tracksCount: formattedTracks.length,
           cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
           type: "blend",
           matchPercentage: matchPct,
+          playlist: created?.playlist,
         });
       }
 
@@ -1283,7 +1290,7 @@ export default function FriendsScreen({ onNavigate }) {
                             <View style={styles.requestActionsRow}>
                               <TouchableOpacity
                                 style={styles.acceptBtn}
-                                onPress={() => acceptCollabInvite && acceptCollabInvite(inv.inviteId || inv.id, inv.playlistId)}
+                                onPress={() => acceptCollabInvite && acceptCollabInvite(inv.collabId || inv.playlistId || inv.id)}
                                 activeOpacity={0.8}
                               >
                                 <Ionicons name="checkmark" size={14} color="#000000" style={{ marginRight: 4 }} />
@@ -1291,7 +1298,7 @@ export default function FriendsScreen({ onNavigate }) {
                               </TouchableOpacity>
                               <TouchableOpacity
                                 style={styles.declineCloseBtn}
-                                onPress={() => declineCollabInvite && declineCollabInvite(inv.inviteId || inv.id)}
+                                onPress={() => declineCollabInvite && declineCollabInvite(inv.collabId || inv.playlistId || inv.id)}
                                 activeOpacity={0.8}
                                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                               >

@@ -1069,16 +1069,32 @@ export const UserProvider = ({ children }) => {
     return await fbSendCollabInvite(uid, userProfile, targetUid, data);
   };
 
-  const acceptCollabInvite = async (collabId) => {
+  const acceptCollabInvite = async (collabIdOrInvite) => {
     const uid = currentUser?.uid;
-    if (!uid) return { success: false };
-    return await fbAcceptCollabInvite(uid, userProfile, collabId);
+    if (!uid) return { success: false, error: "Not authenticated" };
+    const res = await fbAcceptCollabInvite(uid, userProfile, collabIdOrInvite);
+    if (res?.success && res.playlist) {
+      setCollabPlaylists((prev) => {
+        const list = Array.isArray(prev) ? prev : [];
+        const pId = res.playlist.collabId || res.playlist.id;
+        if (list.some((p) => (p.collabId || p.id) === pId)) {
+          return list;
+        }
+        return [res.playlist, ...list];
+      });
+      // Remove invite from local state
+      const targetId = typeof collabIdOrInvite === "string" ? collabIdOrInvite.replace(/^invite_/, "") : (collabIdOrInvite?.collabId || collabIdOrInvite?.id);
+      setCollabInvites((prev) => (prev || []).filter((inv) => (inv.collabId || inv.id) !== targetId && inv.id !== `invite_${targetId}`));
+    }
+    return res;
   };
 
-  const declineCollabInvite = async (collabId) => {
+  const declineCollabInvite = async (collabIdOrInvite) => {
     const uid = currentUser?.uid;
     if (!uid) return { success: false };
-    return await fbDeclineCollabInvite(uid, collabId);
+    const targetId = typeof collabIdOrInvite === "string" ? collabIdOrInvite.replace(/^invite_/, "") : (collabIdOrInvite?.collabId || collabIdOrInvite?.id);
+    setCollabInvites((prev) => (prev || []).filter((inv) => (inv.collabId || inv.id) !== targetId && inv.id !== `invite_${targetId}`));
+    return await fbDeclineCollabInvite(uid, collabIdOrInvite);
   };
 
   const getFriendBlend = async (friendUid, friendProfile) => {
