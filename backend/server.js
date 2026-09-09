@@ -110,6 +110,7 @@ async function extractAudioStream(videoId) {
     const proc = spawn(YTDLP_BIN, [
       '--dump-json',
       '--no-playlist',
+      '--extractor-args', 'youtube:player_client=android,web',
       '-f', 'ba[ext=m4a]/ba/b',
       '--no-warnings',
       `https://www.youtube.com/watch?v=${cleanId}`
@@ -120,8 +121,8 @@ async function extractAudioStream(videoId) {
 
     const timeout = setTimeout(() => {
       proc.kill();
-      reject(new Error('Audio extraction timed out after 15s'));
-    }, 15000);
+      reject(new Error('Audio extraction timed out after 30s'));
+    }, 30000);
 
     proc.stdout.on('data', (d) => { stdout += d; });
     proc.stderr.on('data', (d) => { stderr += d; });
