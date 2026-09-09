@@ -362,7 +362,7 @@ app.get(['/api/health', '/health'], async (req, res) => {
   res.json({
     status: 'ok',
     service: 'Staytup Music Server',
-    version: '2026.09.09-pure-saavn-v2',
+    version: '2026.09.10-pure-saavn-v3',
     uptime: Math.round(process.uptime()),
     cacheSize: streamCache.size,
     firebase: fb.status,
@@ -541,7 +541,7 @@ function normalizeSaavnSong(song, streamUrl = null) {
 app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
   try {
     const query = req.query.q ? String(req.query.q).trim() : (req.query.query ? String(req.query.query).trim() : '');
-    const limit = Math.min(parseInt(req.query.limit, 10) || 30, 50);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const page = Math.max(1, Math.floor(offset / limit) + 1);
     if (!query) {
@@ -569,9 +569,19 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
 
     const isExplicitInstrumental = /instrumental|karaoke|bgm/i.test(query);
 
-    // 2. Fetch concurrently from JioSaavn Direct API (with browser headers) & Staytup API
+    // 2. Fetch concurrently from JioSaavn Direct API across multiple subpages & Staytup API
+    // (JioSaavn caps results at ~40 per page regardless of n=500, so querying subpages yields the full catalog)
+    const baseSubpage = (page - 1) * 3 + 1;
     const searchPromises = [
-      fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query)}&p=${page}&n=${limit}`, {
+      fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query)}&p=${baseSubpage}&n=50`, {
+        headers: JIOSAAVN_HEADERS,
+        signal: AbortSignal.timeout(10000)
+      }).then(r => r.json()).catch(() => null),
+      fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query)}&p=${baseSubpage + 1}&n=50`, {
+        headers: JIOSAAVN_HEADERS,
+        signal: AbortSignal.timeout(10000)
+      }).then(r => r.json()).catch(() => null),
+      fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query)}&p=${baseSubpage + 2}&n=50`, {
         headers: JIOSAAVN_HEADERS,
         signal: AbortSignal.timeout(10000)
       }).then(r => r.json()).catch(() => null),
@@ -580,7 +590,11 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
 
     if (!/songs?$/i.test(query)) {
       searchPromises.push(
-        fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query + ' songs')}&p=${page}&n=${limit}`, {
+        fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query + ' songs')}&p=${baseSubpage}&n=50`, {
+          headers: JIOSAAVN_HEADERS,
+          signal: AbortSignal.timeout(10000)
+        }).then(r => r.json()).catch(() => null),
+        fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query + ' songs')}&p=${baseSubpage + 1}&n=50`, {
           headers: JIOSAAVN_HEADERS,
           signal: AbortSignal.timeout(10000)
         }).then(r => r.json()).catch(() => null)
