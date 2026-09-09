@@ -1081,6 +1081,11 @@ export const UserProvider = ({ children }) => {
     return await fbDeclineCollabInvite(uid, collabId);
   };
 
+  const getFriendBlend = async (friendUid, friendProfile) => {
+    const myUid = currentUser?.uid || DEFAULT_USER_ID;
+    return await fbCalculateFriendBlend(myUid, userProfile, friendUid, friendProfile);
+  };
+
   const pendingRequestsCount =
     (friendRequests?.incoming?.length || 0) + (collabInvites?.length || 0);
 
@@ -1196,6 +1201,7 @@ const defaultUserContext = {
   acceptCollabInvite: () => Promise.resolve({ success: false }),
   declineCollabInvite: () => Promise.resolve({ success: false }),
   pendingRequestsCount: 0,
+  getFriendBlend: () => Promise.resolve(null),
   isFavoriteArtist: () => false,
   toggleFavoriteArtist: () => {},
   userArtistMovements: {},
