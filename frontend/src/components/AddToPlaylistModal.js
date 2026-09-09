@@ -546,13 +546,14 @@ const styles = StyleSheet.create({
   playlistThumb: {
     width: 48,
     height: 48,
-    borderRadius: 24,
+    borderRadius: 8,
     backgroundColor: "#181818",
   },
   playlistThumbFallback: {
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#181818",
+    borderRadius: 8,
   },
   playlistInfo: {
     flex: 1,

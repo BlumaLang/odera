@@ -1057,6 +1057,12 @@ export const UserProvider = ({ children }) => {
     return await fbRemoveCollaboratorFromCollabPlaylist(collabId, targetUid);
   };
 
+  const deleteCollab = async (collabId) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    setCollabPlaylists((prev) => (prev || []).filter((p) => (p.id || p.collabId) !== collabId));
+    return await fbDeleteCollabPlaylist(collabId, uid);
+  };
+
   const sendCollabInvite = async (targetUid, data) => {
     const uid = currentUser?.uid;
     if (!uid) return { success: false, error: "Not authenticated" };
@@ -1183,6 +1189,13 @@ const defaultUserContext = {
   addTrackToCollabPlaylist: () => Promise.resolve(false),
   removeTrackFromCollabPlaylist: () => Promise.resolve(false),
   getCollabPlaylistDetails: () => Promise.resolve(null),
+  removeCollaboratorFromCollabPlaylist: () => Promise.resolve(false),
+  deleteCollabPlaylist: () => Promise.resolve(false),
+  collabInvites: [],
+  sendCollabInvite: () => Promise.resolve({ success: false }),
+  acceptCollabInvite: () => Promise.resolve({ success: false }),
+  declineCollabInvite: () => Promise.resolve({ success: false }),
+  pendingRequestsCount: 0,
   isFavoriteArtist: () => false,
   toggleFavoriteArtist: () => {},
   userArtistMovements: {},
