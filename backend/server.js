@@ -797,12 +797,12 @@ app.get(['/api/track-image/:id', '/track-image/:id'], async (req, res) => {
 app.get(['/api/home/saavn', '/home/saavn'], async (req, res) => {
   try {
     const trendingQueries = [
-      { id: 'trending_now', title: 'Trending Now', q: 'Trending 2026' },
-      { id: 'bollywood_hits', title: 'Bollywood Top Hits', q: 'Bollywood Hits' },
-      { id: 'romantic_melodies', title: 'Romantic Melodies', q: 'Arijit Singh Romantic' },
-      { id: 'punjabi_vibes', title: 'Punjabi Blockbusters', q: 'Punjabi Hits 2026' },
-      { id: 'new_releases', title: 'Fresh New Releases', q: 'New Hindi Songs 2026' },
-      { id: 'indie_pop', title: 'Indie Pop Hits', q: 'Indian Indie Pop 2026' },
+      { id: 'trending_now', title: 'Trending Now', q: 'Trending Hindi Hits' },
+      { id: 'bollywood_hits', title: 'Bollywood Top Hits', q: 'Bollywood Top Hits' },
+      { id: 'romantic_melodies', title: 'Romantic Melodies', q: 'Bollywood Romantic Melodies' },
+      { id: 'punjabi_vibes', title: 'Punjabi Blockbusters', q: 'Punjabi Top Hits' },
+      { id: 'new_releases', title: 'Fresh New Releases', q: 'Latest Hindi Songs' },
+      { id: 'indie_pop', title: 'Indie Pop Hits', q: 'Indian Indie' },
     ];
 
     const sections = await Promise.all(
@@ -814,10 +814,11 @@ app.get(['/api/home/saavn', '/home/saavn'], async (req, res) => {
           return {
             id: sec.id,
             title: sec.title,
-            tracks
+            tracks,
+            items: tracks
           };
         } catch (e) {
-          return { id: sec.id, title: sec.title, tracks: [] };
+          return { id: sec.id, title: sec.title, tracks: [], items: [] };
         }
       })
     );
