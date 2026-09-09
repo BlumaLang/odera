@@ -1,30 +1,34 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   View,
   Text,
-  TextInput,
-  TouchableOpacity,
   Modal,
   StyleSheet,
+  TouchableOpacity,
+  TextInput,
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
   StatusBar,
   ScrollView,
+  KeyboardAvoidingView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { useResponsive } from "../context/ResponsiveContext";
 
-/**
- * Calculates the next available default playlist name like "My Playlist #1", "My Playlist #2"
- */
-export function getNextPlaylistDefaultName(playlists = []) {
-  const existingNames = new Set(
-    (playlists || []).map((p) => (p?.name || "").trim().toLowerCase())
-  );
-  let num = (playlists?.length || 0) + 1;
-  while (existingNames.has(`my playlist #${num}`.toLowerCase())) {
+function getNextPlaylistDefaultName(playlists = []) {
+  const customList = Array.isArray(playlists) ? playlists : [];
+  let num = 1;
+  const regex = /^My Playlist #(\d+)$/i;
+  const usedNums = new Set();
+  customList.forEach((p) => {
+    const name = (p.name || p.title || "").trim();
+    const match = name.match(regex);
+    if (match) {
+      usedNums.add(parseInt(match[1], 10));
+    }
+  });
+  while (usedNums.has(num)) {
     num++;
   }
   return `My Playlist #${num}`;
@@ -51,9 +55,10 @@ export default function CreatePlaylistModal({
   const [playlistName, setPlaylistName] = useState("");
   const [isFocused, setIsFocused] = useState(false);
   const [loading, setLoading] = useState(false);
+
   const inputRef = useRef(null);
 
-  // Initialize input value ONLY when modal opens (when visible becomes true)
+  // Initialize input value ONLY when modal opens
   useEffect(() => {
     if (visible) {
       const startingName =
@@ -63,18 +68,17 @@ export default function CreatePlaylistModal({
       setPlaylistName(startingName);
       setLoading(false);
 
-      // Auto-focus input after modal renders
       const timer = setTimeout(() => {
         if (inputRef.current) {
           inputRef.current.focus();
         }
-      }, 100);
+      }, 120);
       return () => clearTimeout(timer);
     } else {
       setPlaylistName("");
       setLoading(false);
     }
-  }, [visible]);
+  }, [visible, initialName]);
 
   const handleSave = async () => {
     const trimmed = playlistName.trim();
@@ -96,8 +100,9 @@ export default function CreatePlaylistModal({
   if (!visible) return null;
 
   const isEdit = mode === "edit";
-  const modalHeading = isEdit ? "Edit playlist name" : "Give your playlist a name";
-  const buttonLabel = isEdit ? "Save Changes" : "Create Playlist";
+  const modalHeading = isEdit
+    ? "Edit playlist name"
+    : "Give your playlist a name";
 
   return (
     <Modal
@@ -110,7 +115,7 @@ export default function CreatePlaylistModal({
       <View style={styles.container}>
         <StatusBar translucent backgroundColor="#000000" barStyle="light-content" />
 
-        {/* Clean Full-Screen Top Navigation Bar */}
+        {/* Top Navigation Bar */}
         <View style={[styles.topBar, (isDesktop || isTablet) && styles.desktopTopBar]}>
           <TouchableOpacity
             style={styles.navCloseBtn}
@@ -127,19 +132,7 @@ export default function CreatePlaylistModal({
             {isEdit ? "Rename Playlist" : "New Playlist"}
           </Text>
 
-          <TouchableOpacity
-            style={[styles.topActionBtn, loading && styles.disabledBtn]}
-            onPress={handleSave}
-            disabled={loading}
-            activeOpacity={0.8}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            {loading ? (
-              <ActivityIndicator size="small" color="#000000" />
-            ) : (
-              <Text style={styles.topActionBtnText}>{isEdit ? "Save" : "Create"}</Text>
-            )}
-          </TouchableOpacity>
+          <View style={styles.topBarSpacer} />
         </View>
 
         {/* Scrollable Center Body Area */}
@@ -170,7 +163,7 @@ export default function CreatePlaylistModal({
                 : "Give your playlist a title to easily recognize and play it"}
             </Text>
 
-            {/* Fully Editable Input Box */}
+            {/* Editable Input Box */}
             <View
               style={[
                 styles.inputWrapper,
@@ -203,7 +196,11 @@ export default function CreatePlaylistModal({
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="close-circle" size={20} color="rgba(255, 255, 255, 0.45)" />
+                  <Ionicons
+                    name="close-circle"
+                    size={20}
+                    color="rgba(255, 255, 255, 0.45)"
+                  />
                 </TouchableOpacity>
               )}
             </View>
@@ -240,6 +237,21 @@ export default function CreatePlaylistModal({
               </View>
             )}
 
+            {/* Bottom Create Button */}
+            <TouchableOpacity
+              style={[styles.bottomCreateBtn, loading && styles.disabledBtn]}
+              onPress={handleSave}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              {loading ? (
+                <ActivityIndicator size="small" color="#000000" />
+              ) : (
+                <Text style={styles.bottomCreateBtnText}>
+                  {isEdit ? "Save Changes" : "Create Playlist"}
+                </Text>
+              )}
+            </TouchableOpacity>
           </ScrollView>
         </KeyboardAvoidingView>
       </View>
@@ -288,19 +300,9 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     letterSpacing: -0.2,
   },
-  topActionBtn: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 7,
-    borderRadius: 18,
-    minWidth: 70,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  topActionBtnText: {
-    fontFamily: fonts.bold,
-    fontSize: 12,
-    color: "#000000",
+  topBarSpacer: {
+    width: 38,
+    height: 38,
   },
   keyboardAvoidArea: {
     flex: 1,
@@ -311,10 +313,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
-    paddingVertical: 36,
+    paddingVertical: 28,
   },
   desktopScrollContent: {
-    maxWidth: 580,
+    maxWidth: 540,
     width: "100%",
     alignSelf: "center",
     paddingHorizontal: 32,
@@ -344,7 +346,7 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: "center",
     lineHeight: 19,
-    marginBottom: 28,
+    marginBottom: 24,
     paddingHorizontal: 12,
   },
   inputWrapper: {
@@ -356,7 +358,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: "rgba(255, 255, 255, 0.12)",
     paddingHorizontal: 16,
-    marginBottom: 24,
+    marginBottom: 20,
     height: 56,
   },
   inputWrapperFocused: {
@@ -367,7 +369,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: "100%",
     fontFamily: fonts.semiBold,
-    fontSize: 18,
+    fontSize: 16,
     color: "#FFFFFF",
     paddingVertical: 0,
     ...(Platform.OS === "web" ? { outlineStyle: "none" } : {}),
@@ -378,7 +380,7 @@ const styles = StyleSheet.create({
   },
   presetsSection: {
     width: "100%",
-    marginBottom: 30,
+    marginBottom: 26,
   },
   presetsLabel: {
     fontFamily: fonts.bold,
@@ -415,32 +417,19 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     color: colors.primary,
   },
-  primaryActionBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
+  bottomCreateBtn: {
     width: "100%",
     height: 50,
     borderRadius: 25,
     backgroundColor: colors.primary,
-    marginBottom: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 8,
   },
-  primaryActionBtnText: {
+  bottomCreateBtnText: {
     fontFamily: fonts.bold,
     fontSize: 15,
     color: "#000000",
-    letterSpacing: -0.2,
-  },
-  cancelLinkBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cancelLinkText: {
-    fontFamily: fonts.medium,
-    fontSize: 14,
-    color: colors.textMuted,
   },
   disabledBtn: {
     opacity: 0.6,

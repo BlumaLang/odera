@@ -22,7 +22,7 @@ import PlaylistModal from "../components/PlaylistModal";
 import CreatePlaylistModal from "../components/CreatePlaylistModal";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
-import { useAudio, fisherYatesShuffle } from "../context/AudioContext";
+import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { auth, getRecentlyPlayed, subscribeRecentlyPlayed, removeRecentlyPlayed } from "../services/firebase";
@@ -36,6 +36,7 @@ export default function LibraryScreen() {
     openProfile,
     likedSongs,
     playlists: rtdbPlaylists,
+    collabPlaylists,
     setPlaylists,
     recentlyPlayed: rtdbRecentlyPlayed,
     createPlaylist,
@@ -69,12 +70,49 @@ export default function LibraryScreen() {
     return () => unsub();
   }, [currentUser]);
 
-  const playlists = rtdbPlaylists || [];
+  const playlists = useMemo(() => {
+    const seen = new Set();
+    const collabOriginalIds = new Set();
+    const collabNames = new Set();
+    const result = [];
+
+    // Add collaborative playlists first
+    for (const cp of collabPlaylists || []) {
+      const id = String(cp.id || cp.collabId || "");
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        if (cp.originalPlaylistId) {
+          collabOriginalIds.add(String(cp.originalPlaylistId));
+        }
+        if (cp.name) {
+          collabNames.add(String(cp.name).trim().toLowerCase());
+        }
+        result.push({ ...cp, isCollab: true });
+      }
+    }
+
+    // Add regular playlists without duplicate IDs or converted collab duplicates
+    for (const p of rtdbPlaylists || []) {
+      const id = String(p.id || p.collabId || "");
+      const nameKey = String(p.name || "").trim().toLowerCase();
+      if (
+        id &&
+        !seen.has(id) &&
+        !collabOriginalIds.has(id) &&
+        (!nameKey || !collabNames.has(nameKey))
+      ) {
+        seen.add(id);
+        result.push(p);
+      }
+    }
+
+    return result;
+  }, [rtdbPlaylists, collabPlaylists]);
   const favorites = likedSongs || [];
   const rawHistory = localRecentlyPlayed.length > 0 ? localRecentlyPlayed : (rtdbRecentlyPlayed || []);
   const isLoading = false;
 
-  const { currentTrack, playTrack, setShuffle } = useAudio();
+  const { currentTrack, playTrack, setShuffle } = useAudioPlayback();
 
   const removeFromHistory = useCallback(async (track) => {
     const uid = currentUser?.uid || auth.currentUser?.uid || "guest";
@@ -92,11 +130,11 @@ export default function LibraryScreen() {
     setSelectedPlaylist(playlist);
   };
 
-  const handleCreatePlaylist = async (name) => {
+  const handleCreatePlaylist = async (name, description = "", tracks = [], coverUrl = "") => {
     const trimmed = (name || "").trim();
     if (!trimmed) return;
     try {
-      const res = await createPlaylist(trimmed);
+      const res = await createPlaylist(trimmed, description, tracks, coverUrl);
       if (res) {
         setShowCreateModal(false);
         openPlaylist(res);
@@ -107,28 +145,13 @@ export default function LibraryScreen() {
   };
 
   const handleDeletePlaylist = async (playlistId) => {
-    const doDelete = async () => {
-      try {
+    try {
+      if (deletePlaylist) {
         await deletePlaylist(playlistId);
-        setSelectedPlaylist(null);
-      } catch (err) {
-        console.warn("Failed to delete playlist:", err);
       }
-    };
-
-    if (Platform.OS === "web") {
-      if (window.confirm("Are you sure you want to delete this playlist?")) {
-        await doDelete();
-      }
-    } else {
-      Alert.alert(
-        "Delete Playlist",
-        "Are you sure you want to delete this playlist? This action cannot be undone.",
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Delete", style: "destructive", onPress: doDelete },
-        ]
-      );
+      setSelectedPlaylist(null);
+    } catch (err) {
+      console.warn("Failed to delete playlist:", err);
     }
   };
 
@@ -214,32 +237,45 @@ export default function LibraryScreen() {
           <View style={styles.profileRow}>
             <Text style={styles.profileName}>Your Library</Text>
 
-            {/* User profile icon on right side */}
-            <TouchableOpacity
-              style={[
-                styles.avatarContainer,
-                userProfile?.avatarColor && { backgroundColor: userProfile.avatarColor },
-              ]}
-              onPress={() => openProfile && openProfile()}
-              activeOpacity={0.75}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              {userProfile?.avatar && userProfile.avatar !== "initial" ? (
-                userProfile.avatar.startsWith("http") ? (
-                  <Image
-                    source={{ uri: userProfile.avatar }}
-                    style={styles.avatarImage}
-                    resizeMode="cover"
-                  />
+            {/* Top Right Header Controls */}
+            <View style={styles.headerRightGroup}>
+              <TouchableOpacity
+                style={styles.headerAddBtn}
+                onPress={() => setShowCreateModal(true)}
+                activeOpacity={0.75}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Create Playlist"
+              >
+                <Ionicons name="add" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+
+              {/* User profile icon on right side */}
+              <TouchableOpacity
+                style={[
+                  styles.avatarContainer,
+                  userProfile?.avatarColor && { backgroundColor: userProfile.avatarColor },
+                ]}
+                onPress={() => openProfile && openProfile()}
+                activeOpacity={0.75}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                {userProfile?.avatar && userProfile.avatar !== "initial" ? (
+                  userProfile.avatar.startsWith("http") ? (
+                    <Image
+                      source={{ uri: userProfile.avatar }}
+                      style={styles.avatarImage}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <Ionicons name={userProfile.avatar} size={16} color="#000000" />
+                  )
                 ) : (
-                  <Ionicons name={userProfile.avatar} size={16} color="#000000" />
-                )
-              ) : (
-                <Text style={styles.avatarText}>
-                  {(userProfile?.username?.[0] || "U").toUpperCase()}
-                </Text>
-              )}
-            </TouchableOpacity>
+                  <Text style={styles.avatarText}>
+                    {(userProfile?.username?.[0] || "U").toUpperCase()}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </View>
@@ -291,29 +327,9 @@ export default function LibraryScreen() {
         /* Playlists List View */
         <FlatList
           data={playlists}
-          keyExtractor={(item) => String(item.id)}
+          keyExtractor={(item, index) => `${item.id || item.collabId || "pl"}_${index}`}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
-          ListHeaderComponent={
-            <View style={styles.playlistsListHeader}>
-              <View>
-                <Text style={[styles.sectionHeader, { marginBottom: 2 }]}>Your Playlists</Text>
-                <Text style={styles.sectionSubHeader}>
-                  {playlists.length} {playlists.length === 1 ? "playlist" : "playlists"}
-                </Text>
-              </View>
-              <View style={styles.headerButtonsRow}>
-                <TouchableOpacity
-                  style={styles.createPlBtn}
-                  onPress={() => setShowCreateModal(true)}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="add" size={16} color="#000000" />
-                  <Text style={styles.createPlBtnText}>New Playlist</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          }
           renderItem={({ item }) => {
             const playlistCover =
               item.cover_url ||
@@ -340,9 +356,17 @@ export default function LibraryScreen() {
                   </View>
                 )}
                 <View style={styles.playlistRowInfo}>
-                  <Text style={styles.playlistRowTitle} numberOfLines={1}>
-                    {item.name}
-                  </Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+                    <Text style={styles.playlistRowTitle} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                    {item.isCollab && (
+                      <View style={styles.collabBadgePill}>
+                        <Ionicons name="people" size={10} color="#1DB954" style={{ marginRight: 3 }} />
+                        <Text style={styles.collabBadgeText}>Collab</Text>
+                      </View>
+                    )}
+                  </View>
                   <Text style={styles.playlistRowCount}>
                     {trackCount} {trackCount === 1 ? "track" : "tracks"}
                     {item.description ? ` • ${item.description}` : ""}
@@ -359,14 +383,6 @@ export default function LibraryScreen() {
               <Text style={styles.emptySub}>
                 Create custom playlists to group and save your favorite tracks!
               </Text>
-              <TouchableOpacity
-                style={styles.createEmptyBtn}
-                onPress={() => setShowCreateModal(true)}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="add" size={18} color="#000000" style={{ marginRight: 6 }} />
-                <Text style={styles.createEmptyBtnText}>Create Your First Playlist</Text>
-              </TouchableOpacity>
             </View>
           }
           ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
@@ -591,6 +607,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
+  headerRightGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  headerAddBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
   avatarContainer: {
     width: 34,
     height: 34,
@@ -598,7 +630,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",
-    marginLeft: 10,
     overflow: "hidden",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
@@ -670,7 +701,7 @@ const styles = StyleSheet.create({
     color: "#000000",
   },
   listContent: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 18,
     paddingTop: 8,
   },
   topArtistsSection: {
@@ -891,6 +922,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
+  importYtBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 68, 68, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 68, 68, 0.35)",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  importYtBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: "#FFFFFF",
+  },
   createPlBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -906,15 +953,34 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#000000",
   },
+  collabBadgePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(29, 185, 84, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.3)",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  collabBadgeText: {
+    fontFamily: fonts.bold,
+    fontSize: 10,
+    color: "#1DB954",
+  },
   playlistCardRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.surface,
-    padding: 12,
-    borderRadius: 10,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: colors.surfaceBorder,
+    backgroundColor: "transparent",
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderRadius: 0,
+    marginBottom: 0,
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.05)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   playlistRowThumb: {
     width: 56,

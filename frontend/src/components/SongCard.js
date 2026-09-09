@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { View, Text, Image, TouchableOpacity, StyleSheet, Platform } from "react-native";
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { useResponsive } from "../context/ResponsiveContext";
-import { useAudio } from "../context/AudioContext";
+import { useAudioPlayback } from "../context/AudioContext";
+import { useUser } from "../context/UserContext";
 
 function formatCardDuration(track) {
   if (
@@ -25,7 +26,7 @@ function formatCardDuration(track) {
   return null;
 }
 
-export default function SongCard({
+function SongCard({
   track,
   onPress,
   layout = "card",
@@ -43,7 +44,9 @@ export default function SongCard({
   const isDesktop = responsive.isDesktop;
   const isTablet = responsive.isTablet;
 
-  const { currentTrack, isPlaying, togglePlayPause } = useAudio();
+  const { currentTrack, isPlaying, togglePlayPause } = useAudioPlayback();
+  const { isTrackInAnyPlaylist } = useUser?.() || {};
+  const isInPlaylist = isTrackInAnyPlaylist ? isTrackInAnyPlaylist(track) : false;
   const trackId = track?.videoId || track?.video_id;
   const isCurrent = Boolean(
     isActive ||
@@ -60,39 +63,40 @@ export default function SongCard({
   };
 
   const rawArtwork = track?.artwork_url || track?.thumbnail;
+  const trackVid = trackId || track?.videoId || track?.video_id || "";
   const [imageError, setImageError] = useState(false);
-  const [currentArtwork, setCurrentArtwork] = useState(rawArtwork);
+  const [currentArtwork, setCurrentArtwork] = useState("");
   const failedUrlsRef = React.useRef(new Set());
 
   React.useEffect(() => {
     setImageError(false);
     failedUrlsRef.current = new Set();
     let resolved = rawArtwork;
-    if (resolved && resolved.includes("/maxresdefault.jpg")) {
-      resolved = resolved.replace(/\/maxresdefault\.jpg/, "/mqdefault.jpg");
+    if (resolved && typeof resolved === "string") {
+      // Normalize YouTube URLs upfront to avoid expired sqp= tokens or broken hq720 thumbnails
+      if (resolved.includes("hq720.jpg") || resolved.includes("maxresdefault.jpg") || resolved.includes("sddefault.jpg")) {
+        const match = resolved.match(/\/vi\/([a-zA-Z0-9_-]+)/);
+        const vid = match ? match[1] : trackVid;
+        resolved = vid ? `https://i.ytimg.com/vi/${vid}/mqdefault.jpg` : resolved.replace(/\/(hq720|maxresdefault|sddefault)\.jpg.*/, "/mqdefault.jpg");
+      }
+    } else if (trackVid) {
+      resolved = `https://i.ytimg.com/vi/${trackVid}/mqdefault.jpg`;
     }
     setCurrentArtwork(resolved);
-  }, [rawArtwork]);
+  }, [rawArtwork, trackVid]);
 
   const handleImageError = () => {
     if (currentArtwork) failedUrlsRef.current.add(currentArtwork);
-    if (currentArtwork && currentArtwork.includes("maxresdefault.jpg")) {
-      const next = currentArtwork.replace("maxresdefault.jpg", "mqdefault.jpg");
-      if (!failedUrlsRef.current.has(next)) { setCurrentArtwork(next); return; }
-    }
-    if (currentArtwork && currentArtwork.includes("sddefault.jpg")) {
-      const next = currentArtwork.replace("sddefault.jpg", "mqdefault.jpg");
-      if (!failedUrlsRef.current.has(next)) { setCurrentArtwork(next); return; }
-    }
-    if (currentArtwork && currentArtwork.includes("hqdefault.jpg")) {
-      const next = currentArtwork.replace("hqdefault.jpg", "mqdefault.jpg");
-      if (!failedUrlsRef.current.has(next)) { setCurrentArtwork(next); return; }
-    }
-    if (currentArtwork && currentArtwork.includes("yt3.googleusercontent.com")) {
-      const vid = trackId || "";
-      if (vid) {
-        const next = `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`;
-        if (!failedUrlsRef.current.has(next)) { setCurrentArtwork(next); return; }
+    if (trackVid) {
+      const fallbackYt = `https://i.ytimg.com/vi/${trackVid}/mqdefault.jpg`;
+      if (!failedUrlsRef.current.has(fallbackYt) && currentArtwork !== fallbackYt) {
+        setCurrentArtwork(fallbackYt);
+        return;
+      }
+      const hqFallback = `https://i.ytimg.com/vi/${trackVid}/hqdefault.jpg`;
+      if (!failedUrlsRef.current.has(hqFallback) && currentArtwork !== hqFallback) {
+        setCurrentArtwork(hqFallback);
+        return;
       }
     }
     setImageError(true);
@@ -211,12 +215,12 @@ export default function SongCard({
                 e?.stopPropagation?.();
                 onAddToPlaylist(track);
               }}
-              accessibilityLabel="Add to playlist"
+              accessibilityLabel={isInPlaylist ? "In playlist" : "Add to playlist"}
             >
-              <MaterialCommunityIcons
-                name="playlist-plus"
-                size={22}
-                color={isHovered ? "#FFFFFF" : colors.textSecondary}
+              <Ionicons
+                name={isInPlaylist ? "checkmark-circle" : "add-circle-outline"}
+                size={23}
+                color={isInPlaylist ? colors.primary : (isHovered ? "#FFFFFF" : colors.textSecondary)}
               />
             </TouchableOpacity>
           )}
@@ -278,8 +282,12 @@ export default function SongCard({
           </View>
         )}
 
-        {/* Rank Badge if in Top Charts */}
-        {showRank && rank ? (
+        {/* Daily Mix Badge */}
+        {track.badgeColor ? (
+          <View style={[styles.dailyMixBadge, { backgroundColor: track.badgeColor }]}>
+            <Text style={styles.dailyMixBadgeText}>DAILY MIX</Text>
+          </View>
+        ) : showRank && rank ? (
           <View style={[styles.cardRankBadge, rank <= 3 && styles.cardTopRankBadge]}>
             <Text style={styles.cardRankText}>#{rank}</Text>
           </View>
@@ -346,7 +354,7 @@ const styles = StyleSheet.create({
     marginVertical: 3,
   },
   hoveredRow: {
-    backgroundColor: "rgba(255, 255, 255, 0.07)",
+    backgroundColor: "transparent",
   },
   activeRow: {
     backgroundColor: "transparent",
@@ -466,6 +474,25 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: colors.surfaceCard,
   },
+  dailyMixBadge: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  dailyMixBadgeText: {
+    fontFamily: fonts.bold,
+    fontSize: 9,
+    color: "#000000",
+    letterSpacing: 0.5,
+  },
   cardRankBadge: {
     position: "absolute",
     top: 8,
@@ -524,3 +551,5 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 });
+
+export default React.memo(SongCard);

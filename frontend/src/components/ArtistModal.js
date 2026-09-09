@@ -16,7 +16,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
-import { useAudio, fisherYatesShuffle } from "../context/AudioContext";
+import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
@@ -52,16 +52,16 @@ const ArtistSongRow = React.memo(function ArtistSongRow({
   );
 });
 
-export default function ArtistModal({ visible, onClose, artistName, initialPhoto, onSelectArtist }) {
+export default function ArtistModal({ visible, onClose, artistName, initialPhoto, onSelectArtist, onArtistImageResolved }) {
   const { isDesktop, isTablet } = useResponsive();
-  const { currentTrack, playTrack, setShuffle } = useAudio();
+  const { currentTrack, playTrack, setShuffle } = useAudioPlayback();
   const { isFavoriteArtist, toggleFavoriteArtist } = useUser();
 
   const cleanName = (artistName || "").trim();
   const cachedData = cleanName ? artistDataCache.get(cleanName) : null;
 
   const [artistImage, setArtistImage] = useState(
-    cachedData?.image || resolveLocalArtistImage(cleanName) || initialPhoto || null
+    initialPhoto || cachedData?.image || resolveLocalArtistImage(cleanName) || null
   );
   const [songs, setSongs] = useState(cachedData?.songs || []);
   const [isLoading, setIsLoading] = useState(!cachedData?.songs?.length);
@@ -73,6 +73,12 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
   const isFav = isFavoriteArtist(cleanName);
   const currentTrackId = currentTrack?.videoId;
 
+  useEffect(() => {
+    if (initialPhoto) {
+      setArtistImage(initialPhoto);
+    }
+  }, [initialPhoto]);
+
   // Fetch artist photo, songs, and similar artists
   useEffect(() => {
     if (!visible || !cleanName) return;
@@ -82,12 +88,13 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     const cached = artistDataCache.get(cleanName);
     if (cached) {
       if (cached.image) setArtistImage(cached.image);
+      else if (initialPhoto) setArtistImage(initialPhoto);
       if (cached.songs && cached.songs.length > 0) {
         setSongs(cached.songs);
         setHasMore(cached.hasMore);
         setSimilarArtists(cached.similar || []);
         setIsLoading(false);
-        return;
+        if (cached.image) return;
       }
     }
 
@@ -97,22 +104,37 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     setSimilarArtists([]);
 
     // 1. Resolve photo from local cache, props, or API
-    const localPhoto = resolveLocalArtistImage(cleanName) || initialPhoto;
-    if (localPhoto) {
-      setArtistImage(localPhoto);
-      artistDataCache.set(cleanName, { ...(artistDataCache.get(cleanName) || {}), image: localPhoto });
-    } else {
-      api
-        .getArtistImage(cleanName)
-        .then((res) => {
-          const photo = res?.image || res?.image_url;
-          if (isMounted && photo) {
-            setArtistImage(photo);
-            artistDataCache.set(cleanName, { ...(artistDataCache.get(cleanName) || {}), image: photo });
-          }
-        })
-        .catch(() => {});
+    const initialBest =
+      initialPhoto ||
+      cached?.image ||
+      resolveLocalArtistImage(cleanName) ||
+      DEFAULT_ARTIST_IMAGES[cleanName];
+    if (initialBest) {
+      setArtistImage(initialBest);
     }
+
+    // Always fetch latest high-res 500x500 image from DB cache & Staytup API
+    api
+      .getArtistImage(cleanName)
+      .then((res) => {
+        const photo = res?.image || res?.image_url;
+        if (
+          isMounted &&
+          photo &&
+          !photo.includes("artist-default-music.png") &&
+          !photo.includes("default_artist")
+        ) {
+          setArtistImage(photo);
+          if (onArtistImageResolved) {
+            onArtistImageResolved(cleanName, photo);
+          }
+          artistDataCache.set(cleanName, {
+            ...(artistDataCache.get(cleanName) || {}),
+            image: photo,
+          });
+        }
+      })
+      .catch(() => {});
 
     // 2. Fetch top songs
     api
@@ -137,18 +159,40 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
         if (isMounted) setIsLoading(false);
       });
 
-    // 3. Fetch similar artists
+    // 3. Fetch similar artists and resolve their images from DB cache & Staytup API
     api
       .getRelatedArtists(cleanName)
-      .then((data) => {
-        if (isMounted) {
-          const artists = data.artists || [];
-          setSimilarArtists(artists);
-          artistDataCache.set(cleanName, {
-            ...(artistDataCache.get(cleanName) || {}),
-            similar: artists,
-          });
-        }
+      .then(async (data) => {
+        if (!isMounted) return;
+        const list = data.artists || [];
+        if (list.length === 0) return;
+
+        // Fetch missing artist images from DB cache / Staytup API
+        const artistNames = list.map((a) => a.name).filter(Boolean);
+        const { images } = await api.getBatchArtistImages(artistNames).catch(() => ({ images: {} }));
+        if (!isMounted) return;
+
+        const normalized = list.map((sa) => {
+          const resolvedImg =
+            images?.[sa.name] ||
+            images?.[sa.id] ||
+            sa.image ||
+            sa.thumbnail ||
+            resolveLocalArtistImage(sa.name) ||
+            DEFAULT_ARTIST_IMAGES[sa.name] ||
+            null;
+          return {
+            ...sa,
+            thumbnail: resolvedImg,
+            image: resolvedImg,
+          };
+        });
+
+        setSimilarArtists(normalized);
+        artistDataCache.set(cleanName, {
+          ...(artistDataCache.get(cleanName) || {}),
+          similar: normalized,
+        });
       })
       .catch(() => {});
 
@@ -294,9 +338,9 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
                   }
                 }}
               >
-                {sa.thumbnail ? (
+                {sa.thumbnail || sa.image ? (
                   <Image
-                    source={{ uri: sa.thumbnail }}
+                    source={{ uri: sa.thumbnail || sa.image }}
                     style={styles.similarAvatar}
                     resizeMode="cover"
                   />

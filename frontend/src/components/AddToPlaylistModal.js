@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -20,8 +20,34 @@ import CreatePlaylistModal from "./CreatePlaylistModal";
 
 export default function AddToPlaylistModal({ visible, onClose, track, onSuccess }) {
   const { isDesktop, isTablet } = useResponsive();
-  const { playlists: rtdbPlaylists, addTrackToPlaylist, createPlaylist } = useUser();
-  const playlists = rtdbPlaylists || [];
+  const {
+    playlists: rtdbPlaylists,
+    collabPlaylists,
+    addTrackToPlaylist,
+    removeTrackFromPlaylist,
+    createPlaylist,
+  } = useUser();
+  const playlists = useMemo(() => {
+    const seen = new Set();
+    const result = [];
+    // Merge regular playlists
+    for (const p of rtdbPlaylists || []) {
+      const id = String(p.id || p.collabId || "");
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        result.push(p);
+      }
+    }
+    // Merge collab playlists
+    for (const p of collabPlaylists || []) {
+      const id = String(p.id || p.collabId || "");
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        result.push(p);
+      }
+    }
+    return result;
+  }, [rtdbPlaylists, collabPlaylists]);
   const [loading, setLoading] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [addedPlaylists, setAddedPlaylists] = useState({});
@@ -39,24 +65,40 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
     }
   }, [visible]);
 
-  const handleAddToPlaylist = async (playlist) => {
+  const handleAddToPlaylist = async (playlist, isCurrentlyIn) => {
     if (!track) return;
+    const vid = track.videoId || track.video_id || track.id;
     try {
       setAddedPlaylists((prev) => ({ ...prev, [playlist.id]: "adding" }));
-      const ok = await addTrackToPlaylist(playlist.id, track);
-      if (ok) {
-        setAddedPlaylists((prev) => ({ ...prev, [playlist.id]: "done" }));
-        setStatusMessage(`Added to "${playlist.name}"`);
-        setConfettiPlaylistId(playlist.id);
-        setShowBannerConfetti(true);
-        if (onSuccess) onSuccess(playlist);
-        setTimeout(() => {
-          setStatusMessage("");
-          setShowBannerConfetti(false);
-        }, 2500);
+      if (isCurrentlyIn) {
+        const ok = await removeTrackFromPlaylist(playlist.id, vid);
+        if (ok) {
+          setAddedPlaylists((prev) => ({ ...prev, [playlist.id]: "removed" }));
+          setStatusMessage(`Removed from "${playlist.name}"`);
+          setTimeout(() => {
+            setStatusMessage("");
+          }, 2500);
+        } else {
+          setAddedPlaylists((prev) => ({ ...prev, [playlist.id]: "error" }));
+        }
+      } else {
+        const ok = await addTrackToPlaylist(playlist.id, track);
+        if (ok) {
+          setAddedPlaylists((prev) => ({ ...prev, [playlist.id]: "done" }));
+          setStatusMessage(`Added to "${playlist.name}"`);
+          setConfettiPlaylistId(playlist.id);
+          setShowBannerConfetti(true);
+          if (onSuccess) onSuccess(playlist);
+          setTimeout(() => {
+            setStatusMessage("");
+            setShowBannerConfetti(false);
+          }, 2500);
+        } else {
+          setAddedPlaylists((prev) => ({ ...prev, [playlist.id]: "error" }));
+        }
       }
     } catch (err) {
-      console.warn("Failed to add track to playlist:", err);
+      console.warn("Failed to update track in playlist:", err);
       setAddedPlaylists((prev) => ({ ...prev, [playlist.id]: "error" }));
     }
   };
@@ -191,24 +233,34 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
             ) : (
               <FlatList
                 data={playlists}
-                keyExtractor={(item) => String(item.id)}
+                keyExtractor={(item, index) => `${item.id || item.collabId || "pl"}_${index}`}
                 style={styles.list}
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
                 renderItem={({ item }) => {
+                  const trackVid = track?.videoId || track?.video_id || track?.id;
+                  const itemTracks = Array.isArray(item.tracks) ? item.tracks : [];
+                  const isInitiallyIn = trackVid && itemTracks.some(
+                    (t) => (t.videoId || t.video_id || t.id) === trackVid
+                  );
                   const status = addedPlaylists[item.id];
+                  const isAdded = status === "done" || (isInitiallyIn && status !== "removed");
+
                   const playlistCover =
                     item.cover_url ||
                     item.preview_artwork ||
                     item.tracks?.[0]?.artwork_url ||
                     item.tracks?.[0]?.thumbnail ||
                     "";
-                  const trackCount = Array.isArray(item.tracks) ? item.tracks.length : (item.track_count || 0);
+                  const trackCount = itemTracks.length || (item.track_count || 0);
 
                   return (
                     <TouchableOpacity
-                      style={styles.playlistRow}
-                      onPress={() => handleAddToPlaylist(item)}
+                      style={[
+                        styles.playlistRow,
+                        isAdded && { borderColor: "rgba(29, 185, 84, 0.35)", backgroundColor: "rgba(29, 185, 84, 0.06)" },
+                      ]}
+                      onPress={() => handleAddToPlaylist(item, isAdded)}
                       activeOpacity={0.7}
                     >
                       {playlistCover ? (
@@ -218,11 +270,21 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
                         />
                       ) : (
                         <View style={[styles.playlistThumb, styles.playlistThumbFallback]}>
-                          <Ionicons name="musical-notes" size={18} color={colors.textMuted} />
+                          <Ionicons
+                            name="musical-notes"
+                            size={18}
+                            color={isAdded ? colors.primary : colors.textMuted}
+                          />
                         </View>
                       )}
                       <View style={styles.playlistInfo}>
-                        <Text style={styles.playlistName} numberOfLines={1}>
+                        <Text
+                          style={[
+                            styles.playlistName,
+                            isAdded && { color: "#FFFFFF" },
+                          ]}
+                          numberOfLines={1}
+                        >
                           {item.name}
                         </Text>
                         <Text style={styles.playlistCount}>
@@ -235,7 +297,7 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
                         )}
                         {status === "adding" ? (
                           <ActivityIndicator size="small" color={colors.primary} />
-                        ) : status === "done" ? (
+                        ) : isAdded ? (
                           <Ionicons name="checkmark-circle" size={24} color={colors.primary} />
                         ) : (
                           <Ionicons

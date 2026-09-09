@@ -54,7 +54,7 @@ const getHighResArtwork = (url) => {
 };
 
 export default function DesktopPlayerBar() {
-  const { isTablet, isDesktop } = useResponsive();
+  const { isTablet, isDesktop, deviceName, deviceIcon } = useResponsive();
   const {
     currentTrack,
     isPlaying,
@@ -456,13 +456,13 @@ export default function DesktopPlayerBar() {
       <View style={[styles.rightSection, isTablet && styles.rightSectionTablet]}>
         <View style={styles.streamBadge}>
           <Ionicons
-            name={isDesktop ? "desktop-outline" : isTablet ? "tablet-portrait-outline" : "phone-portrait-outline"}
+            name={deviceIcon || (isDesktop ? "desktop-outline" : isTablet ? "tablet-portrait-outline" : "phone-portrait-outline")}
             size={14}
             color={colors.primary}
             style={{ marginRight: 6 }}
           />
           <Text style={styles.streamText}>
-            {isDesktop ? "Desktop" : isTablet ? "iPad / Tablet" : "Phone"}
+            {deviceName || (isDesktop ? "Desktop" : isTablet ? "iPad / Tablet" : "Phone")}
           </Text>
         </View>
 

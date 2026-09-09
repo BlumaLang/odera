@@ -30,6 +30,8 @@ import MiniPlayer from "./src/components/MiniPlayer";
 import FullPlayerModal from "./src/components/FullPlayerModal";
 import DesktopSidebar from "./src/components/DesktopSidebar";
 import DesktopPlayerBar from "./src/components/DesktopPlayerBar";
+import ChangelogModal from "./src/components/ChangelogModal";
+import { BUILD_NUMBER, APP_VERSION } from "./src/config/version";
 import { colors, fonts } from "./src/theme/colors";
 
 const Tab = createBottomTabNavigator();
@@ -86,8 +88,6 @@ const VALID_ROUTES = {
   friends: "Friends",
   friend: "Friends",
   premium: "Premium",
-  pulse: "Home",
-  feed: "Home",
 };
 
 // Parse and validate page from browser URL (cannot open any other pages)
@@ -307,6 +307,8 @@ function AppContent() {
     closeProfile,
   } = useUser();
 
+  const [showUpdateChangelog, setShowUpdateChangelog] = useState(false);
+
   // Enforce pure black PWA theme-color and status bar on Web and Mobile browsers
   useEffect(() => {
     if (Platform.OS === "web" && typeof document !== "undefined") {
@@ -339,6 +341,33 @@ function AppContent() {
     }
   }, []);
 
+  // Show changelog on app open: ONLY ONCE per version/build update
+  useEffect(() => {
+    if (!isLoggedIn || !isOnboardingCompleted) return;
+
+    try {
+      const updateKey = `@staytup_changelog_seen_${BUILD_NUMBER}`;
+      let seen = null;
+      if (typeof window !== "undefined" && window.localStorage) {
+        seen = window.localStorage.getItem(updateKey);
+      }
+      if (!seen) {
+        // First time opening after this update -> show changelog modal
+        setShowUpdateChangelog(true);
+      }
+    } catch (_) {}
+  }, [isLoggedIn, isOnboardingCompleted]);
+
+  const handleDismissUpdateChangelog = () => {
+    setShowUpdateChangelog(false);
+    try {
+      const updateKey = `@staytup_changelog_seen_${BUILD_NUMBER}`;
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.setItem(updateKey, "true");
+      }
+    } catch (_) {}
+  };
+
   if (isLoadingUser) {
     return (
       <View style={styles.loadingContainer}>
@@ -369,6 +398,11 @@ function AppContent() {
       <MainTabs />
       {/* Global Profile Page Modal */}
       <ProfileScreen visible={isProfileOpen} onClose={closeProfile} />
+      {/* One-time Update Changelog Modal (shows once per version update on app open) */}
+      <ChangelogModal
+        visible={showUpdateChangelog}
+        onClose={handleDismissUpdateChangelog}
+      />
     </NavigationContainer>
   );
 }

@@ -23,6 +23,7 @@ const PREMIUM_PLANS = [
     id: "1month",
     name: "1 Month",
     badge: "Flexible",
+    amount: 49,
     price: "₹49 / 1 month",
     durationMonths: 1,
     highlight: "1 Month Access",
@@ -40,6 +41,7 @@ const PREMIUM_PLANS = [
     id: "2months",
     name: "2 Months",
     badge: "Popular",
+    amount: 89,
     price: "₹89 / 2 months",
     durationMonths: 2,
     highlight: "2 Months Access",
@@ -57,6 +59,7 @@ const PREMIUM_PLANS = [
     id: "3months",
     name: "3 Months",
     badge: "Best Value",
+    amount: 129,
     price: "₹129 / 3 months",
     durationMonths: 3,
     highlight: "3 Months Access",
@@ -74,6 +77,7 @@ const PREMIUM_PLANS = [
     id: "6months",
     name: "6 Months",
     badge: "Maximum Savings",
+    amount: 249,
     price: "₹249 / 6 months",
     durationMonths: 6,
     highlight: "6 Months Access",
@@ -148,6 +152,25 @@ export default function PremiumScreen() {
         }
       },
     });
+  };
+
+  const handleActivateFreePremium = async () => {
+    try {
+      await activatePremium("Free Premium", {
+        paymentId: "free_" + Date.now().toString(36),
+        amount: 0,
+        planId: "free",
+        planName: "Free Premium",
+        provider: "free",
+        timestamp: new Date().toISOString(),
+      });
+      Alert.alert(
+        "Welcome to Premium! 🎉",
+        "Your Staytup Premium is now active completely free. Enjoy ad-free listening, Hi-Fi audio, and unlimited skips!"
+      );
+    } catch (err) {
+      console.warn("Free premium activation notice:", err);
+    }
   };
 
   const handleCancelSubscription = () => {
@@ -232,10 +255,6 @@ export default function PremiumScreen() {
           ) : (
             /* Hero Card for Free Users */
             <View style={styles.heroCard}>
-              <View style={styles.heroBadge}>
-                <Ionicons name="sparkles" size={13} color="#000000" />
-                <Text style={styles.heroBadgeText}>SPECIAL OFFER</Text>
-              </View>
               <Text style={styles.heroHeadline}>Listen without limits.</Text>
               <Text style={styles.heroSubheadline}>
                 Upgrade to Staytup Premium. Enjoy ad-free music, offline
@@ -243,13 +262,13 @@ export default function PremiumScreen() {
               </Text>
               <TouchableOpacity
                 style={styles.heroCtaButton}
-                onPress={() => handleSubscribePlan(PREMIUM_PLANS[0])}
+                onPress={handleActivateFreePremium}
                 activeOpacity={0.88}
               >
-                <Text style={styles.heroCtaText}>GET 1 MONTH • ₹49</Text>
+                <Text style={styles.heroCtaText}>GET STARTED FREE</Text>
               </TouchableOpacity>
               <Text style={styles.heroTermsNote}>
-                Plans available for 1, 2, 3, or 6 months. Terms apply.
+                100% Free for all listeners. No payment required.
               </Text>
             </View>
           )}
@@ -344,7 +363,7 @@ export default function PremiumScreen() {
                           isCurrent && styles.planButtonTextCurrent,
                         ]}
                       >
-                        {isCurrent ? "Current Plan" : `Pay with Razorpay • ${plan.price.split("/")[0].trim()}`}
+                        {isCurrent ? "Current Plan" : `Pay with Razorpay • ₹${plan.amount}`}
                       </Text>
                     )}
                   </TouchableOpacity>

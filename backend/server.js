@@ -30,7 +30,8 @@ app.use(cors({
   exposedHeaders: ['Content-Range', 'Content-Length', 'Accept-Ranges']
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
 // In-memory cache for audio streams & home feed
 const streamCache = new Map();
@@ -626,6 +627,338 @@ app.get(['/api/search', '/search'], async (req, res) => {
   }
 });
 
+// ─── 3b. Import YouTube Playlist (/api/import-playlist and /import-playlist) ───
+
+function extractPlaylistId(input) {
+  if (!input || typeof input !== 'string') return null;
+  const str = input.trim();
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(str) && (str.startsWith('PL') || str.startsWith('OLAK') || str.startsWith('RD') || str.startsWith('UU') || str.startsWith('FL') || str.startsWith('TL'))) {
+    return str;
+  }
+  const match = str.match(/[?&]list=([a-zA-Z0-9_-]+)/i);
+  if (match && match[1]) {
+    return match[1];
+  }
+  return null;
+}
+
+function cleanVideoTitle(rawTitle) {
+  if (!rawTitle) return '';
+  return rawTitle
+    .replace(/\s*\((Official\s*(Music\s*)?Video|Lyrics|Lyric\s*Video|Audio|Official\s*Audio|4K|HD|HQ)\)/gi, '')
+    .replace(/\s*\[(Official\s*(Music\s*)?Video|Lyrics|Lyric\s*Video|Audio|Official\s*Audio|4K|HD|HQ)\]/gi, '')
+    .trim();
+}
+
+async function scrapeYouTubePlaylist(playlistUrlOrId) {
+  const listId = extractPlaylistId(playlistUrlOrId);
+  if (!listId) {
+    throw new Error('Invalid YouTube playlist URL or ID');
+  }
+
+  const url = `https://www.youtube.com/playlist?list=${listId}`;
+  const resp = await fetch(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+  });
+
+  if (!resp.ok) {
+    throw new Error(`YouTube returned status ${resp.status}`);
+  }
+
+  const html = await resp.text();
+  const match = html.match(/ytInitialData\s*=\s*({.+?});<\/script>/);
+  if (!match) {
+    throw new Error('Could not parse playlist data from YouTube');
+  }
+
+  const data = JSON.parse(match[1]);
+
+  if (Array.isArray(data?.alerts)) {
+    for (const alert of data.alerts) {
+      if (alert.alertRenderer?.type === 'ERROR') {
+        const msg = alert.alertRenderer?.text?.runs?.map((r) => r.text).join('') || 'Playlist does not exist or is private';
+        throw new Error(msg);
+      }
+    }
+  }
+
+  const rawTitle =
+    data?.metadata?.playlistMetadataRenderer?.title ||
+    data?.header?.playlistHeaderRenderer?.title?.simpleText ||
+    data?.header?.pageHeaderRenderer?.pageTitle ||
+    'Imported Playlist';
+
+  const rawDesc =
+    data?.metadata?.playlistMetadataRenderer?.description ||
+    data?.header?.playlistHeaderRenderer?.descriptionText?.simpleText ||
+    '';
+
+  const tracks = [];
+  const seenIds = new Set();
+
+  function walk(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) {
+      for (const item of obj) walk(item);
+      return;
+    }
+
+    // Classic format: playlistVideoRenderer
+    if (obj.playlistVideoRenderer) {
+      const v = obj.playlistVideoRenderer;
+      const id = v.videoId;
+      if (id && !seenIds.has(id)) {
+        seenIds.add(id);
+        const rawT = v.title?.runs?.map((r) => r.text).join('') || v.title?.simpleText || '';
+        const rawA = v.shortBylineText?.runs?.map((r) => r.text).join('') || '';
+        const thumb = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+        const durSec = parseInt(v.lengthSeconds, 10) || 0;
+
+        let artist = rawA;
+        let title = cleanVideoTitle(rawT);
+        if ((!artist || artist.toLowerCase().includes('topic')) && title.includes(' - ')) {
+          const parts = title.split(' - ');
+          artist = parts[0].trim();
+          title = parts.slice(1).join(' - ').trim();
+        }
+
+        tracks.push({
+          id,
+          videoId: id,
+          video_id: id,
+          title,
+          artist: artist || 'YouTube Artist',
+          artwork_url: thumb,
+          thumbnail: thumb,
+          duration: durSec,
+          duration_seconds: durSec,
+        });
+      }
+    }
+
+    // Modern format: lockupViewModel
+    if (obj.lockupViewModel && obj.lockupViewModel.contentId) {
+      const v = obj.lockupViewModel;
+      const id = v.contentId;
+      if (id && !seenIds.has(id)) {
+        seenIds.add(id);
+        const meta = v.metadata?.lockupMetadataViewModel;
+        const rawT = meta?.title?.content || '';
+        const rows = meta?.metadata?.contentMetadataViewModel?.metadataRows || meta?.metadataRows || [];
+        const rawA = rows?.[0]?.metadataParts?.[0]?.text?.content || '';
+        const thumb = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+
+        let artist = rawA;
+        let title = cleanVideoTitle(rawT);
+        if ((!artist || artist.toLowerCase().includes('topic')) && title.includes(' - ')) {
+          const parts = title.split(' - ');
+          artist = parts[0].trim();
+          title = parts.slice(1).join(' - ').trim();
+        }
+
+        tracks.push({
+          id,
+          videoId: id,
+          video_id: id,
+          title,
+          artist: artist || 'YouTube Artist',
+          artwork_url: thumb,
+          thumbnail: thumb,
+        });
+      }
+    }
+
+    for (const k of Object.keys(obj)) {
+      if (typeof obj[k] === 'object') walk(obj[k]);
+    }
+  }
+
+  walk(data);
+
+  const coverUrl = tracks[0]?.artwork_url || '';
+
+  return {
+    playlistId: listId,
+    title: rawTitle,
+    description: rawDesc,
+    cover_url: coverUrl,
+    preview_artwork: coverUrl,
+    count: tracks.length,
+    tracks,
+  };
+}
+
+function isSpotifyPlaylist(input) {
+  if (!input || typeof input !== 'string') return false;
+  return input.includes('spotify.com/playlist/') || input.includes('spotify:playlist:');
+}
+
+function extractSpotifyPlaylistId(input) {
+  if (!input || typeof input !== 'string') return null;
+  const match = input.match(/playlist[\/:]([a-zA-Z0-9]+)/i);
+  return match ? match[1] : null;
+}
+
+async function scrapeSpotifyPlaylist(urlOrId) {
+  const playlistId = extractSpotifyPlaylistId(urlOrId);
+  if (!playlistId) {
+    throw new Error('Invalid Spotify playlist URL or ID');
+  }
+
+  // 1. Try Spotify embed page (fast, public, provides full tracklist up to 100 tracks without auth)
+  try {
+    const embedResp = await fetch(`https://open.spotify.com/embed/playlist/${playlistId}`, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+
+    if (embedResp.ok) {
+      const html = await embedResp.text();
+      const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i);
+      if (nextDataMatch) {
+        const json = JSON.parse(nextDataMatch[1]);
+        const entity = json.props?.pageProps?.state?.data?.entity;
+        const trackList = entity?.trackList || [];
+
+        if (trackList.length > 0) {
+          const title = entity?.title || entity?.name || 'Spotify Playlist';
+          const coverUrl = entity?.coverArt?.sources?.[0]?.url || '';
+          const tracks = trackList.map((t, idx) => {
+            const trackTitle = cleanVideoTitle(t.title || '');
+            const artist = (t.subtitle || '').replace(/[\u00A0\u200B\u200C\u200D]/g, ' ').trim();
+            const durSec = Math.round((t.duration || 0) / 1000);
+            return {
+              id: t.id || t.uid || `sp_${idx}`,
+              videoId: `sp_${idx}`,
+              video_id: `sp_${idx}`,
+              title: trackTitle,
+              artist: artist || 'Spotify Artist',
+              artwork_url: coverUrl,
+              thumbnail: coverUrl,
+              duration: durSec,
+              duration_seconds: durSec,
+            };
+          });
+
+          return {
+            platform: 'spotify',
+            playlistId,
+            title,
+            description: entity?.subtitle || '',
+            cover_url: coverUrl,
+            preview_artwork: coverUrl,
+            count: tracks.length,
+            tracks,
+          };
+        }
+      }
+    }
+  } catch (embedErr) {
+    console.warn('Spotify embed parse fallback:', embedErr.message);
+  }
+
+  // 2. Fallback: Parse open.spotify.com/playlist/<id> HTML initialState
+  const pageResp = await fetch(`https://open.spotify.com/playlist/${playlistId}`, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+  });
+
+  if (!pageResp.ok) {
+    throw new Error(`Spotify returned status ${pageResp.status}`);
+  }
+
+  const pageHtml = await pageResp.text();
+  const stateMatch = pageHtml.match(/<script id="initialState"[^>]*>([\s\S]*?)<\/script>/i);
+  if (!stateMatch) {
+    throw new Error('Could not parse playlist information from Spotify');
+  }
+
+  const stateJson = JSON.parse(Buffer.from(stateMatch[1].trim(), 'base64').toString('utf-8'));
+  const pl = Object.values(stateJson?.entities?.items || {})[0];
+  if (!pl) {
+    throw new Error('Spotify playlist not found or private');
+  }
+
+  const title = pl.name || 'Spotify Playlist';
+  const desc = pl.description || '';
+  const coverUrl = pl.images?.items?.[0]?.sources?.[0]?.url || '';
+  const rawItems = pl.content?.items || [];
+  const tracks = [];
+
+  for (let i = 0; i < rawItems.length; i++) {
+    const d = rawItems[i]?.itemV2?.data;
+    if (d?.name) {
+      const trackTitle = cleanVideoTitle(d.name);
+      const artists = d.artists?.items?.map((a) => a.profile?.name).filter(Boolean).join(', ') || 'Spotify Artist';
+      const durSec = Math.round((d.duration?.totalMilliseconds || 0) / 1000);
+      const trackArt = d.albumOfTrack?.coverArt?.sources?.[0]?.url || coverUrl;
+
+      tracks.push({
+        id: `sp_${i}`,
+        videoId: `sp_${i}`,
+        video_id: `sp_${i}`,
+        title: trackTitle,
+        artist: artists,
+        artwork_url: trackArt,
+        thumbnail: trackArt,
+        duration: durSec,
+        duration_seconds: durSec,
+      });
+    }
+  }
+
+  if (tracks.length === 0) {
+    throw new Error('No songs found in this Spotify playlist. Ensure it is public.');
+  }
+
+  return {
+    platform: 'spotify',
+    playlistId,
+    title,
+    description: desc,
+    cover_url: coverUrl,
+    preview_artwork: coverUrl,
+    count: tracks.length,
+    tracks,
+  };
+}
+
+const handleImportPlaylist = async (req, res) => {
+  const queryUrl = req.query.url || req.query.list || req.query.link || req.body?.url || req.body?.listId;
+  if (!queryUrl) {
+    return res.status(400).json({ success: false, error: 'Playlist URL or list ID is required' });
+  }
+
+  try {
+    let playlistData;
+    if (isSpotifyPlaylist(queryUrl)) {
+      playlistData = await scrapeSpotifyPlaylist(queryUrl);
+    } else {
+      playlistData = await scrapeYouTubePlaylist(queryUrl);
+    }
+    res.json({
+      success: true,
+      ...playlistData,
+    });
+  } catch (err) {
+    console.error('Import playlist error:', err.message);
+    res.status(500).json({ success: false, error: err.message || 'Failed to import playlist' });
+  }
+};
+
+app.get(['/api/import-playlist', '/import-playlist'], handleImportPlaylist);
+app.post(['/api/import-playlist', '/import-playlist'], handleImportPlaylist);
+
 // ─── 4. Stream Metadata Resolution (/stream/:id and /api/stream/:id) ──────────
 app.get(['/stream/:id', '/api/stream/:id'], async (req, res) => {
   const videoId = req.params.id;
@@ -967,7 +1300,7 @@ app.get(['/home', '/home/:userId', '/api/home'], async (req, res) => {
       scrapeYouTubeSearch('Telugu hit songs 2025 2026 latest').then(r => r.slice(0, 15)),
       scrapeYouTubeSearch('Indian indie viral songs 2025 2026').then(r => r.slice(0, 12)),
       scrapeYouTubeSearch('party anthem Bollywood English Hindi 2025 2026').then(r => r.slice(0, 12)),
-      scrapeYouTubeSearch('romantic Hindi English songs 2025 2026').then(r => r.slice(0, 12)),
+      scrapeYouTubeSearch('top Bollywood romantic melodies Hindi songs 2025 2026').then(r => r.slice(0, 15)),
       scrapeYouTubeSearch('workout gym motivation Indian English songs 2025').then(r => r.slice(0, 10)),
       scrapeYouTubeSearch('late night chill Hindi English songs 2025 2026').then(r => r.slice(0, 10)),
       scrapeYouTubeSearch('devotional spiritual songs Hindu bhajan 2025 2026').then(r => r.slice(0, 10)),
@@ -986,6 +1319,7 @@ app.get(['/home', '/home/:userId', '/api/home'], async (req, res) => {
       { id: 'trending_now', title: 'Trending Now India', tracks: get(trendingIndia) },
       { id: 'new_releases', title: 'New Releases', tracks: get(newReleases) },
       { id: 'top_hindi', title: 'Top Hindi Songs', tracks: get(hindiTop) },
+      { id: 'romantic_melodies', title: 'Romantic Melodies', tracks: get(romanticVibes) },
       { id: 'bollywood_blockbusters', title: 'Bollywood Blockbusters', tracks: get(bollywoodBlockbusters) },
       { id: 'punjabi_bangers', title: 'Punjabi Bangers', tracks: get(punjabiHits) },
       { id: 'tamil_hits', title: 'Tamil Hits', tracks: get(tamilHits) },
@@ -996,7 +1330,6 @@ app.get(['/home', '/home/:userId', '/api/home'], async (req, res) => {
       { id: 'indie_pop', title: 'Indie Pop India', tracks: get(indiePopIndia) },
       { id: 'indie_viral', title: 'Indie & Viral', tracks: get(indieViral) },
       { id: 'party_anthems', title: 'Party Anthems', tracks: get(partyAnthem) },
-      { id: 'romantic_vibes', title: 'Romantic Vibes', tracks: get(romanticVibes) },
       { id: 'romantic_english', title: 'Romantic English Songs', tracks: get(romanticEnglish) },
       { id: 'lofi_chill_hindi', title: 'Lofi Chill Hindi', tracks: get(lofiChillHindi) },
       { id: 'devotional', title: 'Devotional & Spiritual', tracks: get(devotional) },
@@ -1222,6 +1555,75 @@ app.get(['/api/personalized/:userId', '/personalized/:userId'], async (req, res)
     res.json({ sections: [], personalized: false, generated_at: new Date().toISOString() });
   }
 });
+// ─── Song Recognition (Shazam / AudD) ─────────────────────────────────────────
+app.post(['/api/recognize', '/recognize'], async (req, res) => {
+  try {
+    const { audio, url: audioUrl } = req.body || {};
+    if (!audio && !audioUrl) {
+      return res.status(400).json({ status: 'error', message: 'No audio data or URL provided' });
+    }
+
+    const token = process.env.AUDD_API_TOKEN || 'test';
+    const formParams = new URLSearchParams();
+    formParams.append('api_token', token);
+
+    if (audio) {
+      const cleanBase64 = audio.includes('base64,') ? audio.split('base64,')[1] : audio;
+      formParams.append('audio', cleanBase64);
+    } else if (audioUrl) {
+      formParams.append('url', audioUrl);
+    }
+
+    const auddRes = await fetch('https://api.audd.io/', {
+      method: 'POST',
+      body: formParams,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
+
+    const data = await auddRes.json();
+    if (data.status === 'success' && data.result) {
+      const title = data.result.title || '';
+      const artist = data.result.artist || '';
+
+      // Try searching local Saavn catalog for immediate direct stream & artwork
+      let matchedTrack = null;
+      if (title) {
+        try {
+          const saavnSearch = await fetchSaavnJson(`/search/songs?query=${encodeURIComponent(`${title} ${artist}`)}&limit=5`);
+          if (saavnSearch && saavnSearch.success && Array.isArray(saavnSearch.data?.results) && saavnSearch.data.results.length > 0) {
+            matchedTrack = normalizeSaavnSong(saavnSearch.data.results[0], null);
+          }
+        } catch (_) {}
+      }
+
+      return res.json({
+        status: 'success',
+        result: {
+          title,
+          artist,
+          album: data.result.album || '',
+          release_date: data.result.release_date || '',
+          song_link: data.result.song_link || '',
+          timecode: data.result.timecode || '',
+          label: data.result.label || '',
+          spotify: data.result.spotify || null,
+          track: matchedTrack,
+        },
+      });
+    }
+
+    return res.json({
+      status: 'not_found',
+      message: data.error?.error_message || 'Song could not be identified',
+    });
+  } catch (err) {
+    console.error('Recognition endpoint error:', err.message);
+    return res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 app.post('/play-event', async (req, res) => {
   recordFirebasePlay(req.body).catch(() => {});
   res.json({ status: 'ok' });
@@ -1536,183 +1938,206 @@ app.get(['/api/referral/stats/:code', '/referral/stats/:code'], (req, res) => {
   res.json({ count: ref.count, rewards: (ref.count || 0) * 10 });
 });
 
+function extractStaytupArtistImage(imageObj) {
+  if (!imageObj) return null;
+  if (typeof imageObj === 'string') return imageObj;
+  if (Array.isArray(imageObj)) {
+    if (imageObj.length === 0) return null;
+    const sorted = [...imageObj].sort((a, b) => {
+      const qA = parseInt(String(a?.quality || '').split('x')[0] || '0', 10);
+      const qB = parseInt(String(b?.quality || '').split('x')[0] || '0', 10);
+      return qB - qA;
+    });
+    for (const item of sorted) {
+      const u = item?.url || (typeof item === 'string' ? item : null);
+      if (u && !u.includes('default-film') && !u.includes('default-music')) return u;
+    }
+    return sorted[0]?.url || null;
+  }
+  return null;
+}
+
 app.get('/artists/search', async (req, res) => {
   const q = req.query.q ? String(req.query.q).trim() : '';
-  const limit = Math.min(parseInt(req.query.limit) || 10, 20);
+  const limit = Math.min(parseInt(req.query.limit) || 10, 30);
   if (!q) return res.json({ results: [], artists: [] });
 
-  const list = await scrapeYouTubeSearch(`${q} artist official channel`);
+  try {
+    const url = `https://staytup-api.onrender.com/api/search/artists?query=${encodeURIComponent(q)}&limit=${limit}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    if (resp.ok) {
+      const json = await resp.json();
+      const rawList = json?.data?.results || [];
+      const normalized = rawList
+        .filter((item) => item && item.name)
+        .map((item) => ({
+          id: String(item.id || ''),
+          name: item.name.trim(),
+          image: extractStaytupArtistImage(item.image),
+          thumbnail: extractStaytupArtistImage(item.image),
+          role: item.role || 'Artist',
+          type: 'artist',
+        }))
+        .filter((item) => item.name.length > 1);
 
-  const labelKeywords = [
-    'records', 'music', 'label', 'entertainment', 'studios', 'audio',
-    'official video', 'vevo', 'topic', 'tv', 'films', 'production',
-    'network', 'distribution', 'publishing', 'media', 'tunes',
-  ];
-
-  const cleaned = list
-    .filter((item) => {
-      const title = (item.title || '').toLowerCase();
-      const channel = (item.artist || '').toLowerCase();
-      const combined = title + ' ' + channel;
-
-      if (combined.includes('official video') || combined.includes('official audio')) return false;
-      if (combined.includes('lyrics') && !combined.includes('artist')) return false;
-      if (combined.includes('compilation') || combined.includes('mix')) return false;
-
-      const isLabel = labelKeywords.some((kw) => {
-        const regex = new RegExp(`\\b${kw}\\b`, 'i');
-        return regex.test(channel) && !regex.test(title);
+      const seenIds = new Set();
+      const seenNames = new Set();
+      const unique = normalized.filter((item) => {
+        const idKey = item.id;
+        const nameKey = item.name.toLowerCase();
+        if (idKey && seenIds.has(idKey)) return false;
+        if (seenNames.has(nameKey)) return false;
+        if (idKey) seenIds.add(idKey);
+        seenNames.add(nameKey);
+        return true;
       });
-      if (isLabel) return false;
 
-      return true;
-    })
-    .map((item) => {
-      let artistName = item.artist || '';
-      artistName = artistName
-        .replace(/\s*-\s*Topic$/i, '')
-        .replace(/\s*-\s*Topic Music$/i, '')
-        .replace(/\s*VEVO$/i, '')
-        .trim();
-
-      if (!artistName) {
-        artistName = item.title
-          .replace(/\s*[-–]\s*(Official|Audio|Video|Lyric|Lyrics|HD|4K).*$/i, '')
-          .trim();
-      }
-
-      return {
-        name: artistName,
-        thumbnail: item.thumbnail || null,
-        videoId: item.videoId,
-      };
-    })
-    .filter((a) => a.name && a.name.length > 1 && a.name.length < 60);
-
-  const seen = new Set();
-  const unique = cleaned.filter((a) => {
-    const key = a.name.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  res.json({ results: unique.slice(0, limit), artists: unique.slice(0, limit) });
-});
-
-// ─── Similar Artists Endpoint ──────────────────────────────────────────────────
-const ARTIST_SIMILARITY_MAP = {
-  'Arijit Singh': ['Atif Aslam', 'Mohit Chauhan', 'Armaan Malik', 'Darshan Raval', 'Jubin Nautiyal', 'Tulsi Kumar'],
-  'Shreya Ghoshal': ['Sunidhi Chauhan', 'Neha Kakkar', 'Palak Muchhal', 'Jonita Gandhi', 'Asees Kaur'],
-  'Diljit Dosanjh': ['Karan Aujla', 'AP Dhillon', 'Ammy Virk', 'Shubh', 'Guru Randhawa', 'Badshah'],
-  'Karan Aujla': ['Diljit Dosanjh', 'AP Dhillon', 'Sidhu Moose Wala', 'Ammy Virk', 'Guru Randhawa'],
-  'AP Dhillon': ['Diljit Dosanjh', 'Karan Aujla', 'Shubh', 'Sidhu Moose Wala', 'Guru Randhawa'],
-  'Taylor Swift': ['Ed Sheeran', 'Billie Eilish', 'Olivia Rodrigo', 'Ariana Grande', 'Dua Lipa'],
-  'The Weeknd': ['Drake', 'Post Malone', 'Bruno Mars', 'The Kid LAROI', 'Doja Cat'],
-  'Drake': ['The Weeknd', 'Travis Scott', 'Post Malone', 'Kendrick Lamar', 'J. Cole'],
-  'Ed Sheeran': ['Taylor Swift', 'Shawn Mendes', 'Lewis Capaldi', 'Justin Bieber', 'Dean Lewis'],
-  'Billie Eilish': ['Taylor Swift', 'Olivia Rodrigo', 'Lana Del Rey', 'Dua Lipa', 'Ariana Grande'],
-  'Bad Bunny': ['J Balvin', 'Rauw Alejandro', 'Ozuna', 'Daddy Yankee', 'Karol G'],
-  'BTS': ['BLACKPINK', 'Stray Kids', 'NewJeans', 'EXO', 'TWICE'],
-  'BLACKPINK': ['BTS', 'NewJeans', 'TWICE', 'aespa', 'IVE'],
-  'Anirudh Ravichander': ['Devi Sri Prasad', 'Thaman S', 'Sid Sriram', 'Yuvan Shankar Raja', 'AR Rahman'],
-  'AR Rahman': ['Ilaiyaraaja', 'Anirudh Ravichander', 'Yuvan Shankar Raja', 'Devi Sri Prasad', 'Harris Jayaraj'],
-  'Pritam': ['Arijit Singh', 'Vishal-Shekhar', 'Salim-Sulaiman', 'Amit Trivedi', 'Shankar-Ehsaan-Loy'],
-  'Atif Aslam': ['Arijit Singh', 'Rahat Fateh Ali Khan', 'Mohit Chauhan', 'Armaan Malik', 'Jubin Nautiyal'],
-  'Anuv Jain': ['Prateek Kuhad', 'The Local Train', 'Jubin Nautiyal', 'Arijit Singh', 'Darshan Raval'],
-  'Sidhu Moose Wala': ['Karan Aujla', 'Diljit Dosanjh', 'AP Dhillon', 'Shubh', 'Ammy Virk'],
-  'Rahat Fateh Ali Khan': ['Atif Aslam', 'Arijit Singh', 'Mika Singh', 'Sonu Nigam', 'Shafqat Amanat Ali'],
-  'Neha Kakkar': ['Sunidhi Chauhan', 'Shreya Ghoshal', 'Tulsi Kumar', 'Badshah', 'Honey Singh'],
-  'Badshah': ['Diljit Dosanjh', 'Neha Kakkar', 'Yo Yo Honey Singh', 'Raftaar', 'DIVINE'],
-  'Yo Yo Honey Singh': ['Badshah', 'Raftaar', 'DIVINE', 'Badshah', 'Emiway Bantai'],
-  'Prateek Kuhad': ['Anuv Jain', 'The Local Train', 'Jubin Nautiyal', 'Arijit Singh', 'Darshan Raval'],
-  'Olivia Rodrigo': ['Taylor Swift', 'Billie Eilish', 'Doja Cat', 'Dua Lipa', 'Lana Del Rey'],
-  'Bruno Mars': ['The Weeknd', 'Post Malone', 'Ed Sheeran', 'Charlie Puth', 'Justin Timberlake'],
-  'Ariana Grande': ['Taylor Swift', 'Billie Eilish', 'Dua Lipa', 'Doja Cat', 'Selena Gomez'],
-  'Dua Lipa': ['Doja Cat', 'Ariana Grande', 'Billie Eilish', 'The Weeknd', 'Harry Styles'],
-  'Doja Cat': ['Dua Lipa', 'Megan Thee Stallion', 'Cardi B', 'SZA', 'Lizzo'],
-  'Post Malone': ['The Weeknd', 'Drake', 'Juice WRLD', 'Travis Scott', 'The Kid LAROI'],
-  'J Balvin': ['Bad Bunny', 'Rauw Alejandro', 'Ozuna', 'Nicky Jam', 'Maluma'],
-  'Sid Sriram': ['Anirudh Ravichander', 'Sid Sriram', 'Devi Sri Prasad', 'Thaman S', 'Yuvan Shankar Raja'],
-  'Darshan Raval': ['Armaan Malik', 'Jubin Nautiyal', 'Arijit Singh', 'Tony Kakkar', 'Stebin Ben'],
-  'Jubin Nautiyal': ['Arijit Singh', 'Darshan Raval', 'Armaan Malik', 'Atif Aslam', 'Tulsi Kumar'],
-  'Armaan Malik': ['Darshan Raval', 'Jubin Nautiyal', 'Arijit Singh', 'Salim Merchant', 'Shashwat Sachdev'],
-  'Hans Zimmer': ['John Williams', 'Howard Shore', 'Danny Elfman', 'Ennio Morricone', 'Ramin Djawadi'],
-  'Adele': ['Sam Smith', 'Lewis Capaldi', 'Dua Lipa', 'Ed Sheeran', 'Amy Winehouse'],
-  'Coldplay': ['Maroon 5', 'OneRepublic', 'The Script', 'Snow Patrol', 'Keane'],
-  'Imagine Dragons': ['OneRepublic', 'Maroon 5', 'The Script', 'X Ambassadors', 'AJR'],
-  'Eminem': ['Drake', 'Kendrick Lamar', 'J. Cole', 'Lil Wayne', 'NF'],
-  'Kendrick Lamar': ['J. Cole', 'Drake', 'Eminem', 'Travis Scott', 'Baby Keem'],
-  'Travis Scott': ['Drake', 'Kendrick Lamar', 'Future', 'Playboi Carti', 'Don Toliver'],
-  'Shawn Mendes': ['Ed Sheeran', 'Justin Bieber', 'Charlie Puth', 'Jon Bellion', 'Dean Lewis'],
-  'Justin Bieber': ['Ed Sheeran', 'Shawn Mendes', 'The Weeknd', 'Charlie Puth', 'Jon Bellion'],
-  'AR Rahman': ['Ilaiyaraaja', 'Anirudh Ravichander', 'Yuvan Shankar Raja', 'Devi Sri Prasad', 'Harris Jayaraj'],
-  'Harris Jayaraj': ['Anirudh Ravichander', 'Yuvan Shankar Raja', 'Devi Sri Prasad', 'AR Rahman', 'Thaman S'],
-  'Devi Sri Prasad': ['Anirudh Ravichander', 'Thaman S', 'Yuvan Shankar Raja', 'AR Rahman', 'Harris Jayaraj'],
-  'Thaman S': ['Anirudh Ravichander', 'Devi Sri Prasad', 'Yuvan Shankar Raja', 'DSP', 'Harris Jayaraj'],
-  'Yuvan Shankar Raja': ['Anirudh Ravichander', 'Devi Sri Prasad', 'AR Rahman', 'Harris Jayaraj', 'Ilaiyaraaja'],
-};
-
-app.get(['/artists/similar', '/api/artists/similar'], async (req, res) => {
-  const q = req.query.q ? String(req.query.q).trim() : '';
-  const limit = Math.min(parseInt(req.query.limit) || 6, 10);
-  if (!q) return res.json({ artists: [] });
-
-  const normalizedQuery = q.trim();
-  const mapped = ARTIST_SIMILARITY_MAP[normalizedQuery];
-
-  if (mapped && mapped.length > 0) {
-    const results = await Promise.all(
-      mapped.slice(0, limit).map(async (name) => {
-        try {
-          const searchResults = await scrapeYouTubeSearch(`${name} artist official channel`);
-          const item = searchResults[0];
-          return {
-            name,
-            thumbnail: item?.thumbnail || null,
-          };
-        } catch (_) {
-          return { name, thumbnail: null };
-        }
-      })
-    );
-    return res.json({ artists: results.filter(Boolean) });
+      return res.json({ results: unique.slice(0, limit), artists: unique.slice(0, limit) });
+    }
+  } catch (err) {
+    console.warn('[API /artists/search] Staytup API error:', err.message);
   }
 
-  const list = await scrapeYouTubeSearch(`${normalizedQuery} similar artists`);
-  const labelKeywords = [
-    'records', 'music', 'label', 'entertainment', 'studios', 'official video',
-    'vevo', 'topic', 'tv', 'films', 'production', 'lyrics',
-  ];
+  res.json({ results: [], artists: [] });
+});
 
-  const filtered = list
-    .filter((item) => {
-      const channel = (item.artist || '').toLowerCase();
-      return !labelKeywords.some((kw) => channel.includes(kw));
-    })
-    .map((item) => {
-      let artistName = (item.artist || '')
-        .replace(/\s*-\s*Topic$/i, '')
-        .replace(/\s*VEVO$/i, '')
-        .trim();
-      if (!artistName) {
-        artistName = item.title
-          .replace(/\s*[-–]\s*(Official|Audio|Video|Lyric|Lyrics|HD|4K).*$/i, '')
-          .trim();
+// ─── Similar Artists Endpoint (Staytup API Powered) ───────────────────────────
+app.get(['/artists/similar', '/api/artists/similar'], async (req, res) => {
+  const q = req.query.q ? String(req.query.q).trim() : '';
+  const artistId = req.query.id ? String(req.query.id).trim() : '';
+  const limit = Math.min(parseInt(req.query.limit) || 6, 12);
+  if (!q && !artistId) return res.json({ artists: [], results: [] });
+
+  const targetName = q.toLowerCase();
+
+  // 1. If artistId is provided, or query can be looked up to get artist details
+  let resolvedId = artistId;
+  let resolvedImage = null;
+
+  if (!resolvedId && q) {
+    try {
+      const sUrl = `https://staytup-api.onrender.com/api/search/artists?query=${encodeURIComponent(q)}&limit=1`;
+      const sResp = await fetch(sUrl, { signal: AbortSignal.timeout(5000) });
+      if (sResp.ok) {
+        const sJson = await sResp.json();
+        const first = sJson?.data?.results?.[0];
+        if (first?.id) {
+          resolvedId = String(first.id);
+          resolvedImage = extractStaytupArtistImage(first.image);
+        }
       }
-      return { name: artistName, thumbnail: item.thumbnail || null };
-    })
-    .filter((a) => a.name && a.name.toLowerCase() !== normalizedQuery.toLowerCase());
+    } catch (_) {}
+  }
 
-  const seen = new Set();
-  const unique = filtered.filter((a) => {
-    const key = a.name.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  // 2. Query Staytup API artist details to extract real collaborative artists / similar artists
+  if (resolvedId) {
+    try {
+      const dUrl = `https://staytup-api.onrender.com/api/artists?id=${encodeURIComponent(resolvedId)}`;
+      const dResp = await fetch(dUrl, { signal: AbortSignal.timeout(6000) });
+      if (dResp.ok) {
+        const dJson = await dResp.json();
+        const artistData = dJson?.data;
 
-  res.json({ artists: unique.slice(0, limit) });
+        const candidates = [];
+        const seenCandidateIds = new Set([resolvedId]);
+        const seenCandidateNames = new Set([targetName]);
+
+        // A. If similarArtists exist in data
+        if (Array.isArray(artistData?.similarArtists) && artistData.similarArtists.length > 0) {
+          artistData.similarArtists.forEach((sim) => {
+            if (!sim || !sim.name) return;
+            const sId = String(sim.id || '');
+            const sName = sim.name.trim();
+            const sNameLower = sName.toLowerCase();
+            if (seenCandidateNames.has(sNameLower)) return;
+            seenCandidateNames.add(sNameLower);
+            if (sId) seenCandidateIds.add(sId);
+            candidates.push({
+              id: sId || '',
+              name: sName,
+              image: extractStaytupArtistImage(sim.image),
+              thumbnail: extractStaytupArtistImage(sim.image),
+              type: 'artist',
+            });
+          });
+        }
+
+        // B. Extract collaborating artists from topSongs and singles
+        const songCollections = [
+          ...(Array.isArray(artistData?.topSongs) ? artistData.topSongs : []),
+          ...(Array.isArray(artistData?.singles) ? artistData.singles : []),
+        ];
+
+        for (const song of songCollections) {
+          if (!song?.artists) continue;
+          const artistLists = [
+            ...(Array.isArray(song.artists.primary) ? song.artists.primary : []),
+            ...(Array.isArray(song.artists.featured) ? song.artists.featured : []),
+            ...(Array.isArray(song.artists.all) ? song.artists.all : []),
+          ];
+
+          for (const a of artistLists) {
+            if (!a || !a.name) continue;
+            const role = (a.role || '').toLowerCase();
+            // Focus on genuine musicians / singers / primary creators, avoiding lyricists and film stars
+            if (role.includes('starring') || role.includes('lyricist')) continue;
+
+            const aId = String(a.id || '');
+            const aName = a.name.trim();
+            const aNameLower = aName.toLowerCase();
+
+            if (seenCandidateNames.has(aNameLower)) continue;
+            if (aId && seenCandidateIds.has(aId)) continue;
+
+            seenCandidateNames.add(aNameLower);
+            if (aId) seenCandidateIds.add(aId);
+
+            candidates.push({
+              id: aId || '',
+              name: aName,
+              image: extractStaytupArtistImage(a.image),
+              thumbnail: extractStaytupArtistImage(a.image),
+              type: 'artist',
+            });
+
+            if (candidates.length >= limit * 2) break;
+          }
+          if (candidates.length >= limit * 2) break;
+        }
+
+        if (candidates.length > 0) {
+          const selected = candidates.slice(0, limit);
+          return res.json({ artists: selected, results: selected });
+        }
+      }
+    } catch (err) {
+      console.warn('[API /artists/similar] Detail lookup error:', err.message);
+    }
+  }
+
+  // 3. Fallback: Search related artists via Staytup search relevance
+  try {
+    const fallbackUrl = `https://staytup-api.onrender.com/api/search/artists?query=${encodeURIComponent(q)}&limit=${limit + 4}`;
+    const fbResp = await fetch(fallbackUrl, { signal: AbortSignal.timeout(5000) });
+    if (fbResp.ok) {
+      const fbJson = await fbResp.json();
+      const results = fbJson?.data?.results || [];
+      const filtered = results
+        .filter((a) => a?.name && a.name.toLowerCase() !== targetName)
+        .slice(0, limit)
+        .map((a) => ({
+          id: String(a.id || ''),
+          name: a.name.trim(),
+          image: extractStaytupArtistImage(a.image),
+          thumbnail: extractStaytupArtistImage(a.image),
+          type: 'artist',
+        }));
+
+      return res.json({ artists: filtered, results: filtered });
+    }
+  } catch (_) {}
+
+  res.json({ artists: [], results: [] });
 });
 
 // ─── 10. Start Server ─────────────────────────────────────────────────────────
@@ -1725,7 +2150,7 @@ async function startServer() {
 
   // SPA fallback: serve index.html for all non-API, non-stream routes
   const API_PREFIXES = ['/api/', '/stream/', '/stream.php'];
-  const API_EXACT = ['/search', '/suggest', '/home', '/lyrics', '/play-event', '/favorite'];
+  const API_EXACT = ['/search', '/suggest', '/home', '/lyrics', '/play-event', '/favorite', '/recognize'];
 
   app.get('*', (req, res) => {
     const p = req.path.toLowerCase();

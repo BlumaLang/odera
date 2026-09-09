@@ -1,6 +1,6 @@
 {
   "name": "frontend",
-  "version": "1.0.0",
+  "version": "2.5.0",
   "main": "index.js",
   "dependencies": {
     "@expo-google-fonts/poppins": "^0.4.1",
@@ -27,6 +27,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "prebuild": "node scripts/bump-version.js",
     "build": "expo export -p web",
     "server": "node ../backend/server.js"
   },

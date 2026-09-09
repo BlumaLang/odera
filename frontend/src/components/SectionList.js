@@ -3,7 +3,7 @@ import { View, Text, FlatList, StyleSheet, TouchableOpacity, Platform } from "re
 import { Ionicons } from "@expo/vector-icons";
 import SongCard from "./SongCard";
 import { colors, fonts } from "../theme/colors";
-import { useAudio } from "../context/AudioContext";
+import { useAudioPlayback } from "../context/AudioContext";
 import { useResponsive } from "../context/ResponsiveContext";
 
 const SECTION_BACKGROUNDS = [
@@ -14,7 +14,7 @@ const SECTION_BACKGROUNDS = [
 ];
 
 export default function SectionList({ section, sectionIndex = 0 }) {
-  const { currentTrack, playTrack } = useAudio();
+  const { currentTrack, playTrack } = useAudioPlayback();
   const { isDesktop, isTablet } = useResponsive();
   const flatListRef = useRef(null);
   const scrollOffsetRef = useRef(0);
@@ -29,6 +29,10 @@ export default function SectionList({ section, sectionIndex = 0 }) {
   }
 
   const handleSongPress = (track, index) => {
+    if (track?.mixTracks && Array.isArray(track.mixTracks) && track.mixTracks.length > 0) {
+      playTrack(track.mixTracks[0], track.mixTracks, 0);
+      return;
+    }
     playTrack(track, items, index);
   };
 

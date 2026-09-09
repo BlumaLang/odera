@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -15,18 +15,20 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useUser } from "../context/UserContext";
-import { useAudio } from "../context/AudioContext";
+import { useAudioPlayback } from "../context/AudioContext";
 import {
   subscribeFriendActivity,
   getUserData,
   getUserStreamCount,
   getLikedSongs,
 } from "../services/firebase";
+import PlaylistModal from "../components/PlaylistModal";
+import CreatePlaylistModal from "../components/CreatePlaylistModal";
 
 /**
  * Robust UserAvatar component with image error fallback to initial
  */
-function UserAvatar({ user, size = 44, fontSize = 15 }) {
+function UserAvatar({ user, size = 44, fontSize = 15, style }) {
   const [imgError, setImgError] = useState(false);
 
   useEffect(() => {
@@ -49,22 +51,27 @@ function UserAvatar({ user, size = 44, fontSize = 15 }) {
     typeof user.avatar === "string" &&
     !user.avatar.startsWith("http")
       ? user.avatar
+      : user?.icon && typeof user.icon === "string" && !user.icon.startsWith("http")
+      ? user.icon
       : null;
 
-  const initial = (user?.username?.[0] || user?.displayName?.[0] || "U").toUpperCase();
+  const initial = (user?.username?.[0] || user?.displayName?.[0] || user?.name?.[0] || "U").toUpperCase();
   const bgColor = user?.avatarColor || colors.primary;
 
   return (
     <View
-      style={{
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        backgroundColor: bgColor,
-        alignItems: "center",
-        justifyContent: "center",
-        overflow: "hidden",
-      }}
+      style={[
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: bgColor,
+          alignItems: "center",
+          justifyContent: "center",
+          overflow: "hidden",
+        },
+        style,
+      ]}
     >
       {avatarUri ? (
         <Image
@@ -76,7 +83,18 @@ function UserAvatar({ user, size = 44, fontSize = 15 }) {
       ) : iconName ? (
         <Ionicons name={iconName} size={Math.round(size * 0.44)} color="#000000" />
       ) : (
-        <Text style={{ fontFamily: fonts.bold, fontSize, color: "#000000" }}>{initial}</Text>
+        <Text
+          style={{
+            fontFamily: fonts.bold,
+            fontWeight: "700",
+            fontSize,
+            color: "#000000",
+            textAlign: "center",
+            includeFontPadding: false,
+          }}
+        >
+          {initial}
+        </Text>
       )}
     </View>
   );
@@ -95,9 +113,12 @@ export default function FriendsScreen({ onNavigate }) {
     declineFriendRequest,
     removeFriend,
     searchUsers,
+    collabPlaylists,
+    createCollabPlaylist,
+    getFriendBlend,
   } = useUser() || {};
 
-  const { playTrack, currentTrack, isPlaying, togglePlayPause } = useAudio();
+  const { playTrack, currentTrack, isPlaying, togglePlayPause } = useAudioPlayback();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchActive, setIsSearchActive] = useState(false);
@@ -105,6 +126,24 @@ export default function FriendsScreen({ onNavigate }) {
   const [sendFeedback, setSendFeedback] = useState({ text: "", isError: false });
   const [friendToDelete, setFriendToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Friends / Requests / Collab / Blend Tab State: 'friends' | 'blend' | 'requests' | 'collab'
+  const [activeTab, setActiveTab] = useState("friends");
+
+  // Blend Radar states
+  const [selectedBlendFriend, setSelectedBlendFriend] = useState(null);
+  const [blendResult, setBlendResult] = useState(null);
+  const [isLoadingBlend, setIsLoadingBlend] = useState(false);
+  const [showBlendModal, setShowBlendModal] = useState(false);
+  const [blendFriendsMap, setBlendFriendsMap] = useState({});
+  const [copiedBlendShare, setCopiedBlendShare] = useState(false);
+  const [isCreatingBlend, setIsCreatingBlend] = useState(false);
+  const searchInputRef = useRef(null);
+
+  // Collab Playlist states
+  const [selectedCollabPlaylist, setSelectedCollabPlaylist] = useState(null);
+  const [showCollabCreateModal, setShowCollabCreateModal] = useState(false);
+  const [collabModalTab, setCollabModalTab] = useState("custom");
 
   // Dismissed suggested users in this session
   const [dismissedUids, setDismissedUids] = useState(new Set());
@@ -284,7 +323,7 @@ export default function FriendsScreen({ onNavigate }) {
       } finally {
         setIsSearchingUsers(false);
       }
-    }, 220);
+    }, 90);
     return () => clearTimeout(timer);
   }, [searchQuery, searchUsers]);
 
@@ -365,7 +404,27 @@ export default function FriendsScreen({ onNavigate }) {
       });
     });
 
-    // 2. Matching global users
+    // 1b. Instantly match discoverable users locally with zero lag
+    const cleanQ = q.toLowerCase();
+    discoverUsers.forEach((u) => {
+      if (!u || !u.uid || seenUids.has(u.uid)) return;
+      if (myUid && u.uid === myUid) return;
+      if (myName && u.username && u.username.toLowerCase() === myName) return;
+      if (
+        (u.username && u.username.toLowerCase().includes(cleanQ)) ||
+        (u.friendCode && u.friendCode.toLowerCase().includes(cleanQ))
+      ) {
+        seenUids.add(u.uid);
+        results.push({
+          ...u,
+          isFriend: false,
+          isOutgoing: outgoingMap.has(u.uid),
+          isIncoming: incomingMap.has(u.uid),
+        });
+      }
+    });
+
+    // 2. Matching global users from backend
     searchResults.forEach((u) => {
       if (!u || !u.uid || seenUids.has(u.uid)) return;
       if (myUid && u.uid === myUid) return;
@@ -475,6 +534,88 @@ export default function FriendsScreen({ onNavigate }) {
     });
   };
 
+  const handleOpenBlend = async (friend) => {
+    if (!friend?.uid || !getFriendBlend) return;
+    setSelectedBlendFriend(friend);
+    setIsLoadingBlend(true);
+    setShowBlendModal(true);
+    setCopiedBlendShare(false);
+    try {
+      const res = await getFriendBlend(friend.uid, friend);
+      setBlendResult(res);
+      // NOTE: Do not auto-create or save blend here!
+      // The user must explicitly tap "Create Blend Playlist" inside the modal.
+    } catch (err) {
+      console.warn("Failed to calculate blend:", err);
+    } finally {
+      setIsLoadingBlend(false);
+    }
+  };
+
+  const handleCreateBlend = async () => {
+    if (!blendResult || !selectedBlendFriend || isCreatingBlend) return;
+    setIsCreatingBlend(true);
+    try {
+      const myName = userProfile?.username || "You";
+      const friendName = selectedBlendFriend.username || "Friend";
+      const matchPct = blendResult.matchPercentage || 85;
+      const formattedTracks = (blendResult.tracks || []).map((t) => ({
+        ...t,
+        videoId: t.videoId || t.video_id,
+      }));
+
+      if (createCollabPlaylist) {
+        await createCollabPlaylist({
+          name: `Blend: ${myName} + ${friendName}`,
+          description: `${matchPct}% Music Match • Auto-curated daily shared blend`,
+          tracks: formattedTracks,
+          cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
+        });
+      }
+
+      setBlendFriendsMap((prev) => ({
+        ...prev,
+        [selectedBlendFriend.uid]: matchPct,
+      }));
+    } catch (err) {
+      console.warn("Failed to create blend playlist:", err);
+    } finally {
+      setIsCreatingBlend(false);
+    }
+  };
+
+  const handleShareBlend = async () => {
+    if (!blendResult || !selectedBlendFriend) return;
+    const myName = userProfile?.username || "I";
+    const friendName = selectedBlendFriend.username || "my friend";
+    const matchPct = blendResult.matchPercentage || 85;
+    const shareText = `⚡ ${myName} & ${friendName} have a ${matchPct}% Music Match on Staytup! Check out our shared Blend radar & playlist.`;
+    const shareUrl = typeof window !== "undefined" && window.location ? window.location.origin : "https://staytup.odireca.com";
+
+    if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({
+          title: `${matchPct}% Music Match with ${friendName}`,
+          text: shareText,
+          url: shareUrl,
+        });
+        return;
+      } catch (_) {}
+    }
+
+    if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.clipboard) {
+      try {
+        await navigator.clipboard.writeText(`${shareText}\n${shareUrl}`);
+        setCopiedBlendShare(true);
+        setTimeout(() => setCopiedBlendShare(false), 3000);
+        return;
+      } catch (_) {}
+    }
+
+    setCopiedBlendShare(true);
+    setTimeout(() => setCopiedBlendShare(false), 3000);
+  };
+
   const isUserFriend = (user) => {
     if (!user?.uid) return false;
     return friendsList.some((f) => f.uid === user.uid || (f.username && f.username.toLowerCase() === user.username?.toLowerCase()));
@@ -500,58 +641,76 @@ export default function FriendsScreen({ onNavigate }) {
               <Text style={styles.screenTitle}>Friends</Text>
             </View>
 
-            <TouchableOpacity
-              style={[styles.profileAvatar, { backgroundColor: avatarBg }]}
-              onPress={() => openProfile && openProfile()}
-              activeOpacity={0.75}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              {avatarIcon && avatarIcon.startsWith("http") ? (
-                <Image
-                  source={{ uri: avatarIcon }}
-                  style={styles.profileAvatarImage}
-                  resizeMode="cover"
-                />
-              ) : avatarIcon ? (
-                <Ionicons name={avatarIcon} size={16} color="#000000" />
-              ) : (
-                <Text style={styles.profileAvatarText}>{userInitial}</Text>
-              )}
-            </TouchableOpacity>
+            <View style={styles.headerRightGroup}>
+              <TouchableOpacity
+                style={styles.headerCircleBtn}
+                onPress={() => {
+                  setIsSearchActive(true);
+                  setTimeout(() => {
+                    searchInputRef.current?.focus();
+                  }, 100);
+                }}
+                activeOpacity={0.75}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Search friends"
+              >
+                <Ionicons name="search" size={17} color="#FFFFFF" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.profileAvatar, { backgroundColor: avatarBg }]}
+                onPress={() => openProfile && openProfile()}
+                activeOpacity={0.75}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                {avatarIcon && avatarIcon.startsWith("http") ? (
+                  <Image
+                    source={{ uri: avatarIcon }}
+                    style={styles.profileAvatarImage}
+                    resizeMode="cover"
+                  />
+                ) : avatarIcon ? (
+                  <Ionicons name={avatarIcon} size={16} color="#000000" />
+                ) : (
+                  <Text style={styles.profileAvatarText}>{userInitial}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
 
-          {/* Single Rounded Pill Search Bar */}
-          <View style={styles.topSearchWrapper}>
-            <View style={styles.topSearchRow}>
-              <View style={[styles.topSearchBar, isSearchActive && styles.topSearchBarActive]}>
-                <Ionicons name="search" size={19} color={colors.textMuted} style={styles.searchIcon} />
-                <TextInput
-                  style={styles.topSearchInput}
-                  placeholder="Search friends or find users..."
-                  placeholderTextColor="#777777"
-                  value={searchQuery}
-                  onChangeText={(text) => {
-                    setSearchQuery(text);
-                    if (text.length > 0 && !isSearchActive) {
-                      setIsSearchActive(true);
-                    }
-                  }}
-                  onFocus={() => setIsSearchActive(true)}
-                  autoCapitalize="none"
-                  returnKeyType="search"
-                />
-                {searchQuery.length > 0 && (
-                  <TouchableOpacity
-                    onPress={() => setSearchQuery("")}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    style={styles.searchClearBtn}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="close-circle" size={19} color="#888888" />
-                  </TouchableOpacity>
-                )}
-              </View>
-              {isSearchActive && (
+          {/* Single Rounded Pill Search Bar (only shown when search is activated) */}
+          {isSearchActive && (
+            <View style={styles.topSearchWrapper}>
+              <View style={styles.topSearchRow}>
+                <View style={[styles.topSearchBar, styles.topSearchBarActive]}>
+                  <Ionicons name="search" size={19} color={colors.textMuted} style={styles.searchIcon} />
+                  <TextInput
+                    ref={searchInputRef}
+                    style={styles.topSearchInput}
+                    placeholder="Search friends or find users..."
+                    placeholderTextColor="#777777"
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    autoFocus={true}
+                    autoCapitalize="none"
+                    returnKeyType="search"
+                  />
+                  {isSearchingUsers ? (
+                    <ActivityIndicator size="small" color={colors.primary} style={{ flexShrink: 0, marginRight: 6 }} />
+                  ) : searchQuery.length > 0 ? (
+                    <TouchableOpacity
+                      onPress={() => setSearchQuery("")}
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                      style={styles.searchClearBtn}
+                      activeOpacity={0.7}
+                      accessibilityLabel="Clear search input"
+                    >
+                      <View style={styles.clearCircleBadge}>
+                        <Ionicons name="close" size={13} color="#121212" style={styles.clearIconGlyph} />
+                      </View>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
                 <TouchableOpacity
                   onPress={() => {
                     setIsSearchActive(false);
@@ -562,9 +721,85 @@ export default function FriendsScreen({ onNavigate }) {
                 >
                   <Text style={styles.cancelSearchBtnText}>Cancel</Text>
                 </TouchableOpacity>
-              )}
+              </View>
             </View>
-          </View>
+          )}
+
+          {/* Pill Tabs: Friends | Blend Radar | Requests | Collab Playlists */}
+          {!isSearchActive && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.tabsScrollContent}
+              style={styles.tabsScrollView}
+            >
+              <TouchableOpacity
+                style={[styles.tabPillBtn, activeTab === "friends" && styles.tabPillBtnActive]}
+                onPress={() => setActiveTab("friends")}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.tabPillText, activeTab === "friends" && styles.tabPillTextActive]}>
+                  Friends
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.tabPillBtn, activeTab === "blend" && styles.tabPillBtnActive]}
+                onPress={() => setActiveTab("blend")}
+                activeOpacity={0.8}
+              >
+                <View style={styles.tabPillLabelRow}>
+                  <Ionicons
+                    name="infinite"
+                    size={14}
+                    color={activeTab === "blend" ? "#000000" : "#1DB954"}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={[styles.tabPillText, activeTab === "blend" && styles.tabPillTextActive]}>
+                    Blend Radar
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.tabPillBtn, activeTab === "requests" && styles.tabPillBtnActive]}
+                onPress={() => setActiveTab("requests")}
+                activeOpacity={0.8}
+              >
+                <View style={styles.tabPillLabelRow}>
+                  <Text style={[styles.tabPillText, activeTab === "requests" && styles.tabPillTextActive]}>
+                    Requests
+                  </Text>
+                  {incomingRequests.length > 0 && (
+                    <View style={[styles.tabPillBadge, activeTab === "requests" && styles.tabPillBadgeActive]}>
+                      <Text style={[styles.tabPillBadgeText, activeTab === "requests" && styles.tabPillBadgeTextActive]}>
+                        {incomingRequests.length}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.tabPillBtn, activeTab === "collab" && styles.tabPillBtnActive]}
+                onPress={() => setActiveTab("collab")}
+                activeOpacity={0.8}
+              >
+                <View style={styles.tabPillLabelRow}>
+                  <Text style={[styles.tabPillText, activeTab === "collab" && styles.tabPillTextActive]}>
+                    Collab Playlists
+                  </Text>
+                  {collabPlaylists?.length > 0 && (
+                    <View style={[styles.tabPillBadge, activeTab === "collab" && styles.tabPillBadgeActive]}>
+                      <Text style={[styles.tabPillBadgeText, activeTab === "collab" && styles.tabPillBadgeTextActive]}>
+                        {collabPlaylists.length}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </TouchableOpacity>
+            </ScrollView>
+          )}
         </View>
       </View>
 
@@ -613,11 +848,7 @@ export default function FriendsScreen({ onNavigate }) {
                 </Text>
               </View>
 
-              {isSearchingUsers ? (
-                <View style={{ paddingVertical: 36, alignItems: "center" }}>
-                  <ActivityIndicator size="small" color={colors.primary} />
-                </View>
-              ) : combinedSearchResults.length > 0 ? (
+              {combinedSearchResults.length > 0 ? (
                 <View style={styles.unifiedUserList}>
                   {combinedSearchResults.map((u) => {
                     const activity = friendsActivity[u.uid];
@@ -720,189 +951,372 @@ export default function FriendsScreen({ onNavigate }) {
               ) : searchQuery.trim().length > 0 ? null : null}
             </View>
           ) : (
-            /* ═══════════ DEFAULT SINGLE-PAGE VIEW (NO TABS) ═══════════ */
+            /* ═══════════ TABBED VIEW: Friends | Requests ═══════════ */
             <>
-              {/* 1. Incoming Friend Requests (Only when there are incoming requests) */}
-              {incomingRequests.length > 0 && (
+              {activeTab === "friends" ? (
+                /* ── FRIENDS TAB ── */
                 <View style={styles.sectionBlock}>
-                  <View style={styles.sectionHeaderRow}>
-                    <Text style={styles.sectionHeaderTitle}>Friend Requests</Text>
-                    <View style={styles.countPill}>
-                      <Text style={styles.countPillText}>{incomingRequests.length}</Text>
+                  {sortedFriends.length > 0 ? (
+                    <View style={styles.unifiedUserList}>
+                      {sortedFriends.map((friend) => {
+                        const activity = friendsActivity[friend.uid];
+                        const isLive = Boolean(activity?.isPlaying && activity?.track);
+                        const isCurrentPlayingThis =
+                          currentTrack &&
+                          activity?.track &&
+                          (currentTrack.videoId === activity.track.videoId ||
+                            currentTrack.id === activity.track.id);
+
+                        return (
+                          <TouchableOpacity
+                            key={friend.uid}
+                            style={styles.userRowItem}
+                            onPress={() => setSelectedUserProfile(friend)}
+                            activeOpacity={0.7}
+                          >
+                            {/* Avatar & Online Dot */}
+                            <View style={styles.avatarWrapper}>
+                              <UserAvatar user={friend} size={46} fontSize={16} />
+                              <View
+                                style={[
+                                  styles.statusDot,
+                                  isLive ? styles.statusDotLive : styles.statusDotOffline,
+                                ]}
+                              />
+                            </View>
+
+                            {/* Friend Info & Song */}
+                            <View style={styles.userInfoWrap}>
+                              <Text style={styles.userNameText} numberOfLines={1}>
+                                {friend.username}
+                              </Text>
+
+                              {isLive ? (
+                                <View style={styles.liveTrackRow}>
+                                  <MaterialCommunityIcons
+                                    name="waveform"
+                                    size={14}
+                                    color="#1DB954"
+                                    style={{ marginRight: 4 }}
+                                  />
+                                  <Text style={styles.liveTrackTitle} numberOfLines={1}>
+                                    {activity.track.title}
+                                  </Text>
+                                  {activity.track.artist ? (
+                                    <Text style={styles.liveTrackArtist} numberOfLines={1}>
+                                      {"  "}• {activity.track.artist}
+                                    </Text>
+                                  ) : null}
+                                </View>
+                              ) : (
+                                <Text style={styles.userHandleSubText} numberOfLines={1}>
+                                  {activity?.track ? `♫ ${activity.track.title}` : `@${friend.username}`}
+                                </Text>
+                              )}
+                            </View>
+
+                            {/* Action Buttons */}
+                            <View style={styles.userActionsRow}>
+                              {isLive && activity?.track && (
+                                <TouchableOpacity
+                                  style={[
+                                    styles.listenAlongBtn,
+                                    isCurrentPlayingThis && styles.listenAlongBtnActive,
+                                  ]}
+                                  onPress={(e) => {
+                                    e.stopPropagation();
+                                    handleListenAlong(activity.track);
+                                  }}
+                                  activeOpacity={0.8}
+                                >
+                                  <Ionicons
+                                    name={isCurrentPlayingThis ? "volume-high" : "play"}
+                                    size={12}
+                                    color="#000000"
+                                  />
+                                  <Text style={styles.listenAlongText}>
+                                    {isCurrentPlayingThis ? "Listening" : "Listen"}
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+
+                              <TouchableOpacity
+                                style={styles.dismissCloseBtn}
+                                onPress={(e) => {
+                                  e.stopPropagation();
+                                  setFriendToDelete(friend);
+                                }}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                accessibilityLabel="Remove friend"
+                              >
+                                <Ionicons name="close" size={18} color="#888888" />
+                              </TouchableOpacity>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
-                  </View>
-
-                  <View style={styles.unifiedUserList}>
-                    {incomingRequests.map((req) => (
-                      <TouchableOpacity
-                        key={`req_${req.uid}`}
-                        style={styles.userRowItem}
-                        onPress={() => setSelectedUserProfile(req)}
-                        activeOpacity={0.7}
-                      >
-                        <UserAvatar user={req} size={46} fontSize={16} />
-
-                        <View style={styles.userInfoWrap}>
-                          <Text style={styles.userNameText} numberOfLines={1}>
-                            {req.username}
-                          </Text>
-                          <Text style={styles.requestSubText}>Wants to be friends</Text>
-                        </View>
-
-                        <View style={styles.requestActionsRow}>
-                          <TouchableOpacity
-                            style={styles.acceptBtn}
-                            onPress={(e) => {
-                              e.stopPropagation();
-                              handleAcceptRequest(req);
-                            }}
-                            activeOpacity={0.8}
-                          >
-                            <Ionicons name="checkmark" size={14} color="#000000" style={{ marginRight: 4 }} />
-                            <Text style={styles.acceptBtnText}>Accept</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={styles.declineCloseBtn}
-                            onPress={(e) => {
-                              e.stopPropagation();
-                              handleDeclineRequest(req.uid);
-                            }}
-                            activeOpacity={0.8}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            accessibilityLabel="Decline request"
-                          >
-                            <Ionicons name="close" size={18} color="#888888" />
-                          </TouchableOpacity>
-                        </View>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </View>
-              )}
-
-              {/* Your Friends */}
-              <View style={styles.sectionBlock}>
-                <View style={styles.sectionHeaderRow}>
-                  <Text style={styles.sectionHeaderTitle}>Your Friends</Text>
-                  {sortedFriends.length > 0 && (
-                    <View style={styles.countPill}>
-                      <Text style={styles.countPillText}>{sortedFriends.length}</Text>
+                  ) : (
+                    /* Center-oriented empty state with subtle gray icon (no card) */
+                    <View style={styles.emptyCenterState}>
+                      <Ionicons name="people-outline" size={48} color="#444444" style={styles.emptyCenterIcon} />
+                      <Text style={styles.emptyCenterTitle}>No friends yet</Text>
+                      <Text style={styles.emptyCenterSub}>
+                        Add people you know and start building your Staytup network.
+                      </Text>
                     </View>
                   )}
                 </View>
+              ) : activeTab === "blend" ? (
+                /* ── BLEND RADAR TAB (Friend Music Compatibility) ── */
+                <View style={styles.sectionBlock}>
+                  {friendsList.length > 0 ? (
+                    <View style={styles.blendFriendsList}>
+                      {friendsList.map((friend) => {
+                        const savedScore = blendFriendsMap[friend.uid];
+                        return (
+                          <TouchableOpacity
+                            key={`blend_${friend.uid}`}
+                            style={styles.blendFriendCard}
+                            onPress={() => handleOpenBlend(friend)}
+                            activeOpacity={0.75}
+                          >
+                            <View style={styles.blendCardAvatarCluster}>
+                              <View style={styles.blendAvatarUserWrap}>
+                                <UserAvatar
+                                  user={{
+                                    username: userProfile?.username || "You",
+                                    avatar: avatarIcon,
+                                    avatarColor: avatarBg,
+                                  }}
+                                  size={44}
+                                  fontSize={15}
+                                />
+                              </View>
+                              <View style={[styles.blendAvatarFriendWrap, { marginLeft: -14 }]}>
+                                <UserAvatar user={friend} size={44} fontSize={15} />
+                              </View>
+                            </View>
 
-                {sortedFriends.length > 0 ? (
-                  <View style={styles.unifiedUserList}>
-                    {sortedFriends.map((friend) => {
-                      const activity = friendsActivity[friend.uid];
-                      const isLive = Boolean(activity?.isPlaying && activity?.track);
-                      const isCurrentPlayingThis =
-                        currentTrack &&
-                        activity?.track &&
-                        (currentTrack.videoId === activity.track.videoId ||
-                          currentTrack.id === activity.track.id);
+                            <View style={styles.blendCardInfo}>
+                              <Text style={styles.blendCardTitle} numberOfLines={1}>
+                                You & {friend.username}
+                              </Text>
+                              <Text style={styles.blendCardSubtitle} numberOfLines={1}>
+                                {savedScore
+                                  ? `${savedScore}% Music Compatibility`
+                                  : "Tap to calculate vibe match & playlist"}
+                              </Text>
+                            </View>
 
-                      return (
+                            <View style={styles.blendCardActionWrap}>
+                              {savedScore ? (
+                                <View style={styles.blendMatchScoreBadge}>
+                                  <Ionicons name="flash" size={13} color="#1DB954" style={{ marginRight: 2 }} />
+                                  <Text style={styles.blendMatchScoreBadgeText}>{savedScore}%</Text>
+                                </View>
+                              ) : (
+                                <View style={styles.blendOpenPillBtn}>
+                                  <Text style={styles.blendOpenPillText}>Blend</Text>
+                                  <Ionicons name="chevron-forward" size={14} color="#000000" />
+                                </View>
+                              )}
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  ) : (
+                    /* Center empty state for Blend */
+                    <View style={styles.emptyCenterState}>
+                      <Ionicons name="infinite-outline" size={54} color="#444444" style={styles.emptyCenterIcon} />
+                      <Text style={styles.emptyCenterTitle}>No friends to blend with</Text>
+                      <Text style={styles.emptyCenterSub}>
+                        Add friends on Staytup to check your music compatibility and generate shared daily playlists.
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              ) : activeTab === "requests" ? (
+                /* ── REQUESTS TAB (Incoming Requests Only) ── */
+                <View style={styles.sectionBlock}>
+                  {incomingRequests.length > 0 ? (
+                    <View style={styles.unifiedUserList}>
+                      {incomingRequests.map((req) => (
                         <TouchableOpacity
-                          key={friend.uid}
+                          key={`req_${req.uid}`}
                           style={styles.userRowItem}
-                          onPress={() => setSelectedUserProfile(friend)}
+                          onPress={() => setSelectedUserProfile(req)}
                           activeOpacity={0.7}
                         >
-                          {/* Avatar & Online Dot */}
-                          <View style={styles.avatarWrapper}>
-                            <UserAvatar user={friend} size={46} fontSize={16} />
-                            <View
-                              style={[
-                                styles.statusDot,
-                                isLive ? styles.statusDotLive : styles.statusDotOffline,
-                              ]}
-                            />
-                          </View>
+                          <UserAvatar user={req} size={46} fontSize={16} />
 
-                          {/* Friend Info & Song */}
                           <View style={styles.userInfoWrap}>
                             <Text style={styles.userNameText} numberOfLines={1}>
-                              {friend.username}
+                              {req.username}
                             </Text>
-
-                            {isLive ? (
-                              <View style={styles.liveTrackRow}>
-                                <MaterialCommunityIcons
-                                  name="waveform"
-                                  size={14}
-                                  color="#1DB954"
-                                  style={{ marginRight: 4 }}
-                                />
-                                <Text style={styles.liveTrackTitle} numberOfLines={1}>
-                                  {activity.track.title}
-                                </Text>
-                                {activity.track.artist ? (
-                                  <Text style={styles.liveTrackArtist} numberOfLines={1}>
-                                    {"  "}• {activity.track.artist}
-                                  </Text>
-                                ) : null}
-                              </View>
-                            ) : (
-                              <Text style={styles.userHandleSubText} numberOfLines={1}>
-                                {activity?.track ? `♫ ${activity.track.title}` : `@${friend.username}`}
-                              </Text>
-                            )}
+                            <Text style={styles.userHandleSubText} numberOfLines={1}>
+                              @{req.username}
+                            </Text>
                           </View>
 
-                          {/* Action Buttons */}
-                          <View style={styles.userActionsRow}>
-                            {isLive && activity?.track && (
-                              <TouchableOpacity
-                                style={[
-                                  styles.listenAlongBtn,
-                                  isCurrentPlayingThis && styles.listenAlongBtnActive,
-                                ]}
-                                onPress={(e) => {
-                                  e.stopPropagation();
-                                  handleListenAlong(activity.track);
-                                }}
-                                activeOpacity={0.8}
-                              >
-                                <Ionicons
-                                  name={isCurrentPlayingThis ? "volume-high" : "play"}
-                                  size={12}
-                                  color="#000000"
-                                />
-                                <Text style={styles.listenAlongText}>
-                                  {isCurrentPlayingThis ? "Listening" : "Listen"}
-                                </Text>
-                              </TouchableOpacity>
-                            )}
-
+                          <View style={styles.requestActionsRow}>
                             <TouchableOpacity
-                              style={styles.dismissCloseBtn}
+                              style={styles.acceptBtn}
                               onPress={(e) => {
                                 e.stopPropagation();
-                                setFriendToDelete(friend);
+                                handleAcceptRequest(req);
                               }}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="checkmark" size={14} color="#000000" style={{ marginRight: 4 }} />
+                              <Text style={styles.acceptBtnText}>Accept</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.declineCloseBtn}
+                              onPress={(e) => {
+                                e.stopPropagation();
+                                handleDeclineRequest(req.uid);
+                              }}
+                              activeOpacity={0.8}
                               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                              accessibilityLabel="Remove friend"
+                              accessibilityLabel="Decline request"
                             >
                               <Ionicons name="close" size={18} color="#888888" />
                             </TouchableOpacity>
                           </View>
                         </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                ) : (
-                  <View style={styles.emptyStateBox}>
-                    <View style={styles.emptyIconCircle}>
-                      <Ionicons name="people-outline" size={32} color={colors.primary} />
+                      ))}
                     </View>
-                    <Text style={styles.emptyTitle}>No Friends Yet</Text>
-                    <Text style={styles.emptySub}>
-                      Use the search bar above or check out suggested listeners to connect with friends and listen along together.
-                    </Text>
-                  </View>
-                )}
-              </View>
+                  ) : (
+                    /* Center-oriented empty state with subtle gray icon for requests */
+                    <View style={styles.emptyCenterState}>
+                      <Ionicons name="mail-unread-outline" size={48} color="#444444" style={styles.emptyCenterIcon} />
+                      <Text style={styles.emptyCenterTitle}>No friend requests</Text>
+                      <Text style={styles.emptyCenterSub}>You're all caught up.</Text>
+                    </View>
+                  )}
+                </View>
+              ) : (
+                /* ── COLLAB PLAYLISTS TAB ── */
+                <View style={styles.sectionBlock}>
+                  {Array.isArray(collabPlaylists) && collabPlaylists.length > 0 ? (
+                    <View style={styles.collabCardsList}>
+                      {collabPlaylists.map((pl) => {
+                        const trackList = Array.isArray(pl.tracks) ? pl.tracks : [];
+                        const trackCount = trackList.length || pl.track_count || 0;
+                        const collabs = Object.values(pl.collaborators || {});
+                        const coverUrl =
+                          pl.cover_url ||
+                          pl.preview_artwork ||
+                          trackList[0]?.artwork_url ||
+                          trackList[0]?.thumbnail ||
+                          null;
+                        const isThisPlaylistPlaying =
+                          currentTrack &&
+                          trackList.some((t) => (t.videoId || t.video_id) === currentTrack.videoId);
+
+                        return (
+                          <TouchableOpacity
+                            key={pl.id || pl.collabId}
+                            style={styles.collabCard}
+                            onPress={() => setSelectedCollabPlaylist(pl)}
+                            activeOpacity={0.75}
+                          >
+                            {/* Playlist Cover */}
+                            <View style={styles.collabCardCoverWrap}>
+                              {coverUrl ? (
+                                <Image source={{ uri: coverUrl }} style={styles.collabCardCover} resizeMode="cover" />
+                              ) : (
+                                <View style={[styles.collabCardCover, styles.collabCoverFallback]}>
+                                  <Ionicons name="musical-notes" size={26} color={colors.primary} />
+                                </View>
+                              )}
+                              {isThisPlaylistPlaying && isPlaying && (
+                                <View style={styles.collabPlayingOverlay}>
+                                  <MaterialCommunityIcons name="waveform" size={18} color="#1DB954" />
+                                </View>
+                              )}
+                            </View>
+
+                            {/* Playlist Info */}
+                            <View style={styles.collabCardInfo}>
+                              <View style={styles.collabCardTitleRow}>
+                                <Text style={styles.collabCardTitle} numberOfLines={1}>
+                                  {pl.name}
+                                </Text>
+                                <View style={styles.collabGreenBadge}>
+                                  <Ionicons name="people" size={10} color="#1DB954" style={{ marginRight: 3 }} />
+                                  <Text style={styles.collabGreenBadgeText}>Collab</Text>
+                                </View>
+                              </View>
+
+                              {/* Collaborator Avatars */}
+                              <View style={styles.collabAvatarsRowInline}>
+                                <View style={styles.overlappingAvatarsInline}>
+                                  {collabs.slice(0, 4).map((c, i) => (
+                                    <UserAvatar
+                                      key={c.uid || i}
+                                      user={c}
+                                      size={18}
+                                      fontSize={8}
+                                      style={{
+                                        marginLeft: i > 0 ? -6 : 0,
+                                        borderWidth: 1,
+                                        borderColor: "#121212",
+                                      }}
+                                    />
+                                  ))}
+                                  {collabs.length > 4 && (
+                                    <View style={[styles.avatarPillSmall, styles.avatarMoreSmall]}>
+                                      <Text style={styles.avatarMoreTextSmall}>+{collabs.length - 4}</Text>
+                                    </View>
+                                  )}
+                                </View>
+                                <Text style={styles.collabCardMeta} numberOfLines={1}>
+                                  {collabs.length} {collabs.length === 1 ? "friend" : "friends"} • {trackCount} {trackCount === 1 ? "song" : "songs"}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {/* Play Button */}
+                            <TouchableOpacity
+                              style={styles.collabPlayBtn}
+                              onPress={(e) => {
+                                e.stopPropagation();
+                                if (trackList.length > 0) {
+                                  const formatted = trackList.map((t) => ({
+                                    ...t,
+                                    videoId: t.video_id || t.videoId,
+                                  }));
+                                  playTrack(formatted[0], formatted, 0);
+                                }
+                              }}
+                              activeOpacity={0.8}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              <Ionicons
+                                name={isThisPlaylistPlaying && isPlaying ? "pause" : "play"}
+                                size={18}
+                                color="#000000"
+                              />
+                            </TouchableOpacity>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  ) : (
+                    /* Center-oriented empty state for Collab Playlists */
+                    <View style={styles.emptyCenterState}>
+                      <Ionicons name="people-circle-outline" size={54} color="#444444" style={styles.emptyCenterIcon} />
+                      <Text style={styles.emptyCenterTitle}>No collab playlists yet</Text>
+                      <Text style={styles.emptyCenterSub}>
+                        Create a playlist with friends, add songs together in real time, and share the music.
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
             </>
           )}
         </View>
@@ -1215,6 +1629,289 @@ export default function FriendsScreen({ onNavigate }) {
           </View>
         </View>
       </Modal>
+
+      {/* Collaborative Playlist Details Modal */}
+      {selectedCollabPlaylist && (
+        <PlaylistModal
+          visible={!!selectedCollabPlaylist}
+          playlist={selectedCollabPlaylist}
+          onClose={() => setSelectedCollabPlaylist(null)}
+          onPlaylistUpdated={(updated) => setSelectedCollabPlaylist(updated)}
+        />
+      )}
+
+      {/* Create Collab Playlist Modal */}
+      <CreatePlaylistModal
+        visible={showCollabCreateModal}
+        initialTab={collabModalTab}
+        onClose={() => setShowCollabCreateModal(false)}
+        onSubmit={async (name, description = "", tracks = [], coverUrl = "") => {
+          if (!createCollabPlaylist) return;
+          const res = await createCollabPlaylist({
+            name,
+            description,
+            tracks,
+            cover_url: coverUrl,
+          });
+          if (res && res.success && res.playlist) {
+            setSelectedCollabPlaylist(res.playlist);
+          }
+        }}
+        existingPlaylists={collabPlaylists || []}
+      />
+
+      {/* ═══════════ BLEND RADAR MODAL ═══════════ */}
+      <Modal
+        visible={showBlendModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => {
+          setShowBlendModal(false);
+          setSelectedBlendFriend(null);
+          setBlendResult(null);
+        }}
+      >
+        <View style={styles.blendModalOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFillObject}
+            activeOpacity={1}
+            onPress={() => {
+              setShowBlendModal(false);
+              setSelectedBlendFriend(null);
+              setBlendResult(null);
+            }}
+          />
+          <View style={styles.blendModalSheet} onStartShouldSetResponder={() => true}>
+            {/* Header bar */}
+            <View style={styles.blendModalHeaderBar}>
+              <View style={styles.dragHandle} />
+              <TouchableOpacity
+                style={styles.blendModalCloseBtn}
+                onPress={() => {
+                  setShowBlendModal(false);
+                  setSelectedBlendFriend(null);
+                  setBlendResult(null);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            {isLoadingBlend ? (
+              <View style={styles.blendLoadingContainer}>
+                <ActivityIndicator size="large" color="#1DB954" />
+                <Text style={styles.blendLoadingTitle}>Calculating Vibe Match...</Text>
+                <Text style={styles.blendLoadingSub}>
+                  Cross-referencing your listening history, favorite artists, and top tracks with {selectedBlendFriend?.username}...
+                </Text>
+              </View>
+            ) : blendResult ? (
+              <ScrollView
+                style={styles.blendModalScroll}
+                contentContainerStyle={styles.blendModalScrollContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {/* Hero Radar Compatibility Badge */}
+                <View style={styles.blendHeroSection}>
+                  <View style={styles.blendHeroAvatarPair}>
+                    <View style={styles.blendHeroAvatarLeft}>
+                      <UserAvatar
+                        user={{
+                          username: userProfile?.username || "You",
+                          avatar: avatarIcon,
+                          avatarColor: avatarBg,
+                        }}
+                        size={64}
+                        fontSize={22}
+                      />
+                    </View>
+                    <View style={styles.blendHeroCenterBadge}>
+                      <Ionicons name="flash" size={16} color="#1DB954" />
+                    </View>
+                    <View style={styles.blendHeroAvatarRight}>
+                      <UserAvatar user={selectedBlendFriend} size={64} fontSize={22} />
+                    </View>
+                  </View>
+
+                  {/* Big Match Score */}
+                  <View style={styles.blendScoreGaugeWrap}>
+                    <Text style={styles.blendScoreNumber}>{blendResult.matchPercentage}%</Text>
+                    <Text style={styles.blendScoreLabel}>MUSIC VIBE MATCH</Text>
+                  </View>
+
+                  <Text style={styles.blendMatchDescription}>
+                    You and {selectedBlendFriend?.username} are in sync! Sharing {blendResult.topVibe || "music styles"}.
+                  </Text>
+
+                  {/* Actions Row: Play Blend + Share OR Create Blend Playlist */}
+                  {selectedBlendFriend && blendFriendsMap[selectedBlendFriend.uid] ? (
+                    <View style={styles.blendActionButtonsRow}>
+                      {blendResult.tracks?.length > 0 && (
+                        <TouchableOpacity
+                          style={styles.blendPlayAllBtn}
+                          onPress={() => {
+                            const formatted = blendResult.tracks.map((t) => ({
+                              ...t,
+                              videoId: t.videoId || t.video_id,
+                            }));
+                            playTrack(formatted[0], formatted, 0);
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="play" size={18} color="#000000" style={{ marginRight: 6 }} />
+                          <Text style={styles.blendPlayAllBtnText}>Play Blend</Text>
+                        </TouchableOpacity>
+                      )}
+
+                      <TouchableOpacity
+                        style={styles.blendShareBtn}
+                        onPress={handleShareBlend}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons
+                          name={copiedBlendShare ? "checkmark" : "share-social"}
+                          size={16}
+                          color="#FFFFFF"
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text style={styles.blendShareBtnText}>
+                          {copiedBlendShare ? "Copied!" : "Share Match"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.blendActionButtonsRow}>
+                      <TouchableOpacity
+                        style={styles.blendCreatePlaylistBtn}
+                        onPress={handleCreateBlend}
+                        disabled={isCreatingBlend}
+                        activeOpacity={0.8}
+                      >
+                        {isCreatingBlend ? (
+                          <ActivityIndicator size="small" color="#000000" />
+                        ) : (
+                          <>
+                            <Ionicons name="infinite" size={19} color="#000000" style={{ marginRight: 8 }} />
+                            <Text style={styles.blendCreatePlaylistBtnText}>Create Blend Playlist</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+
+                {/* Shared Blend Playlist Tracks */}
+                <View style={styles.blendTracksSection}>
+                  <View style={styles.blendTracksSectionHeader}>
+                    <View>
+                      <Text style={styles.blendTracksTitle}>Shared Blend Playlist</Text>
+                      <Text style={styles.blendTracksSubtitle}>
+                        Auto-curated daily mix alternating both of your favorite songs
+                      </Text>
+                    </View>
+                    <View style={styles.blendTrackCountBadge}>
+                      <Text style={styles.blendTrackCountText}>
+                        {blendResult.tracks?.length || 0} songs
+                      </Text>
+                    </View>
+                  </View>
+
+                  {blendResult.tracks && blendResult.tracks.length > 0 ? (
+                    blendResult.tracks.map((track, idx) => {
+                      const isCurrentThis =
+                        currentTrack &&
+                        (currentTrack.videoId === (track.videoId || track.video_id) ||
+                          currentTrack.id === (track.videoId || track.video_id));
+                      const isThisPlaying = isCurrentThis && isPlaying;
+                      const artwork = track.artwork_url || track.thumbnail || null;
+
+                      return (
+                        <TouchableOpacity
+                          key={track.videoId || track.video_id || idx}
+                          style={[styles.blendTrackItem, isCurrentThis && styles.blendTrackItemActive]}
+                          onPress={() => {
+                            const formatted = blendResult.tracks.map((t) => ({
+                              ...t,
+                              videoId: t.videoId || t.video_id,
+                            }));
+                            playTrack(formatted[idx], formatted, idx);
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <View style={styles.blendTrackCoverWrap}>
+                            {artwork ? (
+                              <Image source={{ uri: artwork }} style={styles.blendTrackCover} resizeMode="cover" />
+                            ) : (
+                              <View style={[styles.blendTrackCover, styles.blendTrackCoverFallback]}>
+                                <Ionicons name="musical-note" size={16} color="#1DB954" />
+                              </View>
+                            )}
+                            {isThisPlaying && (
+                              <View style={styles.blendTrackPlayingOverlay}>
+                                <MaterialCommunityIcons name="waveform" size={14} color="#1DB954" />
+                              </View>
+                            )}
+                          </View>
+
+                          <View style={styles.blendTrackDetails}>
+                            <Text
+                              style={[styles.blendTrackTitle, isCurrentThis && styles.blendTrackTitleActive]}
+                              numberOfLines={1}
+                            >
+                              {track.title}
+                            </Text>
+                            <View style={styles.blendTrackMetaRow}>
+                              <Text style={styles.blendTrackArtist} numberOfLines={1}>
+                                {track.artist || "Unknown Artist"}
+                              </Text>
+                              <View style={styles.blendTrackSourcePill}>
+                                <Text style={styles.blendTrackSourceText}>
+                                  {track.blendSource === "both"
+                                    ? "Shared Favorite"
+                                    : `Via ${track.blendSource}`}
+                                </Text>
+                              </View>
+                            </View>
+                          </View>
+
+                          <TouchableOpacity
+                            style={styles.blendTrackPlayBtn}
+                            onPress={() => {
+                              if (isCurrentThis) {
+                                togglePlayPause && togglePlayPause();
+                              } else {
+                                const formatted = blendResult.tracks.map((t) => ({
+                                  ...t,
+                                  videoId: t.videoId || t.video_id,
+                                }));
+                                playTrack(formatted[idx], formatted, idx);
+                              }
+                            }}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <Ionicons
+                              name={isThisPlaying ? "pause" : "play"}
+                              size={16}
+                              color={isCurrentThis ? "#1DB954" : "#FFFFFF"}
+                            />
+                          </TouchableOpacity>
+                        </TouchableOpacity>
+                      );
+                    })
+                  ) : (
+                    <View style={styles.blendNoTracksWrap}>
+                      <Text style={styles.blendNoTracksText}>
+                        Listen to more songs to expand your shared Blend tracklist!
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </ScrollView>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1265,6 +1962,22 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     letterSpacing: -0.4,
   },
+  headerRightGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  headerCircleBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
   profileAvatar: {
     width: 34,
     height: 34,
@@ -1279,8 +1992,11 @@ const styles = StyleSheet.create({
   },
   profileAvatarText: {
     fontFamily: fonts.bold,
+    fontWeight: "700",
     fontSize: 14,
     color: "#000000",
+    textAlign: "center",
+    includeFontPadding: false,
   },
 
   // Pill Search Bar
@@ -1318,6 +2034,7 @@ const styles = StyleSheet.create({
     height: "100%",
     padding: 0,
     margin: 0,
+    minWidth: 0,
     ...(Platform.OS === "web"
       ? {
           outlineStyle: "none",
@@ -1326,12 +2043,24 @@ const styles = StyleSheet.create({
       : {}),
   },
   searchClearBtn: {
-    flexShrink: 0,
-    marginRight: 8,
-    padding: 4,
+    width: 32,
+    height: 32,
     justifyContent: "center",
     alignItems: "center",
+    flexShrink: 0,
+    marginRight: 2,
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  clearCircleBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#8E8E93",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clearIconGlyph: {
+    marginTop: Platform.OS === "android" ? -1 : 0,
   },
   cancelSearchBtn: {
     marginLeft: 12,
@@ -1342,6 +2071,76 @@ const styles = StyleSheet.create({
     fontFamily: fonts.semiBold,
     fontSize: 14,
     color: "#FFFFFF",
+  },
+
+  // Friends / Requests Tabs (Matching Home page top All, Following, Feed pill buttons)
+  tabsScrollView: {
+    marginTop: 12,
+    flexGrow: 0,
+  },
+  tabsScrollContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 2,
+    paddingRight: 16,
+  },
+  tabsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 12,
+    gap: 8,
+    paddingHorizontal: 2,
+  },
+  tabPillBtn: {
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.06)",
+    flexShrink: 0,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  tabPillBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  tabPillLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  tabPillText: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "#FFFFFF",
+  },
+  tabPillTextActive: {
+    fontFamily: fonts.bold,
+    color: "#000000",
+  },
+  tabPillBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
+  },
+  tabPillBadgeActive: {
+    backgroundColor: "rgba(0, 0, 0, 0.25)",
+  },
+  tabPillBadgeText: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    color: "#FFFFFF",
+  },
+  tabPillBadgeTextActive: {
+    color: "#000000",
   },
 
   // Content
@@ -1461,7 +2260,7 @@ const styles = StyleSheet.create({
   requestSubText: {
     fontFamily: fonts.regular,
     fontSize: 13,
-    color: colors.primary,
+    color: "#888888",
     marginTop: 2,
   },
 
@@ -1586,38 +2385,33 @@ const styles = StyleSheet.create({
     color: "#888888",
   },
 
-  // Empty State
-  emptyStateBox: {
-    alignItems: "center",
-    paddingVertical: 32,
+  // Clean Center-Oriented Empty State with gray icon (No card, no borders, no shadow)
+  emptyCenterState: {
+    paddingVertical: 56,
     paddingHorizontal: 20,
-    backgroundColor: "#0d0d0d",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.04)",
-  },
-  emptyIconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "rgba(29, 185, 84, 0.12)",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 12,
+    width: "100%",
   },
-  emptyTitle: {
+  emptyCenterIcon: {
+    marginBottom: 14,
+    opacity: 0.8,
+  },
+  emptyCenterTitle: {
     fontFamily: fonts.bold,
-    fontSize: 16,
+    fontSize: 18,
     color: "#FFFFFF",
-    marginBottom: 6,
+    letterSpacing: -0.3,
+    textAlign: "center",
+    marginBottom: 8,
   },
-  emptySub: {
+  emptyCenterSub: {
     fontFamily: fonts.regular,
-    fontSize: 13,
+    fontSize: 14,
     color: "#888888",
     textAlign: "center",
-    lineHeight: 18,
-    maxWidth: 380,
+    lineHeight: 20,
+    maxWidth: 320,
   },
 
   // ═══════════ FRIEND PROFILE MODAL STYLES (BOTTOM SHEET) ═══════════
@@ -2047,5 +2841,598 @@ const styles = StyleSheet.create({
     fontFamily: fonts.semiBold,
     fontSize: 14,
     color: "#FFFFFF",
+  },
+
+  // ─── Collab Playlists Tab Styles ───
+  collabHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+    paddingHorizontal: 2,
+  },
+  collabHeaderTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: "#FFFFFF",
+    letterSpacing: -0.3,
+    marginBottom: 4,
+  },
+  collabHeaderSub: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.textMuted,
+    lineHeight: 18,
+  },
+  newCollabBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  newCollabBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: 13,
+    color: "#000000",
+  },
+  collabCardsList: {
+    gap: 4,
+  },
+  collabCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "transparent",
+    borderRadius: 0,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.05)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  collabCardCoverWrap: {
+    width: 60,
+    height: 60,
+    borderRadius: 10,
+    overflow: "hidden",
+    position: "relative",
+    backgroundColor: "#202020",
+    flexShrink: 0,
+  },
+  collabCardCover: {
+    width: "100%",
+    height: "100%",
+  },
+  collabCoverFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#1e1e1e",
+  },
+  collabPlayingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  collabCardInfo: {
+    flex: 1,
+    marginLeft: 14,
+    marginRight: 10,
+    justifyContent: "center",
+  },
+  collabCardTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 6,
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  collabCardTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: "#FFFFFF",
+    letterSpacing: -0.2,
+  },
+  collabGreenBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(29, 185, 84, 0.15)",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  collabGreenBadgeText: {
+    fontFamily: fonts.bold,
+    fontSize: 10,
+    color: "#1DB954",
+  },
+  collabAvatarsRowInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  overlappingAvatarsInline: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  avatarPillSmall: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#141414",
+  },
+  avatarPillInitialSmall: {
+    fontFamily: fonts.bold,
+    fontWeight: "700",
+    fontSize: 9,
+    color: "#000000",
+    textAlign: "center",
+    includeFontPadding: false,
+  },
+  avatarMoreSmall: {
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+  },
+  avatarMoreTextSmall: {
+    fontFamily: fonts.bold,
+    fontSize: 8,
+    color: "#FFFFFF",
+  },
+  collabCardMeta: {
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    color: colors.textMuted,
+    flexShrink: 1,
+  },
+  collabPlayBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  startCollabBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: 24,
+    marginTop: 18,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  startCollabBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    color: "#000000",
+  },
+
+  // ─── Blend Radar Styles ───
+  blendIntroBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(29, 185, 84, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.2)",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 20,
+    gap: 14,
+  },
+  blendIntroIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(29, 185, 84, 0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  blendIntroTextWrap: {
+    flex: 1,
+  },
+  blendIntroTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: "#FFFFFF",
+    marginBottom: 4,
+    letterSpacing: -0.2,
+  },
+  blendIntroSub: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: colors.textMuted,
+    lineHeight: 17,
+  },
+  blendFriendsList: {
+    gap: 4,
+  },
+  blendFriendCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    borderRadius: 0,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.05)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  blendCardAvatarCluster: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  blendAvatarUserWrap: {
+    borderWidth: 2,
+    borderColor: "#000000",
+    borderRadius: 24,
+    zIndex: 1,
+  },
+  blendAvatarFriendWrap: {
+    borderWidth: 2,
+    borderColor: "#000000",
+    borderRadius: 24,
+    zIndex: 2,
+  },
+  blendCardInfo: {
+    flex: 1,
+    marginRight: 10,
+  },
+  blendCardTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 15,
+    color: "#FFFFFF",
+    marginBottom: 3,
+  },
+  blendCardSubtitle: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  blendCardActionWrap: {
+    flexShrink: 0,
+  },
+  blendMatchScoreBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(29, 185, 84, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.3)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+  },
+  blendMatchScoreBadgeText: {
+    fontFamily: fonts.bold,
+    fontSize: 13,
+    color: "#1DB954",
+  },
+  blendOpenPillBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    gap: 3,
+  },
+  blendOpenPillText: {
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: "#000000",
+  },
+
+  // ─── Blend Modal Styles ───
+  blendModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    justifyContent: "flex-end",
+  },
+  blendModalSheet: {
+    backgroundColor: "#121212",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "90%",
+    minHeight: 450,
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  blendModalHeaderBar: {
+    alignItems: "center",
+    paddingTop: 12,
+    paddingBottom: 8,
+    position: "relative",
+  },
+  blendModalCloseBtn: {
+    position: "absolute",
+    right: 18,
+    top: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  blendLoadingContainer: {
+    paddingVertical: 60,
+    paddingHorizontal: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  blendLoadingTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: "#FFFFFF",
+    marginTop: 18,
+    marginBottom: 6,
+  },
+  blendLoadingSub: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: "center",
+    lineHeight: 19,
+    maxWidth: 300,
+  },
+  blendModalScroll: {
+    flex: 1,
+  },
+  blendModalScrollContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+  },
+  blendHeroSection: {
+    alignItems: "center",
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.08)",
+    marginBottom: 16,
+  },
+  blendHeroAvatarPair: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  blendHeroAvatarLeft: {
+    borderWidth: 3,
+    borderColor: "#000000",
+    borderRadius: 36,
+    zIndex: 1,
+  },
+  blendHeroCenterBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(29, 185, 84, 0.2)",
+    borderWidth: 2,
+    borderColor: "#1DB954",
+    alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: -8,
+    zIndex: 3,
+  },
+  blendHeroAvatarRight: {
+    borderWidth: 3,
+    borderColor: "#000000",
+    borderRadius: 36,
+    zIndex: 2,
+  },
+  blendScoreGaugeWrap: {
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  blendScoreNumber: {
+    fontFamily: fonts.black || fonts.bold,
+    fontSize: 48,
+    fontWeight: "900",
+    color: "#1DB954",
+    letterSpacing: -1.5,
+  },
+  blendScoreLabel: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    color: colors.textMuted,
+    letterSpacing: 1.5,
+    marginTop: -4,
+  },
+  blendMatchDescription: {
+    fontFamily: fonts.medium,
+    fontSize: 14,
+    color: "#E0E0E0",
+    textAlign: "center",
+    lineHeight: 20,
+    maxWidth: 280,
+    marginBottom: 20,
+  },
+  blendActionButtonsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  blendPlayAllBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: 24,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  blendPlayAllBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    color: "#000000",
+  },
+  blendShareBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.15)",
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 24,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  blendShareBtnText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: "#FFFFFF",
+  },
+  blendCreatePlaylistBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#1DB954",
+    borderRadius: 24,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  blendCreatePlaylistBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    color: "#000000",
+  },
+  blendTracksSection: {
+    paddingTop: 8,
+  },
+  blendTracksSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  blendTracksTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: "#FFFFFF",
+    letterSpacing: -0.2,
+  },
+  blendTracksSubtitle: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  blendTrackCountBadge: {
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  blendTrackCountText: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  blendTrackItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: "transparent",
+    marginBottom: 4,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  blendTrackItemActive: {
+    backgroundColor: "rgba(29, 185, 84, 0.08)",
+  },
+  blendTrackCoverWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 6,
+    overflow: "hidden",
+    position: "relative",
+    marginRight: 12,
+    backgroundColor: "#1e1e1e",
+  },
+  blendTrackCover: {
+    width: "100%",
+    height: "100%",
+  },
+  blendTrackCoverFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  blendTrackPlayingOverlay: {
+    position: "absolute",
+    inset: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  blendTrackDetails: {
+    flex: 1,
+    marginRight: 10,
+  },
+  blendTrackTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: "#FFFFFF",
+    marginBottom: 3,
+  },
+  blendTrackTitleActive: {
+    color: "#1DB954",
+  },
+  blendTrackMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  blendTrackArtist: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: colors.textMuted,
+    maxWidth: 150,
+  },
+  blendTrackSourcePill: {
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  blendTrackSourceText: {
+    fontFamily: fonts.medium,
+    fontSize: 10,
+    color: "#AAAAAA",
+  },
+  blendTrackPlayBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  blendNoTracksWrap: {
+    paddingVertical: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  blendNoTracksText: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: "center",
   },
 });

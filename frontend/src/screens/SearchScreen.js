@@ -16,17 +16,24 @@ import {
   LayoutAnimation,
   UIManager,
 } from "react-native";
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import SongCard from "../components/SongCard";
+import { Ionicons, MaterialCommunityIcons, Feather } from "@expo/vector-icons";
 import AddToPlaylistModal from "../components/AddToPlaylistModal";
 import ArtistModal from "../components/ArtistModal";
 import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
-import { useAudio } from "../context/AudioContext";
+import { useAudioPlayback } from "../context/AudioContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useUser } from "../context/UserContext";
-import { auth, getRecentlyPlayed, subscribeRecentlyPlayed, addRecentSearch, getRecentSearches, removeRecentSearch, clearRecentSearches } from "../services/firebase";
+import {
+  auth,
+  getRecentlyPlayed,
+  subscribeRecentlyPlayed,
+  addRecentSearch,
+  getRecentSearches,
+  removeRecentSearch,
+  clearRecentSearches,
+} from "../services/firebase";
 
 // Spotify-style Browse Category Cards (Full solid background colors with angled cover art)
 const EXPLORE_VIBES = [
@@ -130,33 +137,121 @@ const FEATURED_ARTISTS = [
   "Taylor Swift",
 ];
 
-const TRENDING_QUERIES = [
-  "Shararat",
-  "Tauba Tauba",
-  "Arijit Singh",
-  "Diljit Dosanjh",
-  "Big Dawgs",
-  "Die With A Smile",
-  "Karan Aujla",
-  "Millionaire",
-  "Anuv Jain",
-  "Aaj Ki Raat",
-];
-
 const PAGE_SIZE = 25;
+const LOCAL_RECENTS_KEY = "@staytup_spotify_recent_items_v3";
+
+/**
+ * Spotify Circular Plus Button - for adding track into playlist
+ */
+function CircularPlusButton({ track, onAddToPlaylist, style }) {
+  const animScale = useRef(new Animated.Value(1)).current;
+  const { isTrackInAnyPlaylist } = useUser?.() || {};
+  const isInPlaylist = isTrackInAnyPlaylist ? isTrackInAnyPlaylist(track) : false;
+
+  const handlePress = (e) => {
+    e?.stopPropagation?.();
+    Animated.sequence([
+      Animated.timing(animScale, { toValue: 1.25, duration: 110, useNativeDriver: Platform.OS !== "web" }),
+      Animated.timing(animScale, { toValue: 1, duration: 110, useNativeDriver: Platform.OS !== "web" }),
+    ]).start();
+
+    if (onAddToPlaylist) {
+      onAddToPlaylist(track);
+    }
+  };
+
+  return (
+    <TouchableOpacity
+      onPress={handlePress}
+      style={[styles.circularPlusTouch, style]}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      activeOpacity={0.7}
+      accessibilityLabel={isInPlaylist ? "In playlist" : "Add to playlist"}
+    >
+      <Animated.View style={{ transform: [{ scale: animScale }] }}>
+        <Ionicons
+          name={isInPlaylist ? "checkmark-circle" : "add-circle-outline"}
+          size={24}
+          color={isInPlaylist ? colors.primary : "#B3B3B3"}
+        />
+      </Animated.View>
+    </TouchableOpacity>
+  );
+}
+
+/**
+ * Spotify-Style Skeleton Loader (Preserves full layout geometry)
+ */
+function SearchSkeleton() {
+  const pulseAnim = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 0.65,
+          duration: 700,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0.3,
+          duration: 700,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  return (
+    <View style={styles.skeletonContainer}>
+      {/* Top Artist Skeleton */}
+      <View style={styles.skeletonArtistRow}>
+        <Animated.View style={[styles.skeletonCircle, { opacity: pulseAnim }]} />
+        <View style={styles.skeletonTextCol}>
+          <Animated.View style={[styles.skeletonLine, { width: 140, height: 16, opacity: pulseAnim }]} />
+          <Animated.View style={[styles.skeletonLine, { width: 60, height: 12, marginTop: 6, opacity: pulseAnim }]} />
+        </View>
+      </View>
+
+      {/* Song Skeletons */}
+      {[1, 2, 3, 4, 5, 6].map((k) => (
+        <View key={k} style={styles.skeletonSongRow}>
+          <Animated.View style={[styles.skeletonSquare, { opacity: pulseAnim }]} />
+          <View style={styles.skeletonTextCol}>
+            <Animated.View style={[styles.skeletonLine, { width: 160 + (k % 3) * 35, height: 14, opacity: pulseAnim }]} />
+            <Animated.View style={[styles.skeletonLine, { width: 110 + (k % 2) * 20, height: 11, marginTop: 6, opacity: pulseAnim }]} />
+          </View>
+          <Animated.View style={[styles.skeletonIcon, { opacity: pulseAnim }]} />
+        </View>
+      ))}
+    </View>
+  );
+}
 
 export default function SearchScreen() {
-  const { isDesktop, isTablet, isPhone, width } = useResponsive();
-  const { userProfile, isFavoriteArtist, toggleFavoriteArtist, openProfile, currentUser, recentlyPlayed: contextRecents } = useUser() || {};
+  const { isDesktop, isTablet, width } = useResponsive();
+  const {
+    userProfile,
+    openProfile,
+    currentUser,
+    recentlyPlayed: contextRecents,
+  } = useUser() || {};
+
   const userInitial = (userProfile?.username?.[0] || "A").toUpperCase();
   const avatarIcon = userProfile?.avatar && userProfile.avatar !== "initial" ? userProfile.avatar : null;
   const avatarBg = userProfile?.avatarColor || colors.primary;
 
-  // Search State (Inline, no modal)
+  // Search State
   const [query, setQuery] = useState("");
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [results, setResults] = useState([]);
   const [artistResults, setArtistResults] = useState([]);
+  const [artistImagesMap, setArtistImagesMap] = useState({});
+  const [suggestions, setSuggestions] = useState([]);
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
   const [isSearching, setIsSearching] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -164,15 +259,23 @@ export default function SearchScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [totalLoaded, setTotalLoaded] = useState(0);
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
-  const [recentSearches, setRecentSearches] = useState([]);
 
-  // Recently Played Songs (Realtime from Firebase + Local Cache)
+  // Recent items (Tracks + Queries)
+  const [recentItems, setRecentItems] = useState([]);
+
+  // Recently Played Songs (Realtime from Firebase)
   const [recentlyPlayed, setRecentlyPlayed] = useState([]);
-  const effectiveRecentlyPlayed = (recentlyPlayed && recentlyPlayed.length > 0)
-    ? recentlyPlayed
-    : (contextRecents && contextRecents.length > 0 ? contextRecents : []);
+  const effectiveRecentlyPlayed =
+    recentlyPlayed && recentlyPlayed.length > 0
+      ? recentlyPlayed
+      : contextRecents && contextRecents.length > 0
+      ? contextRecents
+      : [];
 
-  const { currentTrack, playTrack } = useAudio();
+  const { currentTrack, playTrack, isPlaying } = useAudioPlayback();
+
+  // Race condition guard & Debouncing
+  const requestVersionRef = useRef(0);
   const searchTimeoutRef = useRef(null);
   const searchInputRef = useRef(null);
 
@@ -198,24 +301,127 @@ export default function SearchScreen() {
     };
   }, [currentUser]);
 
-  // Load recent search queries from Firebase
+  // Load recent items from localStorage / Firebase
   useEffect(() => {
+    let localList = [];
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        const stored = window.localStorage.getItem(LOCAL_RECENTS_KEY);
+        if (stored) {
+          localList = JSON.parse(stored);
+        }
+      } catch (_) {}
+    }
+
     const uid = currentUser?.uid || auth.currentUser?.uid;
-    if (!uid) return;
-    getRecentSearches(uid).then((items) => {
-      setRecentSearches(Array.isArray(items) ? items : []);
-    }).catch(() => {});
+    if (uid) {
+      getRecentSearches(uid)
+        .then((items) => {
+          if (Array.isArray(items) && items.length > 0) {
+            const queryItems = items.map((q) => (typeof q === "string" ? { type: "query", query: q } : { type: "query", ...q }));
+            // Merge query items with track items
+            const seen = new Set();
+            const merged = [];
+            [...localList, ...queryItems].forEach((it) => {
+              const k = it.videoId || it.video_id || it.id || it.query;
+              if (k && !seen.has(k)) {
+                seen.add(k);
+                merged.push(it);
+              }
+            });
+            setRecentItems(merged);
+            return;
+          }
+          if (localList.length > 0) {
+            setRecentItems(localList);
+          }
+        })
+        .catch(() => {
+          if (localList.length > 0) setRecentItems(localList);
+        });
+    } else if (localList.length > 0) {
+      setRecentItems(localList);
+    }
   }, [currentUser]);
 
-  // Debounced search when query changes
+  // Load and cache popular artists images from DB cache and Staytup API
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        const { images } = await api.getBatchArtistImages(FEATURED_ARTISTS);
+        if (isMounted && images && Object.keys(images).length > 0) {
+          setArtistImagesMap((prev) => ({ ...prev, ...images }));
+        }
+      } catch (err) {
+        console.warn("Featured artists cache load error:", err);
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Sync recent items back to localStorage
+  const persistRecentItems = (items) => {
+    setRecentItems(items);
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        window.localStorage.setItem(LOCAL_RECENTS_KEY, JSON.stringify(items.slice(0, 20)));
+      } catch (_) {}
+    }
+  };
+
+  const addTrackToRecent = (track) => {
+    if (!track) return;
+    const trackId = track.videoId || track.video_id || track.id;
+    setRecentItems((prev) => {
+      const filtered = prev.filter((item) => (item.videoId || item.video_id || item.id) !== trackId);
+      const updated = [{ ...track, type: "track" }, ...filtered].slice(0, 20);
+      if (typeof window !== "undefined" && window.localStorage) {
+        try {
+          window.localStorage.setItem(LOCAL_RECENTS_KEY, JSON.stringify(updated));
+        } catch (_) {}
+      }
+      return updated;
+    });
+  };
+
+  const handleRemoveRecentItem = (itemToRemove) => {
+    const targetKey = itemToRemove.videoId || itemToRemove.video_id || itemToRemove.id || itemToRemove.query;
+    const updated = recentItems.filter((item) => {
+      const k = item.videoId || item.video_id || item.id || item.query;
+      return k !== targetKey;
+    });
+    persistRecentItems(updated);
+
+    if (itemToRemove.query) {
+      const uid = currentUser?.uid || auth.currentUser?.uid;
+      if (uid) {
+        removeRecentSearch(uid, itemToRemove.query).catch(() => {});
+      }
+    }
+  };
+
+  const handleClearAllRecent = () => {
+    persistRecentItems([]);
+    const uid = currentUser?.uid || auth.currentUser?.uid;
+    if (uid) {
+      clearRecentSearches(uid).catch(() => {});
+    }
+  };
+
+  // Pure Staytup Saavn Search with Race Condition Protection
   useEffect(() => {
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
 
-    if (!query.trim()) {
+    const trimmed = query.trim();
+    if (!trimmed) {
       setResults([]);
       setArtistResults([]);
+      setSuggestions([]);
       setIsSearching(false);
       setIsLoadingMore(false);
       setHasSearched(false);
@@ -224,27 +430,29 @@ export default function SearchScreen() {
       return;
     }
 
-    const cleanQ = query.trim().toLowerCase();
-    // Instant local matches from cached artist images
-    const localMatches = Object.keys(DEFAULT_ARTIST_IMAGES)
-      .filter((name) => name.toLowerCase().includes(cleanQ))
-      .slice(0, 6)
-      .map((name) => ({
-        name,
-        thumbnail: DEFAULT_ARTIST_IMAGES[name],
-      }));
-    if (localMatches.length > 0) {
-      setArtistResults(localMatches);
-    }
+    // Immediately fetch autocomplete suggestions
+    api.getSuggestions(trimmed).then((data) => {
+      if (Array.isArray(data?.suggestions)) {
+        setSuggestions(data.suggestions.slice(0, 4));
+      }
+    }).catch(() => {});
 
     setIsSearching(true);
     setHasMore(true);
+
+    const thisVersion = ++requestVersionRef.current;
+
     searchTimeoutRef.current = setTimeout(async () => {
       try {
         const [searchRes, artistsRes] = await Promise.allSettled([
-          api.search(query.trim(), 0, PAGE_SIZE),
-          api.searchArtists(query.trim(), 6),
+          api.search(trimmed, 0, PAGE_SIZE),
+          api.searchArtists(trimmed, 4),
         ]);
+
+        // Guard against race conditions: abort if user typed a newer character
+        if (thisVersion !== requestVersionRef.current) {
+          return;
+        }
 
         if (searchRes.status === "fulfilled") {
           const tracks = searchRes.value?.tracks || searchRes.value?.results || [];
@@ -254,39 +462,50 @@ export default function SearchScreen() {
         }
 
         if (artistsRes.status === "fulfilled") {
-          const remoteArtists = artistsRes.value?.artists || [];
-          const seen = new Set();
-          const merged = [];
-          [...remoteArtists, ...localMatches].forEach((a) => {
-            const key = a.name.toLowerCase();
-            if (!seen.has(key)) {
-              seen.add(key);
-              merged.push({
-                ...a,
-                thumbnail: a.thumbnail || DEFAULT_ARTIST_IMAGES[a.name] || null,
-              });
-            }
-          });
-          setArtistResults(merged.slice(0, 6));
+          const remoteArtists = artistsRes.value?.artists || artistsRes.value?.results || [];
+          const valid = remoteArtists.filter((a) => a && a.name && a.name.trim().length > 1);
+          setArtistResults(valid.slice(0, 3));
+
+          // Enrich and upload any missing artist images to database cache
+          const topBatch = valid.slice(0, 3);
+          if (topBatch.length > 0) {
+            api
+              .getBatchArtistImages(topBatch.map((a) => a.name))
+              .then(({ images }) => {
+                if (images && Object.keys(images).length > 0) {
+                  setArtistImagesMap((prev) => ({ ...prev, ...images }));
+                  setArtistResults((prev) =>
+                    prev.map((art) => {
+                      const resolved =
+                        art.image ||
+                        art.thumbnail ||
+                        images[art.name] ||
+                        images[art.id] ||
+                        resolveLocalArtistImage(art.name);
+                      return resolved ? { ...art, image: resolved, thumbnail: resolved } : art;
+                    })
+                  );
+                }
+              })
+              .catch(() => {});
+          }
         }
 
         setHasSearched(true);
 
-        // Persist this search query to Firebase
+        // Record query to recent searches
         const uid = auth.currentUser?.uid;
-        if (uid && query.trim()) {
-          addRecentSearch(uid, query.trim()).then(() => {
-            getRecentSearches(uid).then((items) => {
-              setRecentSearches(Array.isArray(items) ? items : []);
-            }).catch(() => {});
-          }).catch(() => {});
+        if (uid && trimmed) {
+          addRecentSearch(uid, trimmed).catch(() => {});
         }
       } catch (err) {
         console.warn("Search error:", err);
       } finally {
-        setIsSearching(false);
+        if (thisVersion === requestVersionRef.current) {
+          setIsSearching(false);
+        }
       }
-    }, 320);
+    }, 280);
 
     return () => {
       if (searchTimeoutRef.current) {
@@ -325,7 +544,9 @@ export default function SearchScreen() {
     }
   }, [isLoadingMore, isSearching, hasMore, query, results.length]);
 
+  // Important: Playing a track must NEVER modify `query`
   const handlePlaySong = (track, index, trackList = results) => {
+    addTrackToRecent(track);
     playTrack(track, trackList, index);
   };
 
@@ -365,105 +586,90 @@ export default function SearchScreen() {
     Keyboard.dismiss();
   };
 
-  const renderFooter = () => {
-    if (results.length === 0) return <View style={{ height: isDesktop || isTablet ? 30 : 130 }} />;
-
-    return (
-      <View style={styles.footerContainer}>
-        {isLoadingMore ? (
-          <View style={styles.loadingMoreBox}>
-            <ActivityIndicator size="small" color={colors.primary} />
-            <Text style={styles.loadingMoreText}>Loading more songs...</Text>
-          </View>
-        ) : hasMore ? (
-          <TouchableOpacity
-            style={styles.loadMoreButton}
-            onPress={handleLoadMore}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="arrow-down-circle" size={17} color={colors.primary} />
-            <Text style={styles.loadMoreText}>
-              Load More Songs ({results.length} loaded)
-            </Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.endOfResultsBox}>
-            <Ionicons name="checkmark-circle-outline" size={16} color={colors.primary} />
-            <Text style={styles.endOfResultsText}>
-              All {results.length} songs loaded from catalog
-            </Text>
-          </View>
-        )}
-        <View style={{ height: isDesktop || isTablet ? 30 : 130 }} />
-      </View>
-    );
-  };
-
   const isQueryActive = Boolean(query.trim());
+  const topArtist = artistResults && artistResults.length > 0 ? artistResults[0] : null;
+
+  // Effective recent items for Screenshot 2 display
+  const displayRecents =
+    recentItems.length > 0
+      ? recentItems
+      : effectiveRecentlyPlayed.slice(0, 6).map((t) => ({ ...t, type: "track" }));
 
   return (
     <View style={styles.container}>
-      {/* Top Header with Inline Search Bar */}
+      {/* 1. Header with Spotify Search Pill */}
       <View style={[styles.screenHeader, isSearchActive && styles.screenHeaderActive]}>
         <View style={[styles.innerContent, (isDesktop || isTablet) && styles.desktopInnerContent]}>
           {/* Collapsible Header Top Row: Title & Profile */}
-          <View
-            style={[
-              styles.headerTopRow,
-              isSearchActive && styles.headerTopRowHidden,
-            ]}
-          >
+          <View style={[styles.headerTopRow, isSearchActive && styles.headerTopRowHidden]}>
             <Text style={styles.screenTitle}>Search</Text>
-            <TouchableOpacity
-              style={[styles.profileAvatar, { backgroundColor: avatarBg }]}
-              onPress={() => openProfile && openProfile()}
-              activeOpacity={0.75}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              {avatarIcon && avatarIcon.startsWith("http") ? (
-                <Image
-                  source={{ uri: avatarIcon }}
-                  style={styles.profileAvatarImage}
-                  resizeMode="cover"
-                />
-              ) : avatarIcon ? (
-                <Ionicons name={avatarIcon} size={16} color="#000000" />
-              ) : (
-                <Text style={styles.profileAvatarText}>{userInitial}</Text>
-              )}
-            </TouchableOpacity>
+            <View style={styles.headerRightGroup}>
+              <TouchableOpacity
+                style={styles.headerCircleBtn}
+                onPress={() => {
+                  handleFocusSearch();
+                  setTimeout(() => {
+                    searchInputRef.current?.focus();
+                  }, 100);
+                }}
+                activeOpacity={0.75}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Open search"
+              >
+                <Ionicons name="search" size={17} color="#FFFFFF" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.profileAvatar, { backgroundColor: avatarBg }]}
+                onPress={() => openProfile && openProfile()}
+                activeOpacity={0.75}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                {avatarIcon && avatarIcon.startsWith("http") ? (
+                  <Image source={{ uri: avatarIcon }} style={styles.profileAvatarImage} resizeMode="cover" />
+                ) : avatarIcon ? (
+                  <Ionicons name={avatarIcon} size={16} color="#000000" />
+                ) : (
+                  <Text style={styles.profileAvatarText}>{userInitial}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
 
-          {/* Unified Search Input Bar that smoothly lifts up */}
-          <View style={styles.searchRowWrapper}>
-            <View style={[styles.inlineSearchBox, styles.flexSearchBox, isSearchActive && styles.liftedSearchBox]}>
-              <Ionicons name="search" size={19} color={colors.textMuted} style={{ marginRight: 10 }} />
-              <TextInput
-                ref={searchInputRef}
-                style={styles.inlineSearchInput}
-                placeholder="What do you want to listen to?"
-                placeholderTextColor="#777777"
-                value={query}
-                onChangeText={setQuery}
-                onFocus={handleFocusSearch}
-                returnKeyType="search"
-                autoCorrect={false}
-                accessibilityLabel="Search input"
-              />
-              {isSearching ? (
-                <ActivityIndicator size="small" color={colors.primary} style={{ flexShrink: 0, marginRight: 6 }} />
-              ) : query.length > 0 ? (
-                <TouchableOpacity
-                  onPress={() => setQuery("")}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  style={{ flexShrink: 0, padding: 4, marginRight: 8 }}
-                >
-                  <Ionicons name="close-circle" size={18} color="#888888" />
-                </TouchableOpacity>
-              ) : null}
-            </View>
+          {/* Search Pill Row (only shown when search is active via the top header button) */}
+          {isSearchActive && (
+            <View style={styles.searchRowWrapper}>
+              <View style={[styles.inlineSearchBox, styles.flexSearchBox, styles.liftedSearchBox]}>
+                <Ionicons name="search" size={19} color="#727272" style={{ marginRight: 10 }} />
+                <TextInput
+                  ref={searchInputRef}
+                  style={styles.inlineSearchInput}
+                  placeholder="What do you want to listen to?"
+                  placeholderTextColor="#777777"
+                  value={query}
+                  onChangeText={setQuery}
+                  autoFocus={true}
+                  returnKeyType="search"
+                  autoCorrect={false}
+                  accessibilityLabel="Search input"
+                />
+                {query.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setQuery("");
+                      searchInputRef.current?.focus();
+                    }}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    style={styles.searchClearBtn}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Clear search input"
+                  >
+                    <View style={styles.clearCircleBadge}>
+                      <Ionicons name="close" size={13} color="#121212" style={styles.clearIconGlyph} />
+                    </View>
+                  </TouchableOpacity>
+                )}
+              </View>
 
-            {isSearchActive && (
               <TouchableOpacity
                 style={styles.cancelSearchBtn}
                 onPress={handleCancelSearch}
@@ -471,14 +677,14 @@ export default function SearchScreen() {
               >
                 <Text style={styles.cancelSearchText}>Cancel</Text>
               </TouchableOpacity>
-            )}
-          </View>
+            </View>
+          )}
         </View>
       </View>
 
-      {/* Main Content Area */}
+      {/* 2. Main Body Content */}
       {isQueryActive ? (
-        /* LIVE SEARCH RESULTS (Inline FlatList) */
+        /* ACTIVE QUERY STATE (Screenshot 1) */
         <FlatList
           style={styles.resultsList}
           contentContainerStyle={[
@@ -486,96 +692,121 @@ export default function SearchScreen() {
             (isDesktop || isTablet) && styles.desktopResultsContent,
           ]}
           data={results}
-          keyExtractor={(item, index) => (item.videoId || item.video_id) + "_" + index}
+          keyExtractor={(item, index) => (item.videoId || item.video_id || item.id) + "_" + index}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.8}
           ListHeaderComponent={
             <View style={{ width: "100%" }}>
-              {/* Artist Matching Section */}
-              {artistResults.length > 0 && (
-                <View style={[styles.artistsSection, (isDesktop || isTablet) && styles.desktopArtistsSection]}>
-                  <View style={styles.artistsHeaderRow}>
-                    <Text style={styles.artistsSectionTitle}>Artists</Text>
-                    {(isDesktop || isTablet) && (
-                      <Text style={styles.artistsSectionSub}>Matching your search</Text>
-                    )}
-                  </View>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={[
-                      styles.artistsScrollList,
-                      (isDesktop || isTablet) && styles.desktopArtistsScrollList,
-                    ]}
+              {/* Autocomplete suggestions chips (Screenshot 1) */}
+              {suggestions.length > 0 && (
+                <View style={styles.suggestionsContainer}>
+                  {suggestions.map((sugText, sIdx) => (
+                    <TouchableOpacity
+                      key={sugText + "_" + sIdx}
+                      style={styles.suggestionRow}
+                      onPress={() => {
+                        setQuery(sugText);
+                        Keyboard.dismiss();
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="search" size={17} color="#999999" style={{ marginRight: 14 }} />
+                      <Text style={styles.suggestionText} numberOfLines={1}>
+                        {sugText}
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.diagonalArrowBtn}
+                        onPress={(e) => {
+                          e?.stopPropagation?.();
+                          setQuery(sugText);
+                          if (searchInputRef.current) searchInputRef.current.focus();
+                        }}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        activeOpacity={0.7}
+                        accessibilityLabel={`Fill search with ${sugText}`}
+                      >
+                        <Feather name="arrow-up-left" size={19} color="#999999" />
+                      </TouchableOpacity>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {/* Skeleton loading placeholders when starting a new search */}
+              {isSearching && results.length === 0 && <SearchSkeleton />}
+
+              {/* Top Matching Artist Spotlight (Screenshot 1) */}
+              {topArtist && (() => {
+                const topArtistImg =
+                  topArtist.image ||
+                  topArtist.thumbnail ||
+                  artistImagesMap[topArtist.name] ||
+                  artistImagesMap[topArtist.id] ||
+                  resolveLocalArtistImage(topArtist.name) ||
+                  DEFAULT_ARTIST_IMAGES[topArtist.name];
+                return (
+                  <TouchableOpacity
+                    style={styles.topArtistCard}
+                    onPress={() => handleSelectArtist(topArtist.name)}
+                    activeOpacity={0.75}
                   >
-                    {artistResults.map((artist, idx) => {
-                      const isFav = isFavoriteArtist ? isFavoriteArtist(artist.name) : false;
-                      const resolvedImg = resolveLocalArtistImage(artist.name, artist.thumbnail);
+                    <View style={styles.topArtistAvatarWrap}>
+                      {topArtistImg ? (
+                        <Image
+                          source={{ uri: topArtistImg }}
+                          style={styles.topArtistAvatar}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={[styles.topArtistAvatar, styles.topArtistAvatarFallback]}>
+                          <Ionicons name="person" size={26} color={colors.primary} />
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.topArtistInfoCol}>
+                      <View style={styles.topArtistNameRow}>
+                        <Text style={styles.topArtistName} numberOfLines={1}>
+                          {topArtist.name}
+                        </Text>
+                        <Ionicons name="checkmark-circle" size={16} color="#3D91F4" style={styles.verifiedIcon} />
+                      </View>
+                      <Text style={styles.topArtistRole}>Artist</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })()}
+
+              {/* Additional Matching Artists Horizontal Carousel (if multiple artists) */}
+              {artistResults.length > 1 && (
+                <View style={styles.moreArtistsWrap}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.moreArtistsList}>
+                    {artistResults.slice(1).map((art, idx) => {
+                      const artImg =
+                        art.image ||
+                        art.thumbnail ||
+                        artistImagesMap[art.name] ||
+                        artistImagesMap[art.id] ||
+                        resolveLocalArtistImage(art.name) ||
+                        DEFAULT_ARTIST_IMAGES[art.name];
                       return (
                         <TouchableOpacity
-                          key={artist.name + "_" + idx}
-                          style={[styles.artistCard, (isDesktop || isTablet) && styles.desktopArtistCard]}
-                          onPress={() => handleSelectArtist(artist.name)}
+                          key={(art.id || art.name) + "_" + idx}
+                          style={styles.artistPill}
+                          onPress={() => handleSelectArtist(art.name)}
                           activeOpacity={0.8}
                         >
-                          <View
-                            style={[
-                              styles.artistAvatarWrap,
-                              (isDesktop || isTablet) && styles.desktopArtistAvatarWrap,
-                            ]}
-                          >
-                            {resolvedImg ? (
-                              <Image
-                                source={{ uri: resolvedImg }}
-                                style={[
-                                  styles.artistAvatar,
-                                  (isDesktop || isTablet) && styles.desktopArtistAvatar,
-                                ]}
-                              />
-                            ) : (
-                              <View
-                                style={[
-                                  styles.artistAvatar,
-                                  styles.artistAvatarFallback,
-                                  (isDesktop || isTablet) && styles.desktopArtistAvatar,
-                                ]}
-                              >
-                                <Ionicons name="person" size={isDesktop ? 34 : 28} color={colors.primary} />
-                              </View>
-                            )}
-                            <TouchableOpacity
-                              style={[
-                                styles.artistFavBadge,
-                                (isDesktop || isTablet) && styles.desktopArtistFavBadge,
-                                isFav && styles.artistFavBadgeActive,
-                              ]}
-                              onPress={(e) => {
-                                e.stopPropagation && e.stopPropagation();
-                                toggleFavoriteArtist &&
-                                  toggleFavoriteArtist(artist.name, artist.thumbnail);
-                              }}
-                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                              activeOpacity={0.7}
-                            >
-                              <Ionicons
-                                name={isFav ? "heart" : "heart-outline"}
-                                size={15}
-                                color={isFav ? colors.primary : "#FFFFFF"}
-                              />
-                            </TouchableOpacity>
-                          </View>
-                          <Text
-                            style={[
-                              styles.artistCardName,
-                              (isDesktop || isTablet) && styles.desktopArtistCardName,
-                            ]}
-                            numberOfLines={1}
-                          >
-                            {artist.name}
+                          {artImg ? (
+                            <Image source={{ uri: artImg }} style={styles.artistPillImg} />
+                          ) : (
+                            <View style={[styles.artistPillImg, styles.topArtistAvatarFallback]}>
+                              <Ionicons name="person" size={14} color={colors.primary} />
+                            </View>
+                          )}
+                          <Text style={styles.artistPillName} numberOfLines={1}>
+                            {art.name}
                           </Text>
-                          <Text style={styles.artistCardRole}>Artist</Text>
                         </TouchableOpacity>
                       );
                     })}
@@ -583,53 +814,70 @@ export default function SearchScreen() {
                 </View>
               )}
 
+              {/* Songs count badge */}
               {results.length > 0 && (
-                <View style={styles.countBadgeRow}>
-                  <Text style={styles.countBadgeText}>
-                    Found <Text style={styles.highlightNumber}>{results.length}</Text> songs for{" "}
-                    <Text style={styles.highlightQuery}>"{query}"</Text>
-                  </Text>
-                  {hasMore && <Text style={styles.scrollTipText}>Scroll for more</Text>}
-                </View>
-              )}
-
-              {/* Table Column Headers on Desktop */}
-              {(isDesktop || isTablet) && results.length > 0 && (
-                <View style={styles.desktopTableHeader}>
-                  <View style={styles.desktopTableColIndex}>
-                    <Text style={styles.desktopTableHeaderText}>#</Text>
-                  </View>
-                  <View style={styles.desktopTableColTitle}>
-                    <Text style={styles.desktopTableHeaderText}>TITLE</Text>
-                  </View>
-                  {isDesktop && (
-                    <View style={styles.desktopTableColAlbum}>
-                      <Text style={styles.desktopTableHeaderText}>ALBUM</Text>
-                    </View>
-                  )}
-                  <View style={styles.desktopTableColAction}>
-                    <MaterialCommunityIcons name="playlist-plus" size={18} color={colors.textMuted} />
-                  </View>
+                <View style={styles.songsSectionHeader}>
+                  <Text style={styles.songsSectionTitle}>Songs</Text>
                 </View>
               )}
             </View>
           }
-          renderItem={({ item, index }) => (
-            <SongCard
-              track={item}
-              index={index + 1}
-              layout="row"
-              isActive={currentTrack?.videoId === (item.videoId || item.video_id)}
-              showDuration={false}
-              showPlayButton={false}
-              onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
-              onPress={() => handlePlaySong(item, index, results)}
-            />
-          )}
+          renderItem={({ item, index }) => {
+            const trackId = item.videoId || item.video_id || item.id;
+            const isCurrent = Boolean(currentTrack?.videoId && trackId && currentTrack.videoId === trackId);
+            const isThisPlaying = isCurrent && Boolean(isPlaying);
+            const rawArtwork = item.artwork_url || item.thumbnail || item.image;
+            const artistName = item.artist || item.primaryArtists || "Staytup";
+
+            return (
+              <TouchableOpacity
+                style={[styles.spotifySongRow, isCurrent && styles.activeSongRow]}
+                onPress={() => handlePlaySong(item, index, results)}
+                activeOpacity={0.7}
+              >
+                {/* Artwork */}
+                <View style={styles.spotifyArtworkWrap}>
+                  {rawArtwork ? (
+                    <Image source={{ uri: rawArtwork }} style={styles.spotifyArtwork} resizeMode="cover" />
+                  ) : (
+                    <View style={[styles.spotifyArtwork, styles.artworkFallback]}>
+                      <Ionicons name="musical-note" size={20} color={colors.primary} />
+                    </View>
+                  )}
+                  {isThisPlaying && (
+                    <View style={styles.playingBadgeOverlay}>
+                      <Ionicons name="volume-high" size={14} color="#1DB954" />
+                    </View>
+                  )}
+                </View>
+
+                {/* Info */}
+                <View style={styles.spotifySongTextCol}>
+                  <Text
+                    style={[styles.spotifySongTitle, isCurrent && styles.activeSongTitle]}
+                    numberOfLines={1}
+                  >
+                    {item.title}
+                  </Text>
+                  <Text style={styles.spotifySongSubtitle} numberOfLines={1}>
+                    {`Song • ${artistName}`}
+                  </Text>
+                </View>
+
+                {/* Right Action: Plus circle to add into playlist */}
+                <View style={styles.spotifySongActions}>
+                  <CircularPlusButton
+                    track={item}
+                    onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                  />
+                </View>
+              </TouchableOpacity>
+            );
+          }}
           ListEmptyComponent={
             !isSearching && hasSearched ? (
               <View style={styles.emptyContainer}>
-                <Ionicons name="musical-notes-outline" size={48} color={colors.textMuted} />
+                <Ionicons name="musical-notes-outline" size={48} color="#555555" />
                 <Text style={styles.emptyTitle}>No songs or artists found</Text>
                 <Text style={styles.emptySub}>
                   Try searching for another artist name or song title.
@@ -637,10 +885,20 @@ export default function SearchScreen() {
               </View>
             ) : null
           }
-          ListFooterComponent={renderFooter}
+          ListFooterComponent={() => (
+            <View style={styles.footerContainer}>
+              {isLoadingMore ? (
+                <View style={styles.loadingMoreBox}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.loadingMoreText}>Loading more songs...</Text>
+                </View>
+              ) : null}
+              <View style={{ height: isDesktop || isTablet ? 30 : 130 }} />
+            </View>
+          )}
         />
-      ) : isSearchActive ? (
-        /* SEARCH FOCUSED STATE: RECENT SEARCHES */
+      ) : (
+        /* EMPTY SEARCH INPUT STATE: RECENT SEARCHES (Screenshot 2) & BROWSE CATEGORIES */
         <ScrollView
           style={styles.mainScrollView}
           showsVerticalScrollIndicator={false}
@@ -648,126 +906,101 @@ export default function SearchScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <View style={[styles.innerContent, (isDesktop || isTablet) && styles.desktopInnerContent]}>
-            {recentSearches.length > 0 ? (
-              <View>
-                <Text style={styles.recentSearchesTitle}>Recent Searches</Text>
-                {recentSearches.map((item, idx) => (
-                  <TouchableOpacity
-                    key={item.query + "_" + idx}
-                    style={styles.recentSearchRow}
-                    onPress={() => {
-                      setQuery(item.query);
-                      if (searchInputRef.current) searchInputRef.current.focus();
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons
-                      name="list-outline"
-                      size={18}
-                      color={colors.textSecondary || "rgba(255,255,255,0.5)"}
-                      style={{ marginRight: 14 }}
-                    />
-                    <Text style={styles.recentSearchText} numberOfLines={1}>
-                      {item.query}
-                    </Text>
+            {/* Recent Searches Section (Screenshot 2) */}
+            {displayRecents.length > 0 && (
+              <View style={styles.recentSearchesSection}>
+                <View style={styles.recentSearchesHeaderRow}>
+                  <Text style={styles.recentSearchesTitle}>Recent searches</Text>
+                  {displayRecents.length >= 2 && (
                     <TouchableOpacity
-                      onPress={() => {
-                        const uid = auth.currentUser?.uid;
-                        if (uid) {
-                          removeRecentSearch(uid, item.query).catch(() => {});
-                        }
-                        setRecentSearches((prev) => prev.filter((s) => s.query !== item.query));
-                      }}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      style={{ padding: 4 }}
+                      onPress={handleClearAllRecent}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                      <Ionicons
-                        name="close"
-                        size={18}
-                        color={colors.textSecondary || "rgba(255,255,255,0.5)"}
-                      />
+                      <Text style={styles.clearRecentText}>Clear</Text>
                     </TouchableOpacity>
-                  </TouchableOpacity>
-                ))}
-                {recentSearches.length >= 20 && (
-                  <TouchableOpacity
-                    style={styles.clearAllPill}
-                    onPress={() => {
-                      const uid = auth.currentUser?.uid;
-                      if (uid) clearRecentSearches(uid).catch(() => {});
-                      setRecentSearches([]);
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.clearAllText}>Clear All</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            ) : (
-              <View style={styles.emptyRecentSearchBox}>
-                <Ionicons name="search-outline" size={40} color={colors.textMuted} />
-                <Text style={styles.emptyRecentSearchText}>Search for songs, artists, or albums</Text>
-              </View>
-            )}
-          </View>
-        </ScrollView>
-      ) : (
-        /* DEFAULT STATE: RECENTLY PLAYED SONGS (CARDS) & EXPLORE / BROWSE CATEGORIES */
-        <ScrollView
-          style={styles.mainScrollView}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.mainScrollContent}
-        >
-          <View style={[styles.innerContent, (isDesktop || isTablet) && styles.desktopInnerContent]}>
-            {/* Recently Played Songs Section (Song cards stored in Firebase / Local Cache) */}
-            {effectiveRecentlyPlayed.length > 0 && (
-              <View style={styles.recentlyPlayedSection}>
-                <View style={styles.sectionHeaderRow}>
-                  <Text style={styles.sectionHeading}>Recently Played</Text>
-                  <Text style={styles.sectionSubheading}>Songs you played</Text>
+                  )}
                 </View>
 
-                {isDesktop || isTablet ? (
-                  /* Desktop / Tablet Grid of Song Cards */
-                  <View style={styles.recentCardsGrid}>
-                    {effectiveRecentlyPlayed.slice(0, 10).map((song, idx) => (
-                      <SongCard
-                        key={(song.videoId || song.video_id || "recent") + "_" + idx}
-                        track={song}
-                        layout="card"
-                        isActive={currentTrack?.videoId === (song.videoId || song.video_id)}
-                        onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
-                        onPress={() => handlePlaySong(song, idx, effectiveRecentlyPlayed)}
-                      />
-                    ))}
-                  </View>
-                ) : (
-                  /* Phone Horizontal Carousel of Song Cards */
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.recentHorizontalScroll}
+                {displayRecents.map((item, idx) => (
+                  <View
+                    key={(item.id || item.videoId || item.video_id || item.query) + "_" + idx}
+                    style={styles.recentItemRow}
                   >
-                    {effectiveRecentlyPlayed.slice(0, 10).map((song, idx) => (
-                      <SongCard
-                        key={(song.videoId || song.video_id || "recent") + "_" + idx}
-                        track={song}
-                        layout="card"
-                        isActive={currentTrack?.videoId === (song.videoId || song.video_id)}
-                        onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
-                        onPress={() => handlePlaySong(song, idx, effectiveRecentlyPlayed)}
-                      />
-                    ))}
-                  </ScrollView>
-                )}
+                    {item.type === "query" ? (
+                      /* Query Search Row */
+                      <TouchableOpacity
+                        style={styles.recentQueryTouch}
+                        onPress={() => handleSelectQuery(item.query)}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="time-outline" size={20} color="#777777" style={{ marginRight: 14 }} />
+                        <Text style={styles.recentQueryText} numberOfLines={1}>
+                          {item.query}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : (
+                      /* Track Row (Screenshot 2) */
+                      <TouchableOpacity
+                        style={styles.recentTrackTouch}
+                        onPress={() =>
+                          handlePlaySong(
+                            item,
+                            idx,
+                            displayRecents.filter((i) => i.type !== "query")
+                          )
+                        }
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.spotifyArtworkWrap}>
+                          {item.artwork_url || item.thumbnail || item.image ? (
+                            <Image
+                              source={{ uri: item.artwork_url || item.thumbnail || item.image }}
+                              style={styles.spotifyArtwork}
+                            />
+                          ) : (
+                            <View style={[styles.spotifyArtwork, styles.artworkFallback]}>
+                              <Ionicons name="musical-note" size={20} color={colors.primary} />
+                            </View>
+                          )}
+                        </View>
+                        <View style={styles.spotifySongTextCol}>
+                          <Text style={styles.spotifySongTitle} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+                          <Text style={styles.spotifySongSubtitle} numberOfLines={1}>
+                            {`Song • ${item.artist || "Staytup"}`}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Right actions: Circular plus (for track) + Remove 'x' button */}
+                    <View style={styles.recentRightActions}>
+                      {item.type !== "query" && (
+                        <CircularPlusButton
+                          track={item}
+                          onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                        />
+                      )}
+                      <TouchableOpacity
+                        style={styles.removeRecentBtn}
+                        onPress={() => handleRemoveRecentItem(item)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        activeOpacity={0.7}
+                        accessibilityLabel="Remove from recent searches"
+                      >
+                        <Ionicons name="close" size={20} color="#888888" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
               </View>
             )}
 
-            {/* Featured Artists Section */}
+            {/* Popular Artists Section */}
             <View style={styles.artistsFeaturedSection}>
               <View style={styles.sectionHeaderRow}>
                 <Text style={styles.sectionHeading}>Popular Artists</Text>
-                <Text style={styles.sectionSubheading}>Explore discography</Text>
               </View>
 
               <ScrollView
@@ -777,7 +1010,9 @@ export default function SearchScreen() {
               >
                 {FEATURED_ARTISTS.map((artistName) => {
                   const img =
-                    resolveLocalArtistImage(artistName) || DEFAULT_ARTIST_IMAGES[artistName];
+                    artistImagesMap[artistName] ||
+                    resolveLocalArtistImage(artistName) ||
+                    DEFAULT_ARTIST_IMAGES[artistName];
                   return (
                     <TouchableOpacity
                       key={artistName}
@@ -789,9 +1024,7 @@ export default function SearchScreen() {
                         {img ? (
                           <Image source={{ uri: img }} style={styles.featuredArtistAvatar} />
                         ) : (
-                          <View
-                            style={[styles.featuredArtistAvatar, styles.featuredArtistFallback]}
-                          >
+                          <View style={[styles.featuredArtistAvatar, styles.featuredArtistFallback]}>
                             <Ionicons name="person" size={26} color={colors.primary} />
                           </View>
                         )}
@@ -864,6 +1097,13 @@ export default function SearchScreen() {
         visible={!!selectedArtistForModal}
         onClose={() => setSelectedArtistForModal(null)}
         artistName={selectedArtistForModal}
+        initialPhoto={
+          selectedArtistForModal
+            ? artistImagesMap[selectedArtistForModal] ||
+              resolveLocalArtistImage(selectedArtistForModal) ||
+              DEFAULT_ARTIST_IMAGES[selectedArtistForModal]
+            : null
+        }
         onSelectArtist={(name) => setSelectedArtistForModal(name)}
       />
     </View>
@@ -898,47 +1138,26 @@ const styles = StyleSheet.create({
   },
   flexSearchBox: {
     flex: 1,
-    ...(Platform.OS === "web"
-      ? {
-          transition: "height 0.25s cubic-bezier(0.2, 0, 0, 1), background-color 0.2s ease",
-        }
-      : {}),
   },
   liftedSearchBox: {
     height: 48,
+    borderRadius: 999,
     backgroundColor: "#1c1c1c",
     borderColor: "rgba(255, 255, 255, 0.12)",
   },
   cancelSearchBtn: {
-    marginLeft: 12,
+    marginLeft: 10,
     paddingVertical: 6,
     paddingHorizontal: 4,
     justifyContent: "center",
     alignItems: "center",
+    flexShrink: 0,
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   cancelSearchText: {
     fontFamily: fonts.semiBold,
-    fontSize: 14,
+    fontSize: 15,
     color: "#FFFFFF",
-  },
-  lastSearchSection: {
-    marginTop: 6,
-    marginBottom: 24,
-  },
-  lastSearchList: {
-    width: "100%",
-  },
-  emptyRecentSearchBox: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 70,
-  },
-  emptyRecentSearchText: {
-    fontFamily: fonts.regular,
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginTop: 12,
   },
   innerContent: {
     width: "100%",
@@ -952,7 +1171,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
+    marginBottom: 2,
     overflow: "hidden",
     ...(Platform.OS === "web"
       ? {
@@ -972,6 +1191,22 @@ const styles = StyleSheet.create({
     fontSize: 26,
     color: "#FFFFFF",
     letterSpacing: -0.4,
+  },
+  headerRightGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  headerCircleBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   profileAvatar: {
     width: 34,
@@ -996,7 +1231,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#161616",
     borderRadius: 999,
-    paddingHorizontal: 14,
+    paddingLeft: 14,
+    paddingRight: 6,
     height: 48,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.09)",
@@ -1010,6 +1246,7 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
     paddingHorizontal: 0,
     margin: 0,
+    minWidth: 0,
     ...(Platform.OS === "web"
       ? {
           outlineStyle: "none",
@@ -1018,34 +1255,308 @@ const styles = StyleSheet.create({
         }
       : {}),
   },
+  searchClearBtn: {
+    width: 32,
+    height: 32,
+    justifyContent: "center",
+    alignItems: "center",
+    flexShrink: 0,
+    marginRight: 2,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  clearCircleBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#8E8E93",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clearIconGlyph: {
+    marginTop: Platform.OS === "android" ? -1 : 0,
+  },
 
-  // Main Scroll View
-  mainScrollView: {
+  // Autocomplete Suggestions Chips (Screenshot 1)
+  suggestionsContainer: {
+    paddingVertical: 4,
+    marginBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(255, 255, 255, 0.08)",
+  },
+  suggestionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+  },
+  suggestionText: {
     flex: 1,
+    fontFamily: fonts.medium,
+    fontSize: 15,
+    color: "#FFFFFF",
   },
-  mainScrollContent: {
-    paddingTop: 14,
-    paddingHorizontal: 16,
+  diagonalArrowBtn: {
+    padding: 6,
+    justifyContent: "center",
+    alignItems: "center",
   },
 
-  // Recently Played Songs Section
-  recentlyPlayedSection: {
+  // Top Artist Spotlight (Screenshot 1)
+  topArtistCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    marginBottom: 8,
+  },
+  topArtistAvatarWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    overflow: "hidden",
+    backgroundColor: "#222222",
+    marginRight: 14,
+  },
+  topArtistAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+  },
+  topArtistAvatarFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#222222",
+  },
+  topArtistInfoCol: {
+    flex: 1,
+    justifyContent: "center",
+  },
+  topArtistNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  topArtistName: {
+    fontFamily: fonts.semiBold,
+    fontSize: 16,
+    color: "#FFFFFF",
+    marginRight: 6,
+  },
+  verifiedIcon: {
+    marginTop: 1,
+  },
+  topArtistRole: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: "#A7A7A7",
+  },
+
+  // Additional Artist Pills
+  moreArtistsWrap: {
+    marginBottom: 14,
+  },
+  moreArtistsList: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  artistPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+    gap: 8,
+  },
+  artistPillImg: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+  },
+  artistPillName: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "#FFFFFF",
+  },
+
+  // Songs Section Header
+  songsSectionHeader: {
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+  },
+  songsSectionTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 17,
+    color: "#FFFFFF",
+  },
+
+  // Spotify Song Row (Screenshot 1)
+  spotifySongRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 6,
+  },
+  activeSongRow: {
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+  },
+  spotifyArtworkWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 6,
+    overflow: "hidden",
+    backgroundColor: "#242424",
+    marginRight: 14,
+    position: "relative",
+  },
+  spotifyArtwork: {
+    width: 48,
+    height: 48,
+    borderRadius: 6,
+  },
+  artworkFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  playingBadgeOverlay: {
+    position: "absolute",
+    inset: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  spotifySongTextCol: {
+    flex: 1,
+    justifyContent: "center",
+    paddingRight: 10,
+  },
+  spotifySongTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 15,
+    color: "#FFFFFF",
+    marginBottom: 4,
+  },
+  activeSongTitle: {
+    color: "#1DB954",
+  },
+  spotifySongSubtitle: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: "#A7A7A7",
+  },
+  spotifySongActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  moreIconBtn: {
+    padding: 6,
+  },
+  circularPlusTouch: {
+    padding: 4,
+  },
+
+  // Recent Searches Section (Screenshot 2)
+  recentSearchesSection: {
     marginBottom: 28,
   },
-  recentCardsGrid: {
+  recentSearchesHeaderRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 16,
-    paddingVertical: 4,
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
   },
-  recentHorizontalScroll: {
-    gap: 14,
-    paddingVertical: 4,
+  recentSearchesTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: "#FFFFFF",
+    letterSpacing: -0.2,
+  },
+  clearRecentText: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "#A7A7A7",
+  },
+  recentItemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    paddingHorizontal: 2,
+  },
+  recentTrackTouch: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  recentQueryTouch: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 6,
+  },
+  recentQueryText: {
+    flex: 1,
+    fontFamily: fonts.regular,
+    fontSize: 15,
+    color: "#FFFFFF",
+  },
+  recentRightActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  removeRecentBtn: {
+    padding: 6,
   },
 
-  // Quick Chips
-  quickChipsSection: {
-    marginBottom: 24,
+  // Skeleton Styles
+  skeletonContainer: {
+    paddingVertical: 8,
+  },
+  skeletonArtistRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    marginBottom: 10,
+  },
+  skeletonCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#222222",
+    marginRight: 14,
+  },
+  skeletonSongRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+  },
+  skeletonSquare: {
+    width: 48,
+    height: 48,
+    borderRadius: 6,
+    backgroundColor: "#222222",
+    marginRight: 14,
+  },
+  skeletonTextCol: {
+    flex: 1,
+  },
+  skeletonLine: {
+    backgroundColor: "#222222",
+    borderRadius: 4,
+  },
+  skeletonIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#222222",
+  },
+
+  // Popular Artists Carousel
+  artistsFeaturedSection: {
+    marginBottom: 28,
   },
   sectionHeading: {
     fontFamily: fonts.bold,
@@ -1059,30 +1570,6 @@ const styles = StyleSheet.create({
     alignItems: "baseline",
     justifyContent: "space-between",
     marginBottom: 12,
-  },
-  sectionSubheading: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: colors.textSecondary,
-  },
-  chipsScrollList: {
-    gap: 8,
-  },
-  queryChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: "rgba(255, 255, 255, 0.07)",
-  },
-  queryChipText: {
-    fontFamily: fonts.medium,
-    fontSize: 13,
-    color: "#FFFFFF",
-  },
-
-  // Featured Artists
-  artistsFeaturedSection: {
-    marginBottom: 28,
   },
   artistsCarouselList: {
     gap: 16,
@@ -1119,12 +1606,12 @@ const styles = StyleSheet.create({
   featuredArtistRole: {
     fontFamily: fonts.regular,
     fontSize: 11,
-    color: colors.textSecondary,
+    color: "#A7A7A7",
     textAlign: "center",
     marginTop: 2,
   },
 
-  // Unique Vibe & Mood Cards
+  // Browse All Vibes
   vibesSection: {
     marginBottom: 20,
   },
@@ -1170,7 +1657,14 @@ const styles = StyleSheet.create({
         }),
   },
 
-  // Live Results List
+  // Results & Scroll Content
+  mainScrollView: {
+    flex: 1,
+  },
+  mainScrollContent: {
+    paddingTop: 14,
+    paddingHorizontal: 16,
+  },
   resultsList: {
     flex: 1,
     width: "100%",
@@ -1183,33 +1677,6 @@ const styles = StyleSheet.create({
   },
   desktopResultsContent: {
     paddingHorizontal: 32,
-  },
-
-  // Results View Header
-  countBadgeRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 4,
-  },
-  countBadgeText: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: colors.textSecondary,
-  },
-  highlightNumber: {
-    fontFamily: fonts.bold,
-    color: colors.primary,
-  },
-  highlightQuery: {
-    fontFamily: fonts.semiBold,
-    color: "#FFFFFF",
-  },
-  scrollTipText: {
-    fontFamily: fonts.medium,
-    fontSize: 11,
-    color: colors.primary,
   },
   emptyContainer: {
     alignItems: "center",
@@ -1225,7 +1692,7 @@ const styles = StyleSheet.create({
   emptySub: {
     fontFamily: fonts.regular,
     fontSize: 13,
-    color: colors.textSecondary,
+    color: "#A7A7A7",
     textAlign: "center",
     marginTop: 6,
     maxWidth: 280,
@@ -1243,224 +1710,6 @@ const styles = StyleSheet.create({
   loadingMoreText: {
     fontFamily: fonts.medium,
     fontSize: 13,
-    color: colors.textSecondary,
-  },
-  loadMoreButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 22,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-  },
-  loadMoreText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 12,
-    color: "#FFFFFF",
-  },
-  endOfResultsBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingVertical: 8,
-  },
-  endOfResultsText: {
-    fontFamily: fonts.medium,
-    fontSize: 12,
-    color: colors.textMuted,
-  },
-
-  // Table Column Headers on Desktop
-  desktopTableHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255, 255, 255, 0.08)",
-    marginBottom: 6,
-    width: "100%",
-  },
-  desktopTableColIndex: {
-    width: 34,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 8,
-  },
-  desktopTableColTitle: {
-    flex: 4,
-    paddingLeft: 62,
-    marginRight: 16,
-  },
-  desktopTableColAlbum: {
-    flex: 3,
-    paddingRight: 16,
-  },
-  desktopTableColAction: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    minWidth: 90,
-  },
-  desktopTableHeaderText: {
-    fontFamily: fonts.bold,
-    fontSize: 11,
-    color: colors.textMuted,
-    letterSpacing: 1,
-  },
-
-  // Artists in Modal Results
-  artistsSection: {
-    paddingTop: 8,
-    paddingBottom: 14,
-  },
-  desktopArtistsSection: {
-    paddingTop: 16,
-    paddingBottom: 22,
-  },
-  artistsHeaderRow: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  artistsSectionTitle: {
-    fontFamily: fonts.bold,
-    fontSize: 17,
-    color: "#FFFFFF",
-  },
-  artistsSectionSub: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: colors.textMuted,
-  },
-  artistsScrollList: {
-    gap: 14,
-    paddingVertical: 4,
-  },
-  desktopArtistsScrollList: {
-    gap: 20,
-    paddingVertical: 8,
-  },
-  artistCard: {
-    alignItems: "center",
-    width: 96,
-  },
-  desktopArtistCard: {
-    width: 124,
-    alignItems: "center",
-  },
-  artistAvatarWrap: {
-    width: 82,
-    height: 82,
-    borderRadius: 41,
-    position: "relative",
-    marginBottom: 8,
-    backgroundColor: "#181818",
-  },
-  desktopArtistAvatarWrap: {
-    width: 104,
-    height: 104,
-    borderRadius: 52,
-    marginBottom: 10,
-  },
-  artistAvatar: {
-    width: 82,
-    height: 82,
-    borderRadius: 41,
-  },
-  desktopArtistAvatar: {
-    width: 104,
-    height: 104,
-    borderRadius: 52,
-  },
-  artistAvatarFallback: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  artistFavBadge: {
-    position: "absolute",
-    bottom: 0,
-    right: 0,
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: "#1F1F1F",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1.5,
-    borderColor: "#000000",
-  },
-  desktopArtistFavBadge: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-  },
-  artistFavBadgeActive: {
-    backgroundColor: "rgba(29, 185, 84, 0.2)",
-    borderColor: colors.primary,
-  },
-  artistCardName: {
-    fontFamily: fonts.semiBold,
-    fontSize: 12,
-    color: "#FFFFFF",
-    textAlign: "center",
-    width: "100%",
-  },
-  desktopArtistCardName: {
-    fontFamily: fonts.bold,
-    fontSize: 13,
-    color: "#FFFFFF",
-    textAlign: "center",
-    width: "100%",
-  },
-  artistCardRole: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: colors.textSecondary,
-    textAlign: "center",
-    marginTop: 2,
-  },
-  // ── Recent Searches ──────────────────────────────────────────────────────
-  recentSearchesTitle: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1,
-    marginBottom: 4,
-    marginTop: 8,
-    textTransform: "uppercase",
-    opacity: 0.5,
-  },
-  recentSearchRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 14,
-    paddingHorizontal: 2,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(255,255,255,0.07)",
-  },
-  recentSearchText: {
-    flex: 1,
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontFamily: fonts.regular,
-  },
-  clearAllPill: {
-    alignSelf: "center",
-    marginTop: 24,
-    marginBottom: 20,
-    backgroundColor: "rgba(255,255,255,0.1)",
-    paddingHorizontal: 28,
-    paddingVertical: 11,
-    borderRadius: 50,
-  },
-  clearAllText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "600",
-    letterSpacing: 0.3,
+    color: "#A7A7A7",
   },
 });
-

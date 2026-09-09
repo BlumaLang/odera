@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Dimensions,
   FlatList,
+  ScrollView,
   ActivityIndicator,
   Platform,
   Animated,
@@ -21,12 +22,47 @@ import { api } from "../api/client";
 import AddToPlaylistModal from "./AddToPlaylistModal";
 import ArtistModal from "./ArtistModal";
 import LikeConfetti from "./LikeConfetti";
-import { DEFAULT_ARTIST_IMAGES } from "../theme/artistImages";
+import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
 import { useResponsive } from "../context/ResponsiveContext";
 
 const { width, height } = Dimensions.get("window");
 // Larger artwork size for better visual impact
 const ARTWORK_SIZE = Math.min(width - 24, height * 0.48, 480);
+
+const globalArtistPhotoCache = new Map();
+
+function ArtistPickerRow({ name, photo, onPress }) {
+  const [imgError, setImgError] = useState(false);
+  const initial = (name?.[0] || "A").toUpperCase();
+
+  return (
+    <TouchableOpacity
+      style={styles.artistPickerItem}
+      onPress={onPress}
+      activeOpacity={0.75}
+    >
+      {photo && !imgError ? (
+        <Image
+          source={{ uri: photo }}
+          style={styles.artistPickerAvatar}
+          resizeMode="cover"
+          onError={() => setImgError(true)}
+        />
+      ) : (
+        <View style={[styles.artistPickerAvatar, styles.artistPickerFallback]}>
+          <Text style={styles.artistPickerFallbackInitial}>{initial}</Text>
+        </View>
+      )}
+      <View style={styles.artistPickerTextWrap}>
+        <Text style={styles.artistPickerName} numberOfLines={1}>
+          {name}
+        </Text>
+        <Text style={styles.artistPickerRole}>Artist</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color="#666666" />
+    </TouchableOpacity>
+  );
+}
 
 function parseTrackArtists(artistStr) {
   if (!artistStr) return [];
@@ -75,12 +111,15 @@ export default function FullPlayerModal() {
     setSleepTimer,
     setSleepEndOfTrack,
     cancelSleepTimer,
+    removeFromQueue,
+    clearQueue,
   } = useAudio();
 
-  const { isDesktop, isTablet } = useResponsive();
+  const { isDesktop, isTablet, deviceName, deviceIcon: accurateDeviceIcon } = useResponsive();
 
-  const { isSongLiked, toggleLikeSong } = useUser();
+  const { isSongLiked, toggleLikeSong, isTrackInAnyPlaylist } = useUser();
   const isFavorite = isSongLiked(currentTrack?.videoId || currentTrack?.video_id);
+  const isTrackInPlaylist = isTrackInAnyPlaylist ? isTrackInAnyPlaylist(currentTrack) : false;
   const [showLikeConfetti, setShowLikeConfetti] = useState(false);
   const likeScaleAnim = useRef(new Animated.Value(1)).current;
 
@@ -104,13 +143,99 @@ export default function FullPlayerModal() {
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
   const [showArtistPickerModal, setShowArtistPickerModal] = useState(false);
   const [artistsOnTrack, setArtistsOnTrack] = useState([]);
+  const [artistPhotos, setArtistPhotos] = useState({});
+  const artistPanY = useRef(new Animated.Value(0)).current;
+
+  const artistPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return gestureState.dy > 6 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dy > 0) {
+          artistPanY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy > 70 || gestureState.vy > 0.5) {
+          Animated.timing(artistPanY, {
+            toValue: 400,
+            duration: 180,
+            useNativeDriver: Platform.OS !== "web",
+          }).start(() => {
+            setShowArtistPickerModal(false);
+            artistPanY.setValue(0);
+          });
+        } else {
+          Animated.spring(artistPanY, {
+            toValue: 0,
+            friction: 8,
+            useNativeDriver: Platform.OS !== "web",
+          }).start();
+        }
+      },
+    })
+  ).current;
+
+  // Helper to fetch and cache an artist's image
+  const loadArtistImage = useCallback(async (artistName) => {
+    const clean = (artistName || "").trim();
+    if (!clean) return;
+
+    if (globalArtistPhotoCache.has(clean)) {
+      const cached = globalArtistPhotoCache.get(clean);
+      if (cached) {
+        setArtistPhotos((prev) => (prev[clean] === cached ? prev : { ...prev, [clean]: cached }));
+      }
+      return;
+    }
+
+    const local = resolveLocalArtistImage(clean) || DEFAULT_ARTIST_IMAGES[clean];
+    if (local) {
+      globalArtistPhotoCache.set(clean, local);
+      setArtistPhotos((prev) => (prev[clean] === local ? prev : { ...prev, [clean]: local }));
+      return;
+    }
+
+    try {
+      const res = await api.getArtistImage(clean);
+      const photo = res?.image || res?.image_url;
+      if (
+        photo &&
+        !photo.includes("artist-default-music.png") &&
+        !photo.includes("default_artist")
+      ) {
+        globalArtistPhotoCache.set(clean, photo);
+        setArtistPhotos((prev) => ({ ...prev, [clean]: photo }));
+      }
+    } catch (_) {}
+  }, []);
+
+  // Pre-fetch artist images for current playing track
+  useEffect(() => {
+    if (!currentTrack?.artist) return;
+    const artists = parseTrackArtists(currentTrack.artist);
+    artists.forEach((name) => loadArtistImage(name));
+  }, [currentTrack?.artist, loadArtistImage]);
+
+  // Fetch when artistsOnTrack changes
+  useEffect(() => {
+    if (artistsOnTrack && artistsOnTrack.length > 0) {
+      artistsOnTrack.forEach((name) => loadArtistImage(name));
+    }
+  }, [artistsOnTrack, loadArtistImage]);
+
+  const [showPreviousQueue, setShowPreviousQueue] = useState(false);
   const lyricsListRef = useRef(null);
 
   const handleArtistPress = () => {
     const artists = parseTrackArtists(currentTrack?.artist);
     if (artists.length > 1) {
       setArtistsOnTrack(artists);
+      artistPanY.setValue(0);
       setShowArtistPickerModal(true);
+      artists.forEach((name) => loadArtistImage(name));
     } else if (artists.length === 1) {
       setSelectedArtistForModal(artists[0]);
     } else if (currentTrack?.artist) {
@@ -152,13 +277,13 @@ export default function FullPlayerModal() {
     return `${m}:${sec < 10 ? "0" : ""}${sec}`;
   };
 
-  // Dynamic device label & icon based on form factor
-  const deviceLabel = isDesktop ? "Desktop" : isTablet ? "iPad / Tablet" : "Phone";
-  const deviceIcon = isDesktop
+  // Dynamic device label & icon based on accurate device name (MacBook, Windows, iPhone, iPad, Android)
+  const deviceLabel = deviceName || (isDesktop ? "Desktop" : isTablet ? "iPad / Tablet" : "Phone");
+  const deviceIcon = accurateDeviceIcon || (isDesktop
     ? "desktop-outline"
     : isTablet
     ? "tablet-portrait-outline"
-    : "phone-portrait-outline";
+    : "phone-portrait-outline");
 
   // Fetch lyrics whenever currentTrack changes
   useEffect(() => {
@@ -567,6 +692,171 @@ export default function FullPlayerModal() {
     outputRange: [0, 1],
   });
 
+  const renderQueueView = () => {
+    const validQueue = Array.isArray(queue) ? queue : [];
+    const currentQueueTrack =
+      queueIndex >= 0 && queueIndex < validQueue.length
+        ? validQueue[queueIndex]
+        : currentTrack;
+    const previousTracks = queueIndex > 0 ? validQueue.slice(0, queueIndex) : [];
+    const upcomingTracks =
+      queueIndex >= 0 ? validQueue.slice(queueIndex + 1) : validQueue;
+
+    return (
+      <View style={[styles.queueContainer, (isDesktop || isTablet) && styles.desktopQueueContainer]}>
+        {/* Queue Header with count and Clear option */}
+        <View style={styles.queueHeaderRow}>
+          <View>
+            <Text style={styles.queueHeaderTitle}>Queue</Text>
+            <Text style={styles.queueHeaderSubtitle}>
+              {validQueue.length} {validQueue.length === 1 ? "song" : "songs"}
+            </Text>
+          </View>
+          {upcomingTracks.length > 0 && (
+            <TouchableOpacity
+              style={styles.clearQueueBtn}
+              onPress={clearQueue}
+              hitSlop={{ top: 8, bottom: 8, left: 10, right: 10 }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.clearQueueText}>Clear Queue</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <ScrollView
+          style={styles.queueScrollView}
+          contentContainerStyle={{ paddingBottom: 60 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Previous Tracks Collapsible Section */}
+          {previousTracks.length > 0 && (
+            <View style={styles.queueSectionWrap}>
+              <TouchableOpacity
+                onPress={() => setShowPreviousQueue(!showPreviousQueue)}
+                style={styles.queueSectionToggleRow}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.queueSectionLabel}>
+                  PREVIOUS ({previousTracks.length})
+                </Text>
+                <Ionicons
+                  name={showPreviousQueue ? "chevron-up" : "chevron-down"}
+                  size={15}
+                  color="#888888"
+                />
+              </TouchableOpacity>
+              {showPreviousQueue &&
+                previousTracks.map((item, idx) => (
+                  <TouchableOpacity
+                    key={`${item.videoId || item.video_id}_prev_${idx}`}
+                    style={styles.queueItem}
+                    onPress={() => playTrack(item, validQueue, idx)}
+                    activeOpacity={0.7}
+                  >
+                    <Image
+                      source={{ uri: item.artwork_url || item.thumbnail }}
+                      style={[styles.queueThumb, { opacity: 0.55 }]}
+                    />
+                    <View style={styles.queueItemText}>
+                      <Text style={[styles.queueTitle, { color: "#888888" }]} numberOfLines={1}>
+                        {cleanTitle(item.title)}
+                      </Text>
+                      <Text style={styles.queueArtist} numberOfLines={1}>
+                        {item.artist}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+            </View>
+          )}
+
+          {/* Now Playing Section */}
+          {currentQueueTrack && (
+            <View style={styles.queueSectionWrap}>
+              <Text style={styles.queueSectionLabel}>NOW PLAYING</Text>
+              <TouchableOpacity
+                style={styles.queueItem}
+                onPress={togglePlayPause}
+                activeOpacity={0.85}
+              >
+                <Image
+                  source={{ uri: currentQueueTrack.artwork_url || currentQueueTrack.thumbnail }}
+                  style={styles.queueThumb}
+                />
+                <View style={styles.queueItemText}>
+                  {/* Name highlighted in green (#1DB954) */}
+                  <Text
+                    style={[styles.queueTitle, styles.activeQueueText]}
+                    numberOfLines={1}
+                  >
+                    {cleanTitle(currentQueueTrack.title)}
+                  </Text>
+                  <Text style={styles.queueArtist} numberOfLines={1}>
+                    {currentQueueTrack.artist}
+                  </Text>
+                </View>
+                {/* No speaker icon, no background highlight */}
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Next In Queue Section */}
+          <View style={styles.queueSectionWrap}>
+            <Text style={styles.queueSectionLabel}>
+              NEXT IN QUEUE {upcomingTracks.length > 0 ? `(${upcomingTracks.length})` : ""}
+            </Text>
+
+            {upcomingTracks.length === 0 ? (
+              <View style={styles.queueEmptyState}>
+                <Ionicons name="musical-notes-outline" size={32} color="rgba(255,255,255,0.2)" />
+                <Text style={styles.queueEmptyText}>Queue is empty</Text>
+                <Text style={styles.queueEmptySubtext}>
+                  Songs based on this artist, trending hits, and fresh releases are queued automatically when you play music.
+                </Text>
+              </View>
+            ) : (
+              upcomingTracks.map((item, idx) => {
+                const actualIndex = (queueIndex >= 0 ? queueIndex + 1 : 0) + idx;
+                return (
+                  <TouchableOpacity
+                    key={`${item.videoId || item.video_id}_up_${actualIndex}`}
+                    style={styles.queueItem}
+                    onPress={() => playTrack(item, validQueue, actualIndex)}
+                    activeOpacity={0.7}
+                  >
+                    <Image
+                      source={{ uri: item.artwork_url || item.thumbnail }}
+                      style={styles.queueThumb}
+                    />
+                    <View style={styles.queueItemText}>
+                      <Text style={styles.queueTitle} numberOfLines={1}>
+                        {cleanTitle(item.title)}
+                      </Text>
+                      <Text style={styles.queueArtist} numberOfLines={1}>
+                        {item.artist}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={(e) => {
+                        e?.stopPropagation?.();
+                        removeFromQueue(actualIndex);
+                      }}
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                      style={styles.queueRemoveBtn}
+                    >
+                      <Ionicons name="close" size={18} color="#777777" />
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </View>
+        </ScrollView>
+      </View>
+    );
+  };
+
   const renderDesktopPlayer = () => {
     return (
       <View style={styles.desktopContainer}>
@@ -628,13 +918,37 @@ export default function FullPlayerModal() {
               </Text>
             </TouchableOpacity>
 
+            <TouchableOpacity
+              style={[styles.desktopSleepBtn, showQueue && { borderColor: colors.primary }]}
+              onPress={() => setShowQueue(!showQueue)}
+              activeOpacity={0.8}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons
+                name={showQueue ? "close" : "list"}
+                size={16}
+                color={showQueue ? colors.primary : "#FFFFFF"}
+              />
+              <Text
+                style={[
+                  styles.desktopSleepBtnText,
+                  showQueue && { color: colors.primary },
+                ]}
+              >
+                {showQueue ? "Close Queue" : "Queue"}
+              </Text>
+            </TouchableOpacity>
+
           </View>
         </View>
 
         {/* Desktop Main Stage */}
         <View style={styles.desktopMiddleContainer}>
-          {/* Desktop Flippable Card Main Stage (Just like phone) */}
-          <View style={styles.desktopMainStageCenter}>
+          {showQueue ? (
+            renderQueueView()
+          ) : (
+            /* Desktop Flippable Card Main Stage (Just like phone) */
+            <View style={styles.desktopMainStageCenter}>
             {/* Flippable Artwork / Lyrics Card */}
             <View style={styles.desktopFlipWrapper}>
               <TouchableOpacity
@@ -815,8 +1129,13 @@ export default function FullPlayerModal() {
                   style={styles.desktopActionIconBtn}
                   activeOpacity={0.8}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel={isTrackInPlaylist ? "In playlist" : "Add to playlist"}
                 >
-                  <Ionicons name="add-circle-outline" size={22} color="#FFFFFF" />
+                  <Ionicons
+                    name={isTrackInPlaylist ? "checkmark-circle" : "add-circle-outline"}
+                    size={22}
+                    color={isTrackInPlaylist ? colors.primary : "#FFFFFF"}
+                  />
                 </TouchableOpacity>
 
                 {/* View Artist Profile */}
@@ -831,6 +1150,7 @@ export default function FullPlayerModal() {
               </View>
             </View>
           </View>
+          )}
         </View>
 
         {/* Desktop Full-Width Playback Control Deck */}
@@ -1014,45 +1334,7 @@ export default function FullPlayerModal() {
       </View>
 
       {showQueue ? (
-        /* Queue Drawer */
-        <View style={styles.queueContainer}>
-          <Text style={styles.queueHeaderTitle}>Next in Queue ({queue.length})</Text>
-          <FlatList
-            data={queue}
-            keyExtractor={(item, index) => `${item.videoId}_${index}`}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 40 }}
-            renderItem={({ item, index }) => {
-              const isItemActive = index === queueIndex;
-              return (
-                <TouchableOpacity
-                  style={[styles.queueItem, isItemActive && styles.queueItemActive]}
-                  onPress={() => isItemActive ? togglePlayPause() : playTrack(item, queue, index)}
-                  activeOpacity={0.7}
-                >
-                  <Image
-                    source={{ uri: item.artwork_url || item.thumbnail }}
-                    style={styles.queueThumb}
-                  />
-                  <View style={styles.queueItemText}>
-                    <Text
-                      style={[styles.queueTitle, isItemActive && styles.activeQueueText]}
-                      numberOfLines={1}
-                    >
-                      {item.title}
-                    </Text>
-                    <Text style={styles.queueArtist} numberOfLines={1}>
-                      {item.artist}
-                    </Text>
-                  </View>
-                  {isItemActive && (
-                    <Ionicons name={isPlaying ? "volume-high" : "play"} size={18} color={colors.primary} />
-                  )}
-                </TouchableOpacity>
-              );
-            }}
-          />
-        </View>
+        renderQueueView()
       ) : (
         /* Main Player View */
         <View style={styles.playerBody}>
@@ -1214,8 +1496,13 @@ export default function FullPlayerModal() {
                 onPress={() => setShowAddToPlaylist(true)}
                 style={styles.metaActionButton}
                 hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityLabel={isTrackInPlaylist ? "In playlist" : "Add to playlist"}
               >
-                <Ionicons name="add-circle-outline" size={26} color="#FFFFFF" />
+                <Ionicons
+                  name={isTrackInPlaylist ? "checkmark-circle" : "add-circle-outline"}
+                  size={26}
+                  color={isTrackInPlaylist ? colors.primary : "#FFFFFF"}
+                />
               </TouchableOpacity>
 
               <View style={styles.likeButtonWrapper}>
@@ -1399,8 +1686,9 @@ export default function FullPlayerModal() {
       visible={isFullPlayerVisible}
       onRequestClose={() => setFullPlayerVisible(false)}
     >
-      <View style={styles.modalContainer}>
-        {isDesktop || isTablet ? renderDesktopPlayer() : renderMobilePlayer()}
+      {isFullPlayerVisible && (
+        <View style={styles.modalContainer}>
+          {isDesktop || isTablet ? renderDesktopPlayer() : renderMobilePlayer()}
 
         {/* Dedicated Sleep Timer Modal */}
         <Modal
@@ -1423,25 +1711,7 @@ export default function FullPlayerModal() {
 
               {/* Header */}
               <View style={styles.sleepModalHeader}>
-                <View style={styles.sleepModalTitleRow}>
-                  <View style={styles.sleepMoonBadge}>
-                    <Ionicons name="moon" size={18} color="#A78BFA" />
-                  </View>
-                  <View>
-                    <Text style={styles.sleepModalTitle}>Sleep Timer</Text>
-                    <Text style={styles.sleepModalSubtitle}>
-                      Playback stops smoothly so you can rest
-                    </Text>
-                  </View>
-                </View>
-                <TouchableOpacity
-                  onPress={() => setShowSleepModal(false)}
-                  style={styles.sleepModalClose}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="close" size={18} color="#FFFFFF" />
-                </TouchableOpacity>
+                <Text style={styles.sleepModalTitle}>Sleep Timer</Text>
               </View>
 
               {/* Active countdown or status banner if running */}
@@ -1610,7 +1880,7 @@ export default function FullPlayerModal() {
 
         {/* Multi-Artist Selection Bottom Sheet */}
         <Modal
-          animationType="fade"
+          animationType="slide"
           transparent={true}
           visible={showArtistPickerModal}
           onRequestClose={() => setShowArtistPickerModal(false)}
@@ -1620,52 +1890,42 @@ export default function FullPlayerModal() {
             activeOpacity={1}
             onPress={() => setShowArtistPickerModal(false)}
           >
-            <View
-              style={styles.artistPickerContent}
+            <Animated.View
+              style={[
+                styles.artistPickerContent,
+                { transform: [{ translateY: artistPanY }] },
+              ]}
+              {...artistPanResponder.panHandlers}
               onStartShouldSetResponder={() => true}
             >
+              {/* Swipe Drag Handle */}
+              <View style={styles.artistPickerDragHandle} />
+
               <View style={styles.artistPickerHeader}>
                 <Text style={styles.artistPickerTitle}>Artists on this track</Text>
-                <TouchableOpacity
-                  onPress={() => setShowArtistPickerModal(false)}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  <Ionicons name="close" size={22} color="#FFFFFF" />
-                </TouchableOpacity>
               </View>
 
               <View style={styles.artistPickerList}>
                 {artistsOnTrack.map((name, idx) => {
-                  const photo = DEFAULT_ARTIST_IMAGES[name];
+                  const photo =
+                    artistPhotos[name] ||
+                    globalArtistPhotoCache.get(name) ||
+                    resolveLocalArtistImage(name) ||
+                    DEFAULT_ARTIST_IMAGES[name];
                   return (
-                    <TouchableOpacity
+                    <ArtistPickerRow
                       key={`${name}_${idx}`}
-                      style={styles.artistPickerItem}
+                      name={name}
+                      photo={photo}
                       onPress={() => {
                         setShowArtistPickerModal(false);
                         setSelectedArtistForModal(name);
                       }}
-                      activeOpacity={0.75}
-                    >
-                      {photo ? (
-                        <Image source={{ uri: photo }} style={styles.artistPickerAvatar} />
-                      ) : (
-                        <View style={[styles.artistPickerAvatar, styles.artistPickerFallback]}>
-                          <Ionicons name="person" size={20} color={colors.primary} />
-                        </View>
-                      )}
-                      <View style={styles.artistPickerTextWrap}>
-                        <Text style={styles.artistPickerName} numberOfLines={1}>
-                          {name}
-                        </Text>
-                        <Text style={styles.artistPickerRole}>Artist</Text>
-                      </View>
-                      <Ionicons name="chevron-forward" size={18} color="#666666" />
-                    </TouchableOpacity>
+                    />
                   );
                 })}
               </View>
-            </View>
+            </Animated.View>
           </TouchableOpacity>
         </Modal>
 
@@ -1674,8 +1934,18 @@ export default function FullPlayerModal() {
           visible={!!selectedArtistForModal}
           onClose={() => setSelectedArtistForModal(null)}
           artistName={selectedArtistForModal}
+          initialPhoto={
+            selectedArtistForModal
+              ? artistPhotos[selectedArtistForModal] ||
+                globalArtistPhotoCache.get(selectedArtistForModal) ||
+                resolveLocalArtistImage(selectedArtistForModal) ||
+                DEFAULT_ARTIST_IMAGES[selectedArtistForModal] ||
+                null
+              : null
+          }
         />
       </View>
+      )}
     </Modal>
   );
 }
@@ -2401,10 +2671,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   sleepModalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 20,
+    marginBottom: 18,
+    paddingHorizontal: 2,
   },
   sleepModalTitleRow: {
     flexDirection: "row",
@@ -2421,7 +2689,7 @@ const styles = StyleSheet.create({
   },
   sleepModalTitle: {
     fontFamily: fonts.bold,
-    fontSize: 18,
+    fontSize: 20,
     color: "#FFFFFF",
   },
   sleepModalSubtitle: {
@@ -2677,27 +2945,78 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
   },
+  desktopQueueContainer: {
+    maxWidth: 720,
+    width: "100%",
+    alignSelf: "center",
+    paddingHorizontal: 24,
+  },
+  queueScrollView: {
+    flex: 1,
+  },
+  queueHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.08)",
+  },
   queueHeaderTitle: {
     fontFamily: fonts.bold,
-    fontSize: 16,
+    fontSize: 20,
     color: "#FFFFFF",
-    marginBottom: 14,
+  },
+  queueHeaderSubtitle: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: "#888888",
+    marginTop: 2,
+  },
+  clearQueueBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+  },
+  clearQueueText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: "#E0E0E0",
+  },
+  queueSectionWrap: {
+    marginBottom: 18,
+  },
+  queueSectionToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 6,
+  },
+  queueSectionLabel: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    color: "#888888",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    marginBottom: 8,
   },
   queueItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    marginBottom: 4,
+    paddingVertical: 9,
+    paddingHorizontal: 6,
+    backgroundColor: "transparent",
+    marginBottom: 3,
   },
   queueItemActive: {
-    backgroundColor: "rgba(29, 185, 84, 0.12)",
+    backgroundColor: "transparent",
   },
   queueThumb: {
-    width: 44,
-    height: 44,
-    borderRadius: 4,
+    width: 46,
+    height: 46,
+    borderRadius: 6,
     backgroundColor: colors.surfaceCard,
   },
   queueItemText: {
@@ -2712,12 +3031,39 @@ const styles = StyleSheet.create({
   },
   activeQueueText: {
     color: colors.primary,
+    fontFamily: fonts.bold,
   },
   queueArtist: {
     fontFamily: fonts.regular,
     fontSize: 12,
     color: "#B3B3B3",
     marginTop: 2,
+  },
+  queueRemoveBtn: {
+    padding: 6,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  queueEmptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 36,
+    paddingHorizontal: 20,
+  },
+  queueEmptyText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 15,
+    color: "#FFFFFF",
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  queueEmptySubtext: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: "#888888",
+    textAlign: "center",
+    lineHeight: 18,
   },
   artistPickerOverlay: {
     flex: 1,
@@ -2729,14 +3075,19 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingTop: 12,
     paddingBottom: Platform.OS === "ios" ? 40 : 28,
     maxHeight: height * 0.65,
   },
+  artistPickerDragHandle: {
+    width: 38,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255, 255, 255, 0.22)",
+    alignSelf: "center",
+    marginBottom: 14,
+  },
   artistPickerHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
     marginBottom: 16,
     paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -2762,11 +3113,17 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
+    backgroundColor: "#2A2A2A",
   },
   artistPickerFallback: {
     backgroundColor: "#2A2A2A",
     alignItems: "center",
     justifyContent: "center",
+  },
+  artistPickerFallbackInitial: {
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: "#FFFFFF",
   },
   artistPickerTextWrap: {
     flex: 1,

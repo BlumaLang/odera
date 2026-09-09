@@ -1,10 +1,11 @@
 // UserContext - Manages user profile, onboarding state, and preferences persistence via Firebase
-import React, { createContext, useContext, useState, useEffect, useRef } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 import { api, DEFAULT_USER_ID } from "../api/client";
 import {
   auth,
   loginWithGoogle as fbLoginWithGoogle,
-  loginAsGuest as fbLoginAsGuest,
+  loginWithApple as fbLoginWithApple,
+  checkAuthRedirect as fbCheckAuthRedirect,
   logoutUser as fbLogout,
   onAuthChange,
   subscribeUserData,
@@ -15,8 +16,10 @@ import {
   toggleLikedSong as fbToggleLikedSong,
   subscribePlaylists,
   createPlaylistRTDB,
+  renamePlaylistRTDB,
   deletePlaylistRTDB,
   addTrackToPlaylistRTDB,
+  addTracksToPlaylistRTDB,
   removeTrackFromPlaylistRTDB,
   subscribeRecentlyPlayed,
   subscribeUserStreamCount,
@@ -29,6 +32,18 @@ import {
   cancelFriendRequestRTDB,
   removeFriendRTDB,
   searchUsersRTDB,
+  createCollabPlaylist as fbCreateCollabPlaylist,
+  joinCollabPlaylist as fbJoinCollabPlaylist,
+  leaveCollabPlaylist as fbLeaveCollabPlaylist,
+  renameCollabPlaylist as fbRenameCollabPlaylist,
+  subscribeCollabPlaylists as fbSubscribeCollabPlaylists,
+  addTrackToCollabPlaylist as fbAddTrackToCollabPlaylist,
+  addTracksToCollabPlaylist as fbAddTracksToCollabPlaylist,
+  removeTrackFromCollabPlaylist as fbRemoveTrackFromCollabPlaylist,
+  getCollabPlaylistDetails as fbGetCollabPlaylistDetails,
+  removeCollaboratorFromCollabPlaylist as fbRemoveCollaboratorFromCollabPlaylist,
+  deleteCollabPlaylist as fbDeleteCollabPlaylist,
+  calculateFriendBlend as fbCalculateFriendBlend,
   loginOrCreatePinUser,
   getLocalSession,
   saveLocalSession,
@@ -41,7 +56,11 @@ export const STORAGE_ARTIST_PHOTOS_KEY = "@staytup_artist_photos_cache";
 export const ONBOARDING_COMPLETED_KEY = "@staytup_onboarding_completed";
 
 export const UserProvider = ({ children }) => {
-  const isFreshLoginRef = useRef(false);
+  const isFreshLoginRef = useRef(
+    typeof window !== "undefined" &&
+      (window.sessionStorage?.getItem("@staytup_oauth_fresh_login") === "true" ||
+        window.localStorage?.getItem("@staytup_oauth_fresh_login") === "true")
+  );
   const [currentUser, setCurrentUser] = useState(null);
   const [isOnboardingCompleted, setIsOnboardingCompleted] = useState(() => {
     if (typeof window !== "undefined") {
@@ -70,6 +89,7 @@ export const UserProvider = ({ children }) => {
   const [streamCount, setStreamCount] = useState(0);
   const [friends, setFriends] = useState([]);
   const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
+  const [collabPlaylists, setCollabPlaylists] = useState([]);
   const [isLoadingUser, setIsLoadingUser] = useState(true);
   const [isPremium, setIsPremium] = useState(false);
   const [premiumPlan, setPremiumPlan] = useState("Free");
@@ -84,11 +104,85 @@ export const UserProvider = ({ children }) => {
     let unsubscribeStreams = null;
     let unsubscribeFriends = null;
     let unsubscribeRequests = null;
+    let unsubscribeCollab = null;
 
-    // Safety timeout: Ensure app never stays stuck on loading screen on startup
+    const isPendingRedirect =
+      typeof window !== "undefined" &&
+      (window.sessionStorage?.getItem("@staytup_pending_oauth_redirect") === "true" ||
+        window.localStorage?.getItem("@staytup_pending_oauth_redirect") === "true");
+
+    // Fast-track restoration from cached Firebase session for seamless PWA startup
+    getLocalSession("@staytup_firebase_user").then((cached) => {
+      if (cached && cached.uid) {
+        setCurrentUser((prev) => prev || {
+          uid: cached.uid,
+          displayName: cached.displayName || "Staytup Listener",
+          email: cached.email || null,
+          photoURL: cached.photoURL || null,
+          isAnonymous: false,
+        });
+        setIsLoggedIn(true);
+        if (cached.providerId) setLoginProvider(cached.providerId);
+      }
+    }).catch(() => {});
+
+    // Safety timeout: Give adequate time on mobile PWA cold start (3.5s) or OAuth redirect (7s)
     const safetyTimer = setTimeout(() => {
       setIsLoadingUser(false);
-    }, 1500);
+    }, isPendingRedirect ? 7000 : 3500);
+
+    // Check OAuth redirect result (for Apple / Google Sign-In)
+    fbCheckAuthRedirect()
+      .then((res) => {
+        if (res && res.success && res.user) {
+          isFreshLoginRef.current = true;
+          if (res.isNewUser) {
+            setIsOnboardingCompleted(false);
+          }
+          setCurrentUser(res.user);
+          setIsLoggedIn(true);
+          if (typeof window !== "undefined") {
+            window.sessionStorage?.removeItem("@staytup_pending_oauth_redirect");
+            window.sessionStorage?.removeItem("@staytup_oauth_fresh_login");
+            window.sessionStorage?.removeItem("@staytup_auth_error");
+            window.localStorage?.removeItem("@staytup_pending_oauth_redirect");
+            window.localStorage?.removeItem("@staytup_oauth_fresh_login");
+            window.localStorage?.removeItem("@staytup_auth_error");
+          }
+        } else if (res && res.success === false && res.error) {
+          let userMsg = res.error;
+          if (res.code === "auth/popup-closed-by-user") userMsg = "Sign-in was cancelled before completion.";
+          else if (res.code === "auth/unauthorized-domain") userMsg = "Domain not authorized in Firebase Console -> Authentication -> Settings.";
+          else if (res.code === "auth/account-exists-with-different-credential") userMsg = "An account already exists with this email.";
+          else if (res.code === "auth/network-request-failed") userMsg = "Network error. Please check your internet connection.";
+
+          if (typeof window !== "undefined") {
+            window.sessionStorage?.setItem("@staytup_auth_error", userMsg);
+            window.localStorage?.setItem("@staytup_auth_error", userMsg);
+            window.sessionStorage?.removeItem("@staytup_pending_oauth_redirect");
+            window.sessionStorage?.removeItem("@staytup_oauth_fresh_login");
+            window.localStorage?.removeItem("@staytup_pending_oauth_redirect");
+            window.localStorage?.removeItem("@staytup_oauth_fresh_login");
+          }
+          setIsLoadingUser(false);
+        } else {
+          // res is null (no redirect was pending)
+          if (typeof window !== "undefined") {
+            window.sessionStorage?.removeItem("@staytup_pending_oauth_redirect");
+            window.localStorage?.removeItem("@staytup_pending_oauth_redirect");
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn("[Auth] Redirect check error:", err);
+        if (typeof window !== "undefined") {
+          window.sessionStorage?.setItem("@staytup_auth_error", err?.message || "Sign-in failed");
+          window.localStorage?.setItem("@staytup_auth_error", err?.message || "Sign-in failed");
+          window.sessionStorage?.removeItem("@staytup_pending_oauth_redirect");
+          window.localStorage?.removeItem("@staytup_pending_oauth_redirect");
+        }
+        setIsLoadingUser(false);
+      });
 
     const unsubscribeAuth = onAuthChange(async (firebaseUser) => {
       clearTimeout(safetyTimer);
@@ -126,10 +220,21 @@ export const UserProvider = ({ children }) => {
         setCurrentUser(firebaseUser);
         setIsLoggedIn(true);
 
-        const providerId = firebaseUser.isAnonymous
-          ? "guest"
-          : firebaseUser.providerData?.[0]?.providerId || "google";
-        setLoginProvider(providerId.includes("google") ? "google" : providerId);
+        const rawProviderId = firebaseUser.providerData?.[0]?.providerId || "";
+        const providerId = rawProviderId.includes("apple")
+          ? "apple"
+          : rawProviderId.includes("google")
+          ? "google"
+          : rawProviderId || "google";
+        setLoginProvider(providerId);
+
+        saveLocalSession("@staytup_firebase_user", {
+          uid: firebaseUser.uid,
+          displayName: firebaseUser.displayName || "",
+          email: firebaseUser.email || "",
+          photoURL: firebaseUser.photoURL || null,
+          providerId,
+        }).catch(() => {});
 
         const isFresh = isFreshLoginRef.current;
         const isExplicitRetune =
@@ -146,7 +251,7 @@ export const UserProvider = ({ children }) => {
         const initialProfile = {
           username:
             firebaseUser.displayName ||
-            (firebaseUser.isAnonymous ? "Guest Listener" : "Staytup Listener"),
+            (firebaseUser.email ? firebaseUser.email.split("@")[0] : "Staytup Listener"),
           avatar: firebaseUser.photoURL || "initial",
           avatarColor: "#1DB954",
           languages: [],
@@ -200,6 +305,9 @@ export const UserProvider = ({ children }) => {
             if (!isFresh && !isExplicitRetune) {
               setIsOnboardingCompleted(true);
               saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
+            } else {
+              setIsOnboardingCompleted(false);
+              saveLocalSession(ONBOARDING_COMPLETED_KEY, "false").catch(() => {});
             }
             fbSaveUserProfile(firebaseUser.uid, initialProfile);
             fbSaveOnboardingState(firebaseUser.uid, !isFresh && !isExplicitRetune);
@@ -236,6 +344,10 @@ export const UserProvider = ({ children }) => {
 
         unsubscribeRequests = subscribeFriendRequests(firebaseUser.uid, (reqs) => {
           setFriendRequests(reqs || { incoming: [], outgoing: [] });
+        });
+
+        unsubscribeCollab = fbSubscribeCollabPlaylists(firebaseUser.uid, (collabs) => {
+          setCollabPlaylists(collabs || []);
         });
       } else {
         // Check for active local PIN or QR session before clearing state
@@ -278,10 +390,14 @@ export const UserProvider = ({ children }) => {
           unsubscribeRequests = subscribeFriendRequests(restoredUser.uid, (reqs) => {
             setFriendRequests(reqs || { incoming: [], outgoing: [] });
           });
+          unsubscribeCollab = fbSubscribeCollabPlaylists(restoredUser.uid, (collabs) => {
+            setCollabPlaylists(collabs || []);
+          });
           return;
         }
 
         // User logged out or unauthenticated
+        removeLocalSession("@staytup_firebase_user").catch(() => {});
         setCurrentUser(null);
         setIsLoggedIn(false);
         setLoginProvider(null);
@@ -294,6 +410,7 @@ export const UserProvider = ({ children }) => {
         setStreamCount(0);
         setFriends([]);
         setFriendRequests({ incoming: [], outgoing: [] });
+        setCollabPlaylists([]);
         setIsLoadingUser(false);
       }
     });
@@ -308,6 +425,7 @@ export const UserProvider = ({ children }) => {
       if (unsubscribeStreams) unsubscribeStreams();
       if (unsubscribeFriends) unsubscribeFriends();
       if (unsubscribeRequests) unsubscribeRequests();
+      if (unsubscribeCollab) unsubscribeCollab();
     };
   }, []);
 
@@ -364,31 +482,12 @@ export const UserProvider = ({ children }) => {
       if (provider === "google") {
         const res = await fbLoginWithGoogle();
         return res;
-      } else {
-        const res = await fbLoginAsGuest();
-        if (!res.success) {
-          if (res.code === "auth/admin-restricted-operation" || res.code === "auth/operation-not-allowed") {
-            // Fallback guest session while user enables Anonymous sign-in in Firebase console
-            const fallbackGuest = {
-              uid: "guest_user",
-              isAnonymous: true,
-              displayName: "Guest Listener",
-            };
-            setCurrentUser(fallbackGuest);
-            setIsLoggedIn(true);
-            setLoginProvider("guest");
-            setIsOnboardingCompleted(true);
-            setIsLoadingUser(false);
-            return {
-              success: true,
-              user: fallbackGuest,
-              notice: "Anonymous auth not enabled in Firebase Console yet. Running in local guest mode.",
-            };
-          }
-          return res;
-        }
+      }
+      if (provider === "apple") {
+        const res = await fbLoginWithApple();
         return res;
       }
+      return { success: false, error: "Unsupported login provider. Please sign in with Google or Apple." };
     } catch (err) {
       console.warn("Login failed:", err);
       return { success: false, error: err.message };
@@ -404,6 +503,7 @@ export const UserProvider = ({ children }) => {
       }
       await removeLocalSession("@staytup_pin_user");
       await removeLocalSession("@staytup_qr_user");
+      await removeLocalSession("@staytup_firebase_user");
       await removeLocalSession(ONBOARDING_COMPLETED_KEY);
       await fbLogout();
     } catch (err) {
@@ -588,27 +688,64 @@ export const UserProvider = ({ children }) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
     const res = await createPlaylistRTDB(uid, name, description, initialTracks, coverUrl);
     if (res) {
-      setPlaylists((prev) => [res, ...(prev || [])]);
+      setPlaylists((prev) => {
+        const remaining = (prev || []).filter((p) => (p.id || p.collabId) !== res.id);
+        return [res, ...remaining];
+      });
     }
     return res;
   };
 
+  const renamePlaylist = async (playlistId, newName) => {
+    const trimmed = (newName || "").trim();
+    if (!playlistId || !trimmed) return false;
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+
+    // Optimistically update local playlists & collabPlaylists state
+    setPlaylists((prev) =>
+      (prev || []).map((p) =>
+        (p.id === playlistId || p.collabId === playlistId)
+          ? { ...p, name: trimmed, updatedAt: Date.now() }
+          : p
+      )
+    );
+    setCollabPlaylists((prev) =>
+      (prev || []).map((p) =>
+        (p.id === playlistId || p.collabId === playlistId)
+          ? { ...p, name: trimmed, updatedAt: Date.now() }
+          : p
+      )
+    );
+
+    if (String(playlistId).startsWith("collab_")) {
+      return await fbRenameCollabPlaylist(playlistId, trimmed);
+    }
+    return await renamePlaylistRTDB(uid, playlistId, trimmed);
+  };
+
   const deletePlaylist = async (playlistId) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
-    setPlaylists((prev) => (prev || []).filter((p) => p.id !== playlistId));
+    setPlaylists((prev) => (prev || []).filter((p) => (p.id || p.collabId) !== playlistId));
+    setCollabPlaylists((prev) => (prev || []).filter((p) => (p.id || p.collabId) !== playlistId));
+    if (String(playlistId).startsWith("collab_")) {
+      return await fbDeleteCollabPlaylist(playlistId);
+    }
     return await deletePlaylistRTDB(uid, playlistId);
   };
 
   const addTrackToPlaylist = async (playlistId, track) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
-    const ok = await addTrackToPlaylistRTDB(uid, playlistId, track);
+    const isCollab = String(playlistId).startsWith("collab_");
+    const ok = isCollab
+      ? await fbAddTrackToCollabPlaylist(playlistId, track)
+      : await addTrackToPlaylistRTDB(uid, playlistId, track);
     if (ok) {
-      setPlaylists((prev) =>
+      const updater = (prev) =>
         (prev || []).map((p) => {
-          if (p.id !== playlistId) return p;
+          if ((p.id || p.collabId) !== playlistId) return p;
           const curTracks = Array.isArray(p.tracks) ? [...p.tracks] : [];
-          const vid = track.videoId || track.video_id;
-          if (!curTracks.some((t) => (t.videoId || t.video_id) === vid)) {
+          const vid = track.videoId || track.video_id || track.id;
+          if (!curTracks.some((t) => (t.videoId || t.video_id || t.id) === vid)) {
             curTracks.push({
               ...track,
               videoId: vid,
@@ -625,20 +762,36 @@ export const UserProvider = ({ children }) => {
             cover_url: resolvedCover,
             preview_artwork: resolvedCover,
           };
-        })
-      );
+        });
+      setPlaylists(updater);
+      if (isCollab) setCollabPlaylists(updater);
     }
     return ok;
   };
 
+  const addTracksToPlaylist = async (playlistId, newTracks) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    const updated = await addTracksToPlaylistRTDB(uid, playlistId, newTracks);
+    if (updated) {
+      setPlaylists((prev) =>
+        (prev || []).map((p) => (p.id === playlistId ? updated : p))
+      );
+      return updated;
+    }
+    return null;
+  };
+
   const removeTrackFromPlaylist = async (playlistId, videoId) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
-    const ok = await removeTrackFromPlaylistRTDB(uid, playlistId, videoId);
-    setPlaylists((prev) =>
+    const isCollab = String(playlistId).startsWith("collab_");
+    const ok = isCollab
+      ? await fbRemoveTrackFromCollabPlaylist(playlistId, videoId)
+      : await removeTrackFromPlaylistRTDB(uid, playlistId, videoId);
+    const updater = (prev) =>
       (prev || []).map((p) => {
-        if (p.id !== playlistId) return p;
+        if ((p.id || p.collabId) !== playlistId) return p;
         const curTracks = (p.tracks || []).filter(
-          (t) => (t.videoId || t.video_id) !== videoId
+          (t) => (t.videoId || t.video_id || t.id) !== videoId
         );
         const firstTrackArtwork = curTracks[0]?.artwork_url || curTracks[0]?.thumbnail || "";
         const resolvedCover = curTracks.length > 0 ? (firstTrackArtwork || p.cover_url || "") : "";
@@ -649,12 +802,24 @@ export const UserProvider = ({ children }) => {
           cover_url: resolvedCover,
           preview_artwork: resolvedCover,
         };
-      })
-    );
+      });
+    setPlaylists(updater);
+    if (isCollab) setCollabPlaylists(updater);
     return ok;
   };
 
-  // Friend System helpers
+  const isTrackInAnyPlaylist = useCallback((trackOrVideoId) => {
+    if (!trackOrVideoId) return false;
+    const vid = typeof trackOrVideoId === "string"
+      ? trackOrVideoId
+      : (trackOrVideoId.videoId || trackOrVideoId.video_id || trackOrVideoId.id);
+    if (!vid) return false;
+    const allLists = [...(playlists || []), ...(collabPlaylists || [])];
+    return allLists.some((pl) => {
+      const tracks = Array.isArray(pl.tracks) ? pl.tracks : [];
+      return tracks.some((t) => (t.videoId || t.video_id || t.id) === vid);
+    });
+  }, [playlists, collabPlaylists]);
   const sendFriendRequest = async (recipientUid, recipientUser) => {
     const sender = {
       uid: currentUser?.uid || DEFAULT_USER_ID,
@@ -695,6 +860,52 @@ export const UserProvider = ({ children }) => {
     return await searchUsersRTDB(query, uid);
   };
 
+  // Collaborative Playlists
+  const createCollab = async (playlistData) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    return await fbCreateCollabPlaylist(uid, userProfile, playlistData);
+  };
+
+  const joinCollab = async (collabId) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    return await fbJoinCollabPlaylist(uid, userProfile, collabId);
+  };
+
+  const leaveCollab = async (collabId) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    return await fbLeaveCollabPlaylist(uid, collabId);
+  };
+
+  const addTrackToCollab = async (collabId, track) => {
+    return await fbAddTrackToCollabPlaylist(collabId, track);
+  };
+
+  const addTracksToCollab = async (collabId, tracks) => {
+    return await fbAddTracksToCollabPlaylist(collabId, tracks);
+  };
+
+  const removeTrackFromCollab = async (collabId, videoId) => {
+    return await fbRemoveTrackFromCollabPlaylist(collabId, videoId);
+  };
+
+  const getCollabDetails = async (collabId) => {
+    return await fbGetCollabPlaylistDetails(collabId);
+  };
+
+  const removeCollaborator = async (collabId, targetUid) => {
+    return await fbRemoveCollaboratorFromCollabPlaylist(collabId, targetUid);
+  };
+
+  const deleteCollab = async (collabId) => {
+    setCollabPlaylists((prev) => (prev || []).filter((p) => (p.id || p.collabId) !== collabId));
+    return await fbDeleteCollabPlaylist(collabId);
+  };
+
+  const getFriendBlend = async (friendUid, friendProfile) => {
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    return await fbCalculateFriendBlend(uid, userProfile, friendUid, friendProfile);
+  };
+
   return (
     <UserContext.Provider
       value={{
@@ -727,9 +938,12 @@ export const UserProvider = ({ children }) => {
         playlists,
         setPlaylists,
         createPlaylist,
+        renamePlaylist,
         deletePlaylist,
         addTrackToPlaylist,
+        addTracksToPlaylist,
         removeTrackFromPlaylist,
+        isTrackInAnyPlaylist,
         recentlyPlayed,
         streamCount,
         recordUserStream,
@@ -742,6 +956,19 @@ export const UserProvider = ({ children }) => {
         cancelFriendRequest,
         removeFriend,
         searchUsers,
+        // Collaborative Playlists
+        collabPlaylists,
+        createCollabPlaylist: createCollab,
+        joinCollabPlaylist: joinCollab,
+        leaveCollabPlaylist: leaveCollab,
+        addTrackToCollabPlaylist: addTrackToCollab,
+        addTracksToCollabPlaylist: addTracksToCollab,
+        removeTrackFromCollabPlaylist: removeTrackFromCollab,
+        getCollabPlaylistDetails: getCollabDetails,
+        removeCollaboratorFromCollabPlaylist: removeCollaborator,
+        deleteCollabPlaylist: deleteCollab,
+        // Blend & Compatibility
+        getFriendBlend,
       }}
     >
       {children}
@@ -758,6 +985,7 @@ const defaultUserContext = {
   likedSongs: [],
   playlists: [],
   setPlaylists: () => {},
+  renamePlaylist: () => Promise.resolve(false),
   recentlyPlayed: [],
   streamCount: 0,
   recordUserStream: () => {},
@@ -769,6 +997,13 @@ const defaultUserContext = {
   cancelFriendRequest: () => Promise.resolve(false),
   removeFriend: () => Promise.resolve(false),
   searchUsers: () => Promise.resolve([]),
+  collabPlaylists: [],
+  createCollabPlaylist: () => Promise.resolve({ success: false }),
+  joinCollabPlaylist: () => Promise.resolve({ success: false }),
+  leaveCollabPlaylist: () => Promise.resolve(false),
+  addTrackToCollabPlaylist: () => Promise.resolve(false),
+  removeTrackFromCollabPlaylist: () => Promise.resolve(false),
+  getCollabPlaylistDetails: () => Promise.resolve(null),
   isFavoriteArtist: () => false,
   toggleFavoriteArtist: () => {},
   isProfileOpen: false,

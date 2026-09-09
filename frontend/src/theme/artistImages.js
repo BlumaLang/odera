@@ -9,6 +9,7 @@ export const DEFAULT_ARTIST_IMAGES = {
   "Diljit Dosanjh": "https://yt3.googleusercontent.com/7EYXXMXY594V8y4sZT2aawmdKgDAGTu5jNm9C-HpR3jY9cZJ0NMxS__nZKBdWZ1PUpJPjc2BAA=w300-h300-l90-rj",
   "Karan Aujla": "https://lh3.googleusercontent.com/k7sgqqcV5VScaMZtTmS8W_tfouLVBpgyJII0epYE2Vjw1-zzhGgUCV51aHxZn6cmZKKJgUfNlIVpZg=w300-h300-p-l90-rj",
   "AP Dhillon": "https://lh3.googleusercontent.com/yJh1MZL2FvtJz3YeDAUhTRpfdUSwdotWw8XmB_An-4coKiVG4pDpUGRAPV7ooqmzBP4HAWrtjPyAfI4=w300-h300-p-l90-rj",
+  "Yo Yo Honey Singh": "https://c.saavncdn.com/artists/Yo_Yo_Honey_Singh_004_20260811095253_500x500.jpg",
   "Sidhu Moose Wala": "https://yt3.ggpht.com/ytc/AIdro_kiQJ0Hhp0O-tdaY1dy81-gSNujjccUlWstnpFr686ZlMk=w300-h300-l90-rj",
   "Ammy Virk": "https://yt3.googleusercontent.com/OTOkRMYq0fub5vvmGucfC9NoP6pyaVlAXe39lmKnGJ-K8_kCjGz8Ol9e0O8xOX1gexumujRTMW8_BN0=w300-h300-l90-rj",
   "Shubh": "https://lh3.googleusercontent.com/xGLCqdWB64eQARHXZdE4ut8VkNK7UnkrRKmQ4Bnx5ksOSmXctLUiEzjd4fh48EdpslwA219yNJnKU3k=w300-h300-l90-rj",
@@ -87,7 +88,10 @@ export const DEFAULT_ARTIST_IMAGES = {
 /**
  * Case-insensitive resolver for pre-cached artist photos
  */
-export function resolveLocalArtistImage(artistName) {
+export function resolveLocalArtistImage(artistName, dynamicUrl = null) {
+  if (dynamicUrl && typeof dynamicUrl === "string" && dynamicUrl.trim().length > 0) {
+    return dynamicUrl.trim();
+  }
   if (!artistName || typeof artistName !== "string") return null;
   const clean = artistName.trim();
   if (DEFAULT_ARTIST_IMAGES[clean]) {

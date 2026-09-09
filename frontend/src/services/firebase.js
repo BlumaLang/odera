@@ -4,10 +4,15 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import {
   getAuth,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  getAdditionalUserInfo,
   GoogleAuthProvider,
-  signInAnonymously,
+  OAuthProvider,
   signOut,
   onAuthStateChanged,
+  browserLocalPersistence,
+  setPersistence,
 } from "firebase/auth";
 import {
   getDatabase,
@@ -35,34 +40,234 @@ export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getDatabase(app);
 
+// Force browserLocalPersistence (localStorage) for resilient PWA & mobile sessions
+if (typeof window !== "undefined") {
+  try {
+    setPersistence(auth, browserLocalPersistence).catch((err) => {
+      console.warn("[Auth] setPersistence warning:", err);
+    });
+  } catch (_) {}
+}
+
+// Detect installed/standalone PWA mode on iOS (Homescreen webclip), Android (WebAPK/TWA), and desktop
+export const isStandaloneMode = () => {
+  if (typeof window === "undefined") return false;
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true ||
+    (typeof document !== "undefined" &&
+      document.referrer &&
+      document.referrer.includes("android-app://"))
+  );
+};
+
+// Helper to detect mobile browser/device
+export const isMobileDevice = () => {
+  if (Platform.OS === "android" || Platform.OS === "ios") return true;
+  if (typeof navigator !== "undefined") {
+    const ua = navigator.userAgent || "";
+    const platform = navigator.platform || "";
+    if (/Android|iPhone|iPad|iPod|Mobile|Silk/i.test(ua)) return true;
+    if (platform === "MacIntel" && navigator.maxTouchPoints > 1) return true;
+    if (typeof window !== "undefined" && window.innerWidth <= 768 && (navigator.maxTouchPoints > 0 || "ontouchstart" in window)) {
+      return true;
+    }
+  }
+  return false;
+};
+
 // Google Auth Provider
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 
+// Apple Auth Provider
+// Configured with Firebase Auth handler: https://staytupnow.firebaseapp.com/__/auth/handler
+const appleProvider = new OAuthProvider("apple.com");
+appleProvider.addScope("email");
+appleProvider.addScope("name");
+
 /**
- * Sign in using Google popup
+ * Sign in using Google popup / redirect
+ * - In standalone PWA mode (iOS & Android home screen app), signInWithRedirect
+ *   forces the user out of the standalone container into external Safari/Chrome,
+ *   losing the PWA session. Therefore, PWAs MUST use signInWithPopup.
+ * - In standard mobile and desktop browsers, signInWithPopup is attempted first.
+ *   With Cross-Origin-Opener-Policy "same-origin-allow-popups", popups work cleanly.
+ *   If blocked or failing, it falls back seamlessly to signInWithRedirect.
  */
 export async function loginWithGoogle() {
+  const isPWA = isStandaloneMode();
+
+  if (isPWA) {
+    try {
+      console.log("[Auth] Standalone PWA mode: authenticating via popup.");
+      const result = await signInWithPopup(auth, googleProvider);
+      return { success: true, user: result.user };
+    } catch (popupErr) {
+      console.warn("[Auth] PWA popup sign-in error:", popupErr.code, popupErr.message);
+      if (
+        popupErr.code === "auth/popup-blocked" ||
+        popupErr.code === "auth/cancelled-popup-request"
+      ) {
+        try {
+          console.log("[Auth] PWA popup blocked: falling back to redirect.");
+          if (typeof window !== "undefined") {
+            window.sessionStorage?.setItem("@staytup_pending_oauth_redirect", "true");
+            window.sessionStorage?.setItem("@staytup_oauth_fresh_login", "true");
+            window.sessionStorage?.removeItem("@staytup_auth_error");
+            window.localStorage?.setItem("@staytup_pending_oauth_redirect", "true");
+            window.localStorage?.setItem("@staytup_oauth_fresh_login", "true");
+            window.localStorage?.removeItem("@staytup_auth_error");
+          }
+          await signInWithRedirect(auth, googleProvider);
+          return { success: true, redirecting: true };
+        } catch (redirErr) {
+          return { success: false, error: redirErr.message, code: redirErr.code };
+        }
+      }
+      return { success: false, error: popupErr.message, code: popupErr.code };
+    }
+  }
+
+  // Standard web browser flow (desktop & mobile browser)
   try {
     const result = await signInWithPopup(auth, googleProvider);
     return { success: true, user: result.user };
   } catch (error) {
-    console.warn("Google Sign-In Error:", error.code, error.message);
+    console.warn("Google Sign-In Popup Error:", error.code, error.message);
+    const isCoopOrPopupError =
+      error.code === "auth/popup-blocked" ||
+      error.code === "auth/cancelled-popup-request" ||
+      error.code === "auth/unauthorized-domain" ||
+      error.code === "auth/popup-closed-by-user" ||
+      (error.message &&
+        (error.message.includes("Cross-Origin-Opener-Policy") ||
+          error.message.includes("window.closed") ||
+          error.message.includes("popup")));
+
+    if (isCoopOrPopupError) {
+      try {
+        console.log("[Auth] Falling back to OAuth redirect via https://staytupnow.firebaseapp.com/__/auth/handler");
+        if (typeof window !== "undefined") {
+          window.sessionStorage?.setItem("@staytup_pending_oauth_redirect", "true");
+          window.sessionStorage?.setItem("@staytup_oauth_fresh_login", "true");
+          window.sessionStorage?.removeItem("@staytup_auth_error");
+          window.localStorage?.setItem("@staytup_pending_oauth_redirect", "true");
+          window.localStorage?.setItem("@staytup_oauth_fresh_login", "true");
+          window.localStorage?.removeItem("@staytup_auth_error");
+        }
+        await signInWithRedirect(auth, googleProvider);
+        return { success: true, redirecting: true };
+      } catch (redirErr) {
+        return { success: false, error: redirErr.message, code: redirErr.code };
+      }
+    }
     return { success: false, error: error.message, code: error.code };
   }
 }
 
 /**
- * Sign in anonymously (Guest Mode)
+ * Sign in using Apple
+ * Configured with https://staytupnow.firebaseapp.com/__/auth/handler
  */
-export async function loginAsGuest() {
+export async function loginWithApple() {
+  const isPWA = isStandaloneMode();
+
+  if (isPWA) {
+    try {
+      console.log("[Auth] Standalone PWA mode: authenticating Apple via popup.");
+      const result = await signInWithPopup(auth, appleProvider);
+      return { success: true, user: result.user };
+    } catch (popupErr) {
+      console.warn("[Auth] PWA Apple popup sign-in error:", popupErr.code, popupErr.message);
+      if (
+        popupErr.code === "auth/popup-blocked" ||
+        popupErr.code === "auth/cancelled-popup-request"
+      ) {
+        try {
+          console.log("[Auth] PWA Apple popup blocked: falling back to redirect.");
+          if (typeof window !== "undefined") {
+            window.sessionStorage?.setItem("@staytup_pending_oauth_redirect", "true");
+            window.sessionStorage?.setItem("@staytup_oauth_fresh_login", "true");
+            window.sessionStorage?.removeItem("@staytup_auth_error");
+            window.localStorage?.setItem("@staytup_pending_oauth_redirect", "true");
+            window.localStorage?.setItem("@staytup_oauth_fresh_login", "true");
+            window.localStorage?.removeItem("@staytup_auth_error");
+          }
+          await signInWithRedirect(auth, appleProvider);
+          return { success: true, redirecting: true };
+        } catch (redirErr) {
+          return { success: false, error: redirErr.message, code: redirErr.code };
+        }
+      }
+      return { success: false, error: popupErr.message, code: popupErr.code };
+    }
+  }
+
   try {
-    const result = await signInAnonymously(auth);
+    const result = await signInWithPopup(auth, appleProvider);
     return { success: true, user: result.user };
   } catch (error) {
-    console.warn("Guest Sign-In Error:", error.code, error.message);
+    console.warn("Apple Sign-In Popup Error:", error.code, error.message);
+    const isCoopOrPopupError =
+      error.code === "auth/popup-blocked" ||
+      error.code === "auth/cancelled-popup-request" ||
+      error.code === "auth/unauthorized-domain" ||
+      error.code === "auth/popup-closed-by-user" ||
+      (error.message &&
+        (error.message.includes("Cross-Origin-Opener-Policy") ||
+          error.message.includes("window.closed") ||
+          error.message.includes("popup")));
+
+    if (isCoopOrPopupError) {
+      try {
+        console.log("[Auth] Falling back to Apple OAuth redirect via https://staytupnow.firebaseapp.com/__/auth/handler");
+        if (typeof window !== "undefined") {
+          window.sessionStorage?.setItem("@staytup_pending_oauth_redirect", "true");
+          window.sessionStorage?.setItem("@staytup_oauth_fresh_login", "true");
+          window.sessionStorage?.removeItem("@staytup_auth_error");
+          window.localStorage?.setItem("@staytup_pending_oauth_redirect", "true");
+          window.localStorage?.setItem("@staytup_oauth_fresh_login", "true");
+          window.localStorage?.removeItem("@staytup_auth_error");
+        }
+        await signInWithRedirect(auth, appleProvider);
+        return { success: true, redirecting: true };
+      } catch (redirErr) {
+        return { success: false, error: redirErr.message, code: redirErr.code };
+      }
+    }
     return { success: false, error: error.message, code: error.code };
   }
+}
+
+/**
+ * Check if user returned from OAuth redirect (e.g. Apple or Google sign-in)
+ */
+export async function checkAuthRedirect() {
+  try {
+    const result = await getRedirectResult(auth);
+    if (result && result.user) {
+      let isNewUser = false;
+      try {
+        const info = getAdditionalUserInfo(result);
+        if (info && info.isNewUser) {
+          isNewUser = true;
+        }
+      } catch (_) {}
+      return { success: true, user: result.user, isNewUser, credential: result };
+    }
+    return null;
+  } catch (error) {
+    console.warn("Auth Redirect Result Error:", error.code, error.message);
+    return { success: false, error: error.message, code: error.code };
+  }
+}
+
+/**
+ * Guest login removed permanently
+ */
+export async function loginAsGuest() {
+  return { success: false, error: "Guest login has been disabled. Please sign in with Google or Apple." };
 }
 
 /**
@@ -150,7 +355,21 @@ export async function loginOrCreatePinUser(username, pin) {
     if (snap.exists()) {
       const existing = snap.val();
       if (existing.pin !== cleanPin) {
-        return { success: false, error: "Incorrect 4-digit PIN. Please try again." };
+        // Name already taken with a different PIN: assign random unique username suffix without blocking
+        const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+        const uniqueUsername = `${username.trim()}_${randomSuffix}`;
+        const uniqueClean = `${clean}_${randomSuffix}`;
+        const newUser = {
+          uid: `pin_${uniqueClean}_${Date.now().toString(36)}`,
+          displayName: uniqueUsername,
+          username: uniqueUsername,
+          cleanUser: uniqueClean,
+          pin: cleanPin,
+          createdAt: Date.now(),
+        };
+        await set(ref(db, `pin_users/${uniqueClean}`), newUser);
+        await saveLocalSession("@staytup_pin_user", { ...newUser, pin: cleanPin });
+        return { success: true, user: newUser, isNewUser: true };
       }
       const user = {
         uid: existing.uid,
@@ -395,7 +614,18 @@ export function subscribePlaylists(uid, callback) {
           preview_artwork: resolvedCover,
         };
       });
-      callback(normalized);
+      const seen = new Set();
+      const deduped = [];
+      for (const p of normalized) {
+        const id = String(p.id || p.collabId || "");
+        if (id && !seen.has(id)) {
+          seen.add(id);
+          deduped.push(p);
+        } else if (!id) {
+          deduped.push(p);
+        }
+      }
+      callback(deduped);
     },
     (error) => {
       console.warn("RTDB playlists subscription error:", error.message);
@@ -957,7 +1187,7 @@ export async function createPlaylistRTDB(uid, name, description = "", initialTra
   try {
     const playlistsRef = ref(db, `users/${uid}/playlists`);
     const snapshot = await get(playlistsRef);
-    const existing = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
+    const rawExisting = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : (snapshot.exists() && typeof snapshot.val() === "object" ? Object.values(snapshot.val()) : []);
     const firstArtwork = initialTracks[0]?.artwork_url || initialTracks[0]?.thumbnail || "";
     const resolvedCover = coverUrl || firstArtwork || "";
     const newPlaylist = {
@@ -970,7 +1200,16 @@ export async function createPlaylistRTDB(uid, name, description = "", initialTra
       track_count: (initialTracks || []).length,
       created_at: new Date().toISOString(),
     };
-    const updated = [newPlaylist, ...existing];
+    const seen = new Set([newPlaylist.id]);
+    const dedupedExisting = [];
+    for (const p of rawExisting) {
+      const pid = String(p?.id || p?.collabId || "");
+      if (pid && !seen.has(pid)) {
+        seen.add(pid);
+        dedupedExisting.push(p);
+      }
+    }
+    const updated = [newPlaylist, ...dedupedExisting];
     await set(playlistsRef, updated);
     return newPlaylist;
   } catch (error) {
@@ -1023,6 +1262,61 @@ export async function addTrackToPlaylistRTDB(uid, playlistId, track) {
   }
 }
 
+export async function addTracksToPlaylistRTDB(uid, playlistId, newTracks) {
+  if (!uid || !playlistId || !Array.isArray(newTracks) || newTracks.length === 0) return false;
+  try {
+    const playlistsRef = ref(db, `users/${uid}/playlists`);
+    const snapshot = await get(playlistsRef);
+    if (!snapshot.exists()) return false;
+    const list = Array.isArray(snapshot.val()) ? snapshot.val() : [];
+    const idx = list.findIndex((p) => p.id === playlistId);
+    if (idx < 0) return false;
+
+    const pl = list[idx];
+    const tracks = Array.isArray(pl.tracks) ? [...pl.tracks] : [];
+    const existingIds = new Set(tracks.map((t) => t.videoId || t.video_id || t.id));
+
+    let addedCount = 0;
+    for (const track of newTracks) {
+      const vid = track.videoId || track.video_id || track.id;
+      if (vid && !existingIds.has(vid)) {
+        existingIds.add(vid);
+        tracks.push({
+          videoId: vid,
+          video_id: vid,
+          title: track.title || "",
+          artist: track.artist || "Unknown Artist",
+          album: track.album || "",
+          thumbnail: track.thumbnail || track.artwork_url || "",
+          artwork_url: track.artwork_url || track.thumbnail || "",
+          duration: track.duration || "",
+          duration_seconds: track.duration_seconds || 0,
+          stream_url: track.stream_url || "",
+          addedAt: new Date().toISOString(),
+        });
+        addedCount++;
+      }
+    }
+
+    if (addedCount > 0) {
+      const firstTrackArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
+      const resolvedCover = pl.cover_url || pl.preview_artwork || firstTrackArtwork || "";
+      list[idx] = {
+        ...pl,
+        tracks,
+        track_count: tracks.length,
+        cover_url: resolvedCover,
+        preview_artwork: resolvedCover,
+      };
+      await set(playlistsRef, list);
+    }
+    return list[idx];
+  } catch (error) {
+    console.warn("Failed to batch add tracks to playlist in RTDB:", error.message);
+    return false;
+  }
+}
+
 export async function removeTrackFromPlaylistRTDB(uid, playlistId, videoId) {
   if (!uid || !playlistId || !videoId) return false;
   try {
@@ -1048,6 +1342,29 @@ export async function removeTrackFromPlaylistRTDB(uid, playlistId, videoId) {
     return true;
   } catch (error) {
     console.warn("Failed to remove track from playlist in RTDB:", error.message);
+    return false;
+  }
+}
+
+export async function renamePlaylistRTDB(uid, playlistId, newName) {
+  if (!uid || !playlistId || !newName) return false;
+  try {
+    const playlistsRef = ref(db, `users/${uid}/playlists`);
+    const snapshot = await get(playlistsRef);
+    if (!snapshot.exists()) return false;
+    const list = Array.isArray(snapshot.val()) ? snapshot.val() : [];
+    const idx = list.findIndex((p) => p.id === playlistId);
+    if (idx < 0) return false;
+
+    list[idx] = {
+      ...list[idx],
+      name: newName.trim(),
+      updatedAt: Date.now(),
+    };
+    await set(playlistsRef, list);
+    return list[idx];
+  } catch (error) {
+    console.warn("Failed to rename playlist in RTDB:", error.message);
     return false;
   }
 }
@@ -1506,205 +1823,742 @@ export function subscribeFriendActivity(friendUid, callback) {
 }
 
 
-// ─── PULSE (Social Music Feed) ────────────────────────────────────────────────
+// ─── ARTIST DATABASE CACHE ──────────────────────────────────────────────────
+
+function sanitizeDbKey(key) {
+  if (!key || typeof key !== "string") return "";
+  return key.trim().toLowerCase().replace(/[.#$[\]/]/g, "_");
+}
 
 /**
- * Create a new Pulse post
- * post = { track: { videoId, title, artist, artwork_url }, caption, mood, uid, username, avatar, avatarColor }
+ * Get a cached artist record by artist ID or sanitized name
  */
-export async function createPulsePost(post) {
+export async function getCachedArtist(artistIdOrName) {
+  if (!artistIdOrName) return null;
+  const clean = sanitizeDbKey(String(artistIdOrName));
+  if (!clean) return null;
+
   try {
-    const postId = `post_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 5)}`;
-    const postData = {
-      ...post,
-      postId,
-      timestamp: Date.now(),
-      likes: 0,
-      comments: 0,
-      reshares: 0,
+    let snap = await get(ref(db, `artists_cache/${clean}`));
+    if (!snap.exists() && clean.includes(" ")) {
+      const underscored = clean.replace(/\s+/g, "_");
+      snap = await get(ref(db, `artists_cache/${underscored}`));
+    }
+    if (snap && snap.exists()) {
+      const data = snap.val();
+      if (data && (data.imageUrl || data.image)) {
+        return {
+          id: data.id || clean,
+          name: data.name || artistIdOrName,
+          imageUrl: data.imageUrl || data.image,
+          image: data.imageUrl || data.image,
+          updatedAt: data.updatedAt || 0,
+        };
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+/**
+ * Save an artist record to database cache
+ * Only saves if imageUrl is present
+ */
+export async function saveCachedArtist(artist) {
+  if (!artist) return false;
+  const name = artist.name || "";
+  const id = artist.id ? String(artist.id) : sanitizeDbKey(name);
+  const imageUrl = artist.imageUrl || artist.image;
+  if (!imageUrl || typeof imageUrl !== "string") return false;
+
+  const cleanId = sanitizeDbKey(id);
+  const cleanName = sanitizeDbKey(name);
+  const underscoreName = cleanName.replace(/\s+/g, "_");
+  const record = {
+    id: String(artist.id || cleanId),
+    name: name || artist.id,
+    imageUrl,
+    updatedAt: Date.now(),
+  };
+
+  try {
+    if (cleanId) {
+      await set(ref(db, `artists_cache/${cleanId}`), record);
+    }
+    if (cleanName && cleanName !== cleanId) {
+      await set(ref(db, `artists_cache/${cleanName}`), record);
+    }
+    if (underscoreName && underscoreName !== cleanName && underscoreName !== cleanId) {
+      await set(ref(db, `artists_cache/${underscoreName}`), record);
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Get cached artist records in batch
+ */
+export async function getBatchCachedArtists(artistIdsOrNames) {
+  if (!Array.isArray(artistIdsOrNames) || artistIdsOrNames.length === 0) return {};
+  const results = {};
+  await Promise.allSettled(
+    artistIdsOrNames.map(async (item) => {
+      if (!item) return;
+      const key = typeof item === "object" ? (item.id || item.name) : item;
+      const cached = await getCachedArtist(key);
+      if (cached) {
+        results[key] = cached;
+        if (cached.name) results[cached.name] = cached;
+        if (cached.id) results[cached.id] = cached;
+      }
+    })
+  );
+  return results;
+}
+
+// ─── Referral Code System ─────────────────────────────────────────────────────
+
+/**
+ * Generate a random 8-character alphanumeric referral code.
+ */
+function generateReferralCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid confusion
+  let code = "";
+  for (let i = 0; i < 8; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
+
+/**
+ * Get the user's referral code from the database.
+ * If no code exists yet, generate one and store it.
+ * Returns { code, createdAt, usedBy }
+ */
+export async function getOrCreateReferralCode(uid) {
+  if (!uid) return null;
+  try {
+    const codeRef = ref(db, `referral_codes/byUser/${uid}`);
+    const snap = await get(codeRef);
+    if (snap.exists()) {
+      return snap.val();
+    }
+    // Generate a unique code and store it
+    const code = generateReferralCode();
+    const data = {
+      code,
+      uid,
+      createdAt: Date.now(),
+      usedCount: 0,
     };
-    await set(ref(db, `pulse/posts/${postId}`), postData);
-    await set(ref(db, `pulse/userPosts/${post.uid}/${postId}`), postData.timestamp);
-    return { success: true, postId, post: postData };
+    // Store under user's UID
+    await set(codeRef, data);
+    // Also store a reverse lookup: code → uid
+    await set(ref(db, `referral_codes/byCode/${code}`), { uid, createdAt: Date.now() });
+    return data;
   } catch (err) {
-    console.warn('createPulsePost error:', err);
+    console.warn("getOrCreateReferralCode error:", err);
+    return null;
+  }
+}
+
+/**
+ * Look up a referral code to find the inviter's UID.
+ */
+export async function lookupReferralCode(code) {
+  if (!code) return null;
+  try {
+    const snap = await get(ref(db, `referral_codes/byCode/${code.toUpperCase()}`));
+    return snap.exists() ? snap.val() : null;
+  } catch (err) {
+    console.warn("lookupReferralCode error:", err);
+    return null;
+  }
+}
+
+/**
+ * Record that a user signed up using a referral code.
+ */
+export async function recordReferralUsage(referralCode, newUserUid) {
+  if (!referralCode || !newUserUid) return;
+  try {
+    const codeData = await lookupReferralCode(referralCode);
+    if (!codeData || !codeData.uid) return;
+
+    const inviterUid = codeData.uid;
+    // Record who used the code
+    await set(ref(db, `referral_codes/byCode/${referralCode.toUpperCase()}/usedBy/${newUserUid}`), Date.now());
+    // Increment the inviter's usage count
+    const countSnap = await get(ref(db, `referral_codes/byUser/${inviterUid}/usedCount`));
+    const currentCount = countSnap.exists() ? countSnap.val() : 0;
+    await set(ref(db, `referral_codes/byUser/${inviterUid}/usedCount`), currentCount + 1);
+  } catch (err) {
+    console.warn("recordReferralUsage error:", err);
+  }
+}
+
+/**
+ * Get the referral count for a user.
+ */
+export async function getReferralCount(uid) {
+  if (!uid) return 0;
+  try {
+    const snap = await get(ref(db, `referral_codes/byUser/${uid}/usedCount`));
+    return snap.exists() ? snap.val() : 0;
+  } catch (err) {
+    return 0;
+  }
+}
+
+// ─── COLLABORATIVE PLAYLISTS ──────────────────────────────────────────────────
+
+/**
+ * Create a new collaborative playlist or convert an existing playlist
+ */
+export async function createCollabPlaylist(ownerUid, ownerProfile = {}, playlistData = {}) {
+  if (!ownerUid) return { success: false, error: "Authentication required" };
+
+  try {
+    const existingId = playlistData.existingId || playlistData.id;
+    // If it is already a collab playlist, preserve id, otherwise use existingId if valid or generate collabId
+    const collabId = playlistData.collabId || (existingId ? `collab_${existingId.replace(/^pl_/, '')}` : `collab_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`);
+    const ownerName = ownerProfile?.username || ownerProfile?.displayName || "Staytup Listener";
+    const ownerAvatar = ownerProfile?.avatar || "initial";
+    const ownerAvatarColor = ownerProfile?.avatarColor || "#1DB954";
+
+    const initialTracks = Array.isArray(playlistData.tracks) ? playlistData.tracks : [];
+    const firstArtwork = initialTracks[0]?.artwork_url || initialTracks[0]?.thumbnail || "";
+    const cover = playlistData.cover_url || playlistData.preview_artwork || firstArtwork || "";
+
+    const collabRecord = {
+      id: collabId,
+      collabId,
+      originalPlaylistId: existingId || null,
+      name: (playlistData.name || "Collab Playlist").trim(),
+      description: (playlistData.description || "Shared with friends").trim(),
+      cover_url: cover,
+      preview_artwork: cover,
+      ownerUid,
+      ownerName,
+      ownerAvatar,
+      ownerAvatarColor,
+      collaborators: {
+        [ownerUid]: {
+          uid: ownerUid,
+          name: ownerName,
+          avatar: ownerAvatar,
+          avatarColor: ownerAvatarColor,
+          role: "owner",
+          joinedAt: Date.now(),
+        },
+      },
+      tracks: initialTracks,
+      track_count: initialTracks.length,
+      createdAt: playlistData.createdAt || Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    // Store in global collab_playlists
+    await set(ref(db, `collab_playlists/${collabId}`), collabRecord);
+
+    // Register on owner's collabPlaylists index
+    await set(ref(db, `users/${ownerUid}/collab_playlists/${collabId}`), {
+      collabId,
+      role: "owner",
+      joinedAt: Date.now(),
+    });
+
+    // If converting from an existing personal playlist, remove from personal playlists so no duplicate exists
+    if (existingId) {
+      await deletePlaylistRTDB(ownerUid, existingId).catch(() => {});
+    }
+
+    return { success: true, collabId, playlist: collabRecord };
+  } catch (err) {
+    console.warn("createCollabPlaylist error:", err);
     return { success: false, error: err.message };
   }
 }
 
 /**
- * Subscribe to recent global Pulse posts (realtime)
+ * Join an existing collaborative playlist
  */
-export function subscribePulseFeed(callback, limitCount = 30) {
-  const postsRef = ref(db, 'pulse/posts');
-  const listener = onValue(postsRef, (snap) => {
-    if (!snap.exists()) { callback([]); return; }
-    const data = snap.val();
-    const posts = Object.values(data)
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, limitCount);
-    callback(posts);
-  });
-  return () => { try { off(postsRef, 'value', listener); } catch (_) {} };
-}
+export async function joinCollabPlaylist(uid, userProfile = {}, collabId) {
+  if (!uid || !collabId) return { success: false, error: "Missing user ID or playlist ID" };
 
-/**
- * Toggle like on a post
- */
-export async function togglePulseLike(postId, uid, currentLikes, isLiked) {
   try {
-    const likeRef = ref(db, `pulse/likes/${postId}/${uid}`);
-    const postRef = ref(db, `pulse/posts/${postId}/likes`);
-    if (isLiked) {
-      await set(likeRef, null);
-      await set(postRef, Math.max(0, currentLikes - 1));
-    } else {
-      await set(likeRef, true);
-      await set(postRef, currentLikes + 1);
-    }
-    return true;
-  } catch (err) {
-    console.warn('togglePulseLike error:', err);
-    return false;
-  }
-}
-
-/**
- * Toggle a specific reaction on a post (fire, love, funny, sad)
- */
-export async function togglePulseReaction(postId, uid, reactionType, currentCounts = {}, userCurrentReaction = null) {
-  try {
-    const userReactionRef = ref(db, `pulse/reactions/${postId}/${uid}`);
-    const postReactionsRef = ref(db, `pulse/posts/${postId}/reactions`);
-
-    const updatedCounts = { ...currentCounts };
-
-    if (userCurrentReaction === reactionType) {
-      // User tapped the same reaction -> remove it
-      await set(userReactionRef, null);
-      updatedCounts[reactionType] = Math.max(0, (updatedCounts[reactionType] || 1) - 1);
-    } else {
-      // User tapped a different reaction (or first reaction)
-      if (userCurrentReaction && updatedCounts[userCurrentReaction]) {
-        updatedCounts[userCurrentReaction] = Math.max(0, updatedCounts[userCurrentReaction] - 1);
-      }
-      await set(userReactionRef, reactionType);
-      updatedCounts[reactionType] = (updatedCounts[reactionType] || 0) + 1;
+    const playlistRef = ref(db, `collab_playlists/${collabId}`);
+    const snap = await get(playlistRef);
+    if (!snap.exists()) {
+      return { success: false, error: "Collaborative playlist not found" };
     }
 
-    // Also update total likes for backwards compatibility
-    const totalLikes = Object.values(updatedCounts).reduce((a, b) => a + (b || 0), 0);
-    await set(postReactionsRef, updatedCounts);
-    await set(ref(db, `pulse/posts/${postId}/likes`), totalLikes);
+    const playlist = snap.val();
+    const userName = userProfile?.username || userProfile?.displayName || "Staytup Listener";
+    const userAvatar = userProfile?.avatar || "initial";
+    const userAvatarColor = userProfile?.avatarColor || "#1DB954";
 
-    return true;
-  } catch (err) {
-    console.warn('togglePulseReaction error:', err);
-    return false;
-  }
-}
-
-/**
- * Subscribe to user reactions for a post
- */
-export function subscribePulseReactions(postId, callback) {
-  const reactionsRef = ref(db, `pulse/reactions/${postId}`);
-  const listener = onValue(reactionsRef, (snap) => {
-    callback(snap.exists() ? snap.val() : {});
-  });
-  return () => { try { off(reactionsRef, 'value', listener); } catch (_) {} };
-}
-
-/**
- * Subscribe to all user reactions across all posts (realtime)
- */
-export function subscribeAllPulseReactions(callback) {
-  const reactionsRef = ref(db, 'pulse/reactions');
-  const listener = onValue(reactionsRef, (snap) => {
-    callback(snap.exists() ? snap.val() : {});
-  });
-  return () => { try { off(reactionsRef, 'value', listener); } catch (_) {} };
-}
-
-/**
- * Check if uid has liked a post
- */
-export async function checkPulseLiked(postId, uid) {
-  try {
-    const snap = await get(ref(db, `pulse/likes/${postId}/${uid}`));
-    return snap.exists();
-  } catch (_) { return false; }
-}
-
-/**
- * Subscribe to likes for a post to get liked user ids
- */
-export function subscribePulseLikes(postId, callback) {
-  const likesRef = ref(db, `pulse/likes/${postId}`);
-  const listener = onValue(likesRef, (snap) => {
-    callback(snap.exists() ? snap.val() : {});
-  });
-  return () => { try { off(likesRef, 'value', listener); } catch (_) {} };
-}
-
-/**
- * Add a comment to a post
- */
-export async function addPulseComment(postId, comment) {
-  try {
-    const commentId = `c_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 4)}`;
-    await set(ref(db, `pulse/comments/${postId}/${commentId}`), {
-      ...comment,
-      commentId,
-      timestamp: Date.now(),
-    });
-    const snap = await get(ref(db, `pulse/posts/${postId}/comments`));
-    await set(ref(db, `pulse/posts/${postId}/comments`), (snap.val() || 0) + 1);
-    return true;
-  } catch (err) {
-    console.warn('addPulseComment error:', err);
-    return false;
-  }
-}
-
-/**
- * Subscribe to comments for a post
- */
-export function subscribePulseComments(postId, callback) {
-  const commentsRef = ref(db, `pulse/comments/${postId}`);
-  const listener = onValue(commentsRef, (snap) => {
-    if (!snap.exists()) { callback([]); return; }
-    const data = snap.val();
-    const comments = Object.values(data).sort((a, b) => a.timestamp - b.timestamp);
-    callback(comments);
-  });
-  return () => { try { off(commentsRef, 'value', listener); } catch (_) {} };
-}
-
-/**
- * Reshare a post
- */
-export async function resharePost(originalPost, resharer) {
-  try {
-    const postId = `post_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 5)}`;
-    const reshareData = {
-      ...originalPost,
-      postId,
-      isReshare: true,
-      resharedBy: resharer,
-      resharedFrom: { uid: originalPost.uid, username: originalPost.username },
-      timestamp: Date.now(),
-      likes: 0,
-      comments: 0,
-      reshares: 0,
+    const collaboratorInfo = {
+      uid,
+      name: userName,
+      avatar: userAvatar,
+      avatarColor: userAvatarColor,
+      role: "editor",
+      joinedAt: Date.now(),
     };
-    await set(ref(db, `pulse/posts/${postId}`), reshareData);
-    await set(ref(db, `pulse/userPosts/${resharer.uid}/${postId}`), reshareData.timestamp);
-    const snap = await get(ref(db, `pulse/posts/${originalPost.postId}/reshares`));
-    await set(ref(db, `pulse/posts/${originalPost.postId}/reshares`), (snap.val() || 0) + 1);
+
+    // Add to playlist's collaborators
+    await set(ref(db, `collab_playlists/${collabId}/collaborators/${uid}`), collaboratorInfo);
+
+    // Register on user's personal collab_playlists index
+    await set(ref(db, `users/${uid}/collab_playlists/${collabId}`), {
+      collabId,
+      role: "editor",
+      joinedAt: Date.now(),
+    });
+
+    const updatedPlaylist = {
+      ...playlist,
+      collaborators: {
+        ...(playlist.collaborators || {}),
+        [uid]: collaboratorInfo,
+      },
+    };
+
+    return { success: true, playlist: updatedPlaylist };
+  } catch (err) {
+    console.warn("joinCollabPlaylist error:", err);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Leave a collaborative playlist
+ */
+export async function leaveCollabPlaylist(uid, collabId) {
+  if (!uid || !collabId) return false;
+  try {
+    await set(ref(db, `collab_playlists/${collabId}/collaborators/${uid}`), null);
+    await set(ref(db, `users/${uid}/collab_playlists/${collabId}`), null);
     return true;
   } catch (err) {
-    console.warn('resharePost error:', err);
+    console.warn("leaveCollabPlaylist error:", err);
     return false;
   }
 }
+
+/**
+ * Add a track to a collaborative playlist in real time
+ */
+export async function addTrackToCollabPlaylist(collabId, track) {
+  if (!collabId || !track) return false;
+  try {
+    const plRef = ref(db, `collab_playlists/${collabId}`);
+    const snap = await get(plRef);
+    if (!snap.exists()) return false;
+
+    const pl = snap.val();
+    const tracks = Array.isArray(pl.tracks) ? [...pl.tracks] : [];
+    const vid = track.videoId || track.video_id || track.id;
+
+    if (!tracks.some((t) => (t.videoId || t.video_id || t.id) === vid)) {
+      const formattedTrack = {
+        id: vid,
+        videoId: vid,
+        video_id: vid,
+        title: track.title || "Unknown Song",
+        artist: track.artist || "Unknown Artist",
+        album: track.album || "",
+        thumbnail: track.thumbnail || track.artwork_url || "",
+        artwork_url: track.artwork_url || track.thumbnail || "",
+        duration: track.duration || "",
+        duration_seconds: track.duration_seconds || 0,
+        addedAt: Date.now(),
+      };
+      tracks.push(formattedTrack);
+
+      const firstArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
+      const cover = pl.cover_url || pl.preview_artwork || firstArtwork || "";
+
+      await update(plRef, {
+        tracks,
+        track_count: tracks.length,
+        cover_url: cover,
+        preview_artwork: cover,
+        updatedAt: Date.now(),
+      });
+    }
+    return true;
+  } catch (err) {
+    console.warn("addTrackToCollabPlaylist error:", err);
+    return false;
+  }
+}
+
+/**
+ * Add multiple tracks to a collaborative playlist in real time
+ */
+export async function addTracksToCollabPlaylist(collabId, newTracks) {
+  if (!collabId || !Array.isArray(newTracks) || newTracks.length === 0) return false;
+  try {
+    const plRef = ref(db, `collab_playlists/${collabId}`);
+    const snap = await get(plRef);
+    if (!snap.exists()) return false;
+
+    const pl = snap.val();
+    const tracks = Array.isArray(pl.tracks) ? [...pl.tracks] : [];
+    const existingIds = new Set(tracks.map((t) => t.videoId || t.video_id || t.id));
+
+    let addedCount = 0;
+    for (const track of newTracks) {
+      const vid = track.videoId || track.video_id || track.id;
+      if (vid && !existingIds.has(vid)) {
+        existingIds.add(vid);
+        tracks.push({
+          id: vid,
+          videoId: vid,
+          video_id: vid,
+          title: track.title || "Unknown Song",
+          artist: track.artist || "Unknown Artist",
+          album: track.album || "",
+          thumbnail: track.thumbnail || track.artwork_url || "",
+          artwork_url: track.artwork_url || track.thumbnail || "",
+          duration: track.duration || "",
+          duration_seconds: track.duration_seconds || 0,
+          stream_url: track.stream_url || "",
+          addedAt: Date.now(),
+        });
+        addedCount++;
+      }
+    }
+
+    if (addedCount > 0) {
+      const firstArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
+      const cover = pl.cover_url || pl.preview_artwork || firstArtwork || "";
+      await update(plRef, {
+        tracks,
+        track_count: tracks.length,
+        cover_url: cover,
+        preview_artwork: cover,
+        updatedAt: Date.now(),
+      });
+    }
+    return true;
+  } catch (err) {
+    console.warn("addTracksToCollabPlaylist error:", err);
+    return false;
+  }
+}
+
+/**
+ * Remove a track from a collaborative playlist in real time
+ */
+export async function removeTrackFromCollabPlaylist(collabId, videoId) {
+  if (!collabId || !videoId) return false;
+  try {
+    const plRef = ref(db, `collab_playlists/${collabId}`);
+    const snap = await get(plRef);
+    if (!snap.exists()) return false;
+
+    const pl = snap.val();
+    const tracks = (pl.tracks || []).filter((t) => (t.videoId || t.video_id || t.id) !== videoId);
+    const firstArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
+    const cover = tracks.length > 0 ? (firstArtwork || pl.cover_url || "") : "";
+
+    await update(plRef, {
+      tracks,
+      track_count: tracks.length,
+      cover_url: cover,
+      preview_artwork: cover,
+      updatedAt: Date.now(),
+    });
+    return true;
+  } catch (err) {
+    console.warn("removeTrackFromCollabPlaylist error:", err);
+    return false;
+  }
+}
+
+/**
+ * Get details for a single collaborative playlist
+ */
+export async function getCollabPlaylistDetails(collabId) {
+  if (!collabId) return null;
+  try {
+    const snap = await get(ref(db, `collab_playlists/${collabId}`));
+    return snap.exists() ? snap.val() : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Remove a specific collaborator from a collaborative playlist (by owner or self)
+ */
+export async function removeCollaboratorFromCollabPlaylist(collabId, targetUid) {
+  if (!collabId || !targetUid) return false;
+  try {
+    await set(ref(db, `collab_playlists/${collabId}/collaborators/${targetUid}`), null);
+    await set(ref(db, `users/${targetUid}/collab_playlists/${collabId}`), null);
+    return true;
+  } catch (err) {
+    console.warn("removeCollaboratorFromCollabPlaylist error:", err);
+    return false;
+  }
+}
+
+/**
+ * Rename a collaborative playlist
+ */
+export async function renameCollabPlaylist(collabId, newName) {
+  if (!collabId || !newName) return false;
+  try {
+    const plRef = ref(db, `collab_playlists/${collabId}`);
+    await update(plRef, {
+      name: newName.trim(),
+      updatedAt: Date.now(),
+    });
+    return true;
+  } catch (err) {
+    console.warn("renameCollabPlaylist error:", err);
+    return false;
+  }
+}
+
+/**
+ * Delete a collaborative playlist completely across all participants
+ */
+export async function deleteCollabPlaylist(collabId) {
+  if (!collabId) return false;
+  try {
+    const plRef = ref(db, `collab_playlists/${collabId}`);
+    const snap = await get(plRef);
+    if (snap.exists()) {
+      const pl = snap.val();
+      const collabs = pl.collaborators || {};
+      // Remove from all participants' indexes
+      for (const cUid of Object.keys(collabs)) {
+        await set(ref(db, `users/${cUid}/collab_playlists/${collabId}`), null).catch(() => {});
+      }
+      if (pl.ownerUid) {
+        await set(ref(db, `users/${pl.ownerUid}/collab_playlists/${collabId}`), null).catch(() => {});
+      }
+    }
+    // Delete the master collab playlist record
+    await set(plRef, null);
+    return true;
+  } catch (err) {
+    console.warn("deleteCollabPlaylist error:", err);
+    return false;
+  }
+}
+
+/**
+ * Subscribe to all collaborative playlists for a user
+ */
+export function subscribeCollabPlaylists(uid, callback) {
+  if (!uid || typeof callback !== "function") return () => {};
+
+  const userIndexRef = ref(db, `users/${uid}/collab_playlists`);
+  const activeListeners = new Map(); // collabId -> unsubscribe fn
+  let latestPlaylistsMap = new Map();
+
+  const handleIndexChange = (snap) => {
+    if (!snap.exists()) {
+      // Clear all child listeners
+      activeListeners.forEach((unsub) => unsub());
+      activeListeners.clear();
+      latestPlaylistsMap.clear();
+      callback([]);
+      return;
+    }
+
+    const indexData = snap.val() || {};
+    const collabIds = Object.keys(indexData);
+
+    // Remove listeners for removed playlists
+    for (const [id, unsub] of activeListeners.entries()) {
+      if (!collabIds.includes(id)) {
+        unsub();
+        activeListeners.delete(id);
+        latestPlaylistsMap.delete(id);
+      }
+    }
+
+    if (collabIds.length === 0) {
+      callback([]);
+      return;
+    }
+
+    // Subscribe to each collab playlist
+    collabIds.forEach((cId) => {
+      if (!activeListeners.has(cId)) {
+        const plRef = ref(db, `collab_playlists/${cId}`);
+        const plListener = onValue(plRef, (plSnap) => {
+          if (plSnap.exists()) {
+            latestPlaylistsMap.set(cId, plSnap.val());
+          } else {
+            latestPlaylistsMap.delete(cId);
+          }
+          const sorted = Array.from(latestPlaylistsMap.values()).sort(
+            (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
+          );
+          callback(sorted);
+        });
+
+        activeListeners.set(cId, () => {
+          try {
+            off(plRef, "value", plListener);
+          } catch (_) {}
+        });
+      }
+    });
+  };
+
+  const indexListener = onValue(userIndexRef, handleIndexChange);
+
+  return () => {
+    try {
+      off(userIndexRef, "value", indexListener);
+    } catch (_) {}
+    activeListeners.forEach((unsub) => unsub());
+    activeListeners.clear();
+  };
+}
+
+// ─── BLEND & MUSIC COMPATIBILITY RADAR ──────────────────────────────────────
+
+/**
+ * Calculate music compatibility between two users and generate a daily Blend playlist.
+ * Based on overlapping recentlyPlayed, likedSongs, and artist overlaps.
+ */
+export async function calculateFriendBlend(myUid, myProfile, friendUid, friendProfile) {
+  if (!myUid || !friendUid) return null;
+
+  try {
+    const [myRecents, friendRecents, myLiked, friendLiked] = await Promise.all([
+      getRecentlyPlayed(myUid).catch(() => []),
+      getRecentlyPlayed(friendUid).catch(() => []),
+      getLikedSongs(myUid).catch(() => []),
+      getLikedSongs(friendUid).catch(() => []),
+    ]);
+
+    const mySongs = [...(myRecents || []), ...(myLiked || [])];
+    const friendSongs = [...(friendRecents || []), ...(friendLiked || [])];
+
+    const myVids = new Set(mySongs.map((s) => s.videoId || s.video_id).filter(Boolean));
+    const friendVids = new Set(friendSongs.map((s) => s.videoId || s.video_id).filter(Boolean));
+
+    const myArtists = new Set(
+      mySongs
+        .map((s) => (s.artist || "").toLowerCase().trim())
+        .filter(Boolean)
+    );
+    const friendArtists = new Set(
+      friendSongs
+        .map((s) => (s.artist || "").toLowerCase().trim())
+        .filter(Boolean)
+    );
+
+    // 1. Shared songs match
+    let sharedSongs = 0;
+    for (const id of myVids) {
+      if (friendVids.has(id)) sharedSongs++;
+    }
+
+    // 2. Shared artists match
+    let sharedArtists = 0;
+    for (const a of myArtists) {
+      if (friendArtists.has(a)) sharedArtists++;
+    }
+
+    // Calculate score: baseline 50% + shared music bonuses
+    let matchScore = 52;
+    if (sharedSongs > 0) matchScore += Math.min(28, sharedSongs * 6);
+    if (sharedArtists > 0) matchScore += Math.min(20, sharedArtists * 4);
+
+    // If both users have little data yet, generate realistic natural high compatibility
+    if (mySongs.length === 0 || friendSongs.length === 0) {
+      // Deterministic based on combined UIDs
+      const hash = (myUid + friendUid).split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
+      matchScore = 72 + (hash % 23); // 72% to 94%
+    } else {
+      matchScore = Math.min(99, Math.max(58, matchScore));
+    }
+
+    // Curate Blend Tracklist (alternating between both users' top tracks + shared gems)
+    const blendTracks = [];
+    const addedIds = new Set();
+
+    // Priority 1: Common tracks
+    for (const s of mySongs) {
+      const vid = s.videoId || s.video_id;
+      if (vid && friendVids.has(vid) && !addedIds.has(vid)) {
+        addedIds.add(vid);
+        blendTracks.push({
+          ...s,
+          videoId: vid,
+          video_id: vid,
+          blendSource: "both",
+        });
+      }
+    }
+
+    // Priority 2: Alternate between friend & me
+    const maxTracks = 25;
+    const maxLen = Math.max(mySongs.length, friendSongs.length);
+    for (let i = 0; i < maxLen && blendTracks.length < maxTracks; i++) {
+      if (i < friendSongs.length) {
+        const s = friendSongs[i];
+        const vid = s.videoId || s.video_id;
+        if (vid && !addedIds.has(vid)) {
+          addedIds.add(vid);
+          blendTracks.push({
+            ...s,
+            videoId: vid,
+            video_id: vid,
+            blendSource: friendProfile?.username || "Friend",
+          });
+        }
+      }
+      if (i < mySongs.length && blendTracks.length < maxTracks) {
+        const s = mySongs[i];
+        const vid = s.videoId || s.video_id;
+        if (vid && !addedIds.has(vid)) {
+          addedIds.add(vid);
+          blendTracks.push({
+            ...s,
+            videoId: vid,
+            video_id: vid,
+            blendSource: "You",
+          });
+        }
+      }
+    }
+
+    // Top shared genre / vibe descriptor
+    let topVibe = "Pop & Bollywood Hits";
+    if (sharedArtists > 0) {
+      const sampleArtist = Array.from(myArtists).find((a) => friendArtists.has(a));
+      if (sampleArtist) {
+        topVibe = `${sampleArtist.charAt(0).toUpperCase() + sampleArtist.slice(1)} & Vibes`;
+      }
+    }
+
+    return {
+      matchPercentage: matchScore,
+      sharedSongsCount: sharedSongs,
+      sharedArtistsCount: sharedArtists,
+      topVibe,
+      tracks: blendTracks,
+      friend: friendProfile,
+      updatedAt: Date.now(),
+    };
+  } catch (err) {
+    console.warn("calculateFriendBlend error:", err);
+    return null;
+  }
+}
+

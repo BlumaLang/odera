@@ -37,9 +37,19 @@ export function loadRazorpayScript() {
 export async function openRazorpayCheckout({ plan, user, onSuccess, onFailure }) {
   if (!plan) return;
 
-  // Extract amount in Paise (?49 = 4900, ?89 = 8900, ?129 = 12900, ?249 = 24900)
-  const priceNum = parseInt(String(plan.price || "").replace(/\D/g, ""), 10) || 49;
-  const amountPaise = priceNum * 100;
+  // Extract correct amount in Rupees:
+  // 1. Prefer explicit plan.amount if present
+  // 2. Otherwise parse strictly BEFORE the "/" slash to avoid matching duration month digits (e.g. "₹49 / 1 month" -> 49, NOT 491!)
+  let priceNum = 0;
+  if (typeof plan.amount === "number" && !isNaN(plan.amount) && plan.amount > 0) {
+    priceNum = plan.amount;
+  } else {
+    const priceBeforeSlash = String(plan.price || "").split("/")[0];
+    priceNum = parseInt(priceBeforeSlash.replace(/\D/g, ""), 10) || 49;
+  }
+
+  // Razorpay requires amount in Paise (1 INR = 100 paise)
+  const amountPaise = Math.round(priceNum * 100);
 
   if (Platform.OS === "web") {
     const isLoaded = await loadRazorpayScript();
@@ -62,6 +72,12 @@ export async function openRazorpayCheckout({ plan, user, onSuccess, onFailure })
       },
       theme: {
         color: colors.primary || "#1DB954",
+      },
+      notes: {
+        plan_id: plan.id,
+        plan_name: plan.name,
+        amount_inr: String(priceNum),
+        duration_months: String(plan.durationMonths || 1),
       },
       handler: function (response) {
         if (response && response.razorpay_payment_id) {

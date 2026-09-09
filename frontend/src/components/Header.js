@@ -19,7 +19,6 @@ export default function Header({
   const filters = [
     { id: "All", label: "All" },
     { id: "Following", label: "Following" },
-    { id: "Feed", label: "Feed" },
   ];
 
   return (
@@ -42,18 +41,6 @@ export default function Header({
           </View>
 
           <View style={styles.topRightGroup}>
-            {activeFilter === "Feed" && onAddPress && (
-              <TouchableOpacity
-                style={styles.addCircleBtn}
-                onPress={onAddPress}
-                activeOpacity={0.8}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityLabel="Share a song"
-              >
-                <Ionicons name="add" size={22} color="#000000" />
-              </TouchableOpacity>
-            )}
-
             <TouchableOpacity
               style={[styles.profileAvatar, { backgroundColor: avatarBg }]}
               onPress={() => openProfile && openProfile()}

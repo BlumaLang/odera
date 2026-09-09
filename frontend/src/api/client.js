@@ -2,6 +2,7 @@
 // for all data loading: search, home feed, lyrics, suggestions, artist search.
 // Music playback is handled directly client-side via the default YouTube web engine.
 import { Platform } from "react-native";
+import { getCachedArtist, saveCachedArtist, getBatchCachedArtists } from "../services/firebase";
 
 // Primary production backend link on Render
 const RENDER_BASE_URL = "https://staytup.onrender.com";
@@ -279,20 +280,74 @@ export const api = {
   // Track info via oEmbed on backend
   getTrackInfo: (videoId) => request(`/api/track-info?v=${encodeURIComponent(videoId)}`),
 
-  // Search artists live via backend
+  // Search artists live via Staytup API
   searchArtists: async (query, limit = 10) => {
+    if (!query || !query.trim()) return { artists: [], results: [] };
+    const cleanQ = query.trim();
+
+    // 1. Direct call to Staytup API for fastest, verified Saavn artist data
     try {
-      const data = await request(`/artists/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+      const directUrl = `https://staytup-api.onrender.com/api/search/artists?query=${encodeURIComponent(cleanQ)}&limit=${limit}`;
+      const resp = await fetch(directUrl, { signal: AbortSignal.timeout(5000) });
+      if (resp.ok) {
+        const json = await resp.json();
+        const rawList = json?.data?.results || [];
+        if (Array.isArray(rawList) && rawList.length > 0) {
+          const normalized = rawList
+            .filter((a) => a && a.name)
+            .map((a) => {
+              const id = String(a.id || a.artistId || "");
+              const name = a.name.trim();
+              const imgUrl = Array.isArray(a.image)
+                ? (a.image[2]?.url || a.image[1]?.url || a.image[0]?.url || null)
+                : (typeof a.image === "string" ? a.image : null);
+              if (id && imgUrl) {
+                saveCachedArtist({ id, name, imageUrl: imgUrl }).catch(() => {});
+              }
+              return {
+                id,
+                name,
+                image: imgUrl,
+                thumbnail: imgUrl,
+                role: a.role || "Artist",
+                type: "artist",
+              };
+            })
+            .filter((a) => a.name.length > 1 && !a.name.toLowerCase().includes("default"));
+
+          if (normalized.length > 0) {
+            return { artists: normalized, results: normalized };
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 2. Fallback to backend /artists/search
+    try {
+      const data = await request(`/artists/search?q=${encodeURIComponent(cleanQ)}&limit=${limit}`);
       const list = data?.results || data?.artists || [];
+      const normalized = list.map((a) => {
+        const id = String(a.id || a.artistId || "");
+        const name = a.name || a.artist || a.title || "";
+        const image = a.image || a.thumbnail || a.artwork_url || null;
+        if (id && image) {
+          saveCachedArtist({ id, name, imageUrl: image }).catch(() => {});
+        }
+        return {
+          id,
+          name,
+          image,
+          thumbnail: image,
+          role: a.role || "Artist",
+          type: "artist",
+        };
+      });
       return {
-        artists: list.map((a) => ({
-          name: a.name || a.artist || a.title || "",
-          thumbnail: a.thumbnail || a.artwork_url || null,
-        })),
-        results: list,
+        artists: normalized,
+        results: normalized,
       };
     } catch (_) {
-      return { artists: [] };
+      return { artists: [], results: [] };
     }
   },
 
@@ -304,13 +359,33 @@ export const api = {
   onboardUser: () => Promise.resolve({}),
   getUserProfile: () => Promise.resolve({}),
 
-  // Get artist image from YouTube search
-  getArtistImage: async (artistName) => {
+  // Get artist image: check RTDB first, then Staytup API, save to RTDB
+  getArtistImage: async (artistIdOrName) => {
+    if (!artistIdOrName) return { image: null };
     try {
-      const data = await request(`/artists/search?q=${encodeURIComponent(artistName)}&limit=1`);
-      const results = data?.results || [];
-      if (results.length > 0 && results[0].thumbnail) {
-        return { image: results[0].thumbnail };
+      const cached = await getCachedArtist(artistIdOrName);
+      if (cached && (cached.imageUrl || cached.image)) {
+        return { image: cached.imageUrl || cached.image, id: cached.id };
+      }
+      const cleanName = String(artistIdOrName).trim();
+      const directUrl = `https://staytup-api.onrender.com/api/search/artists?query=${encodeURIComponent(cleanName)}&limit=1`;
+      const resp = await fetch(directUrl, { signal: AbortSignal.timeout(5000) });
+      if (resp.ok) {
+        const json = await resp.json();
+        const first = json?.data?.results?.[0];
+        if (first) {
+          const img = Array.isArray(first.image)
+            ? (first.image[2]?.url || first.image[1]?.url || first.image[0]?.url)
+            : first.image;
+          if (img && !img.includes("artist-default-music.png") && !img.includes("default_artist")) {
+            saveCachedArtist({
+              id: String(first.id || cleanName),
+              name: first.name || cleanName,
+              imageUrl: img,
+            }).catch(() => {});
+            return { image: img, id: String(first.id || "") };
+          }
+        }
       }
       return { image: null };
     } catch (_) {
@@ -318,49 +393,95 @@ export const api = {
     }
   },
 
-  // Get related/similar artists via dedicated backend endpoint
-  getRelatedArtists: async (artistName) => {
+  // Get related/similar artists via Staytup API
+  getRelatedArtists: async (artistIdOrName, limit = 6) => {
+    if (!artistIdOrName) return { artists: [], related: [] };
     try {
-      const data = await request(`/artists/similar?q=${encodeURIComponent(artistName)}&limit=6`);
+      const param = encodeURIComponent(String(artistIdOrName).trim());
+      const data = await request(`/artists/similar?q=${param}&id=${param}&limit=${limit}`);
       const list = data?.artists || data?.results || [];
-      const related = list
-        .filter((a) => {
-          const name = a.name || a.artist || a.title || "";
-          return name && name.toLowerCase() !== artistName.toLowerCase();
-        })
-        .slice(0, 5)
-        .map((a) => ({
-          name: a.name || a.artist || a.title || "",
-          thumbnail: a.thumbnail || a.artwork_url || null,
-        }));
-      return { artists: related, related };
+      const normalized = list.map((a) => {
+        const id = String(a.id || "");
+        const name = a.name || a.artist || "";
+        const image = a.image || a.thumbnail || null;
+        if (image) {
+          saveCachedArtist({ id: id || name, name, imageUrl: image }).catch(() => {});
+        }
+        return {
+          id: id || name,
+          name,
+          image,
+          thumbnail: image,
+          type: "artist",
+        };
+      });
+      return { artists: normalized, related: normalized };
     } catch (_) {
       return { artists: [], related: [] };
     }
   },
 
-  // Batch fetch artist images from API
-  getBatchArtistImages: async (artistNames) => {
-    if (!Array.isArray(artistNames) || artistNames.length === 0) {
+  // Batch fetch artist images from DB cache and Staytup API
+  getBatchArtistImages: async (artists) => {
+    if (!Array.isArray(artists) || artists.length === 0) {
       return { images: {} };
     }
     try {
-      const results = await Promise.allSettled(
-        artistNames.map(async (name) => {
-          const data = await request(`/artists/search?q=${encodeURIComponent(name)}&limit=1`);
-          const list = data?.results || data?.artists || [];
-          if (list.length > 0 && (list[0].thumbnail || list[0].artwork_url)) {
-            return { name, thumbnail: list[0].thumbnail || list[0].artwork_url };
-          }
-          return null;
-        })
-      );
       const images = {};
-      results.forEach((r) => {
-        if (r.status === "fulfilled" && r.value) {
-          images[r.value.name] = r.value.thumbnail;
+      const missing = [];
+
+      // 1. Check local DB cache
+      const cachedMap = await getBatchCachedArtists(artists);
+      artists.forEach((item) => {
+        const key = typeof item === "object" ? (item.id || item.name) : item;
+        const name = typeof item === "object" ? item.name : item;
+        if (cachedMap[key]?.imageUrl) {
+          images[name] = cachedMap[key].imageUrl;
+          images[key] = cachedMap[key].imageUrl;
+        } else if (cachedMap[name]?.imageUrl) {
+          images[name] = cachedMap[name].imageUrl;
+          images[key] = cachedMap[name].imageUrl;
+        } else {
+          missing.push(item);
         }
       });
+
+      // 2. Fetch missing from Staytup API in parallel and upload to database cache
+      if (missing.length > 0) {
+        const fetchResults = await Promise.allSettled(
+          missing.map(async (item) => {
+            const queryName = typeof item === "object" ? (item.name || item.id) : item;
+            const directUrl = `https://staytup-api.onrender.com/api/search/artists?query=${encodeURIComponent(queryName)}&limit=1`;
+            const resp = await fetch(directUrl, { signal: AbortSignal.timeout(5000) });
+            if (resp.ok) {
+              const json = await resp.json();
+              const first = json?.data?.results?.[0];
+              if (first) {
+                const img = Array.isArray(first.image)
+                  ? (first.image[2]?.url || first.image[1]?.url || first.image[0]?.url)
+                  : first.image;
+                if (img && !img.includes("artist-default-music.png") && !img.includes("default_artist")) {
+                  saveCachedArtist({
+                    id: String(first.id || queryName),
+                    name: first.name || queryName,
+                    imageUrl: img,
+                  }).catch(() => {});
+                  return { name: queryName, id: String(first.id || ""), thumbnail: img };
+                }
+              }
+            }
+            return null;
+          })
+        );
+
+        fetchResults.forEach((r) => {
+          if (r.status === "fulfilled" && r.value) {
+            images[r.value.name] = r.value.thumbnail;
+            if (r.value.id) images[r.value.id] = r.value.thumbnail;
+          }
+        });
+      }
+
       return { images };
     } catch (_) {
       return { images: {} };
@@ -374,6 +495,10 @@ export const api = {
   removeTrackFromPlaylist: () => Promise.resolve({}),
   deletePlaylist: () => Promise.resolve({}),
   savePremiumSubscription: () => Promise.resolve({}),
+
+  // YouTube Playlist Import
+  importYouTubePlaylist: (playlistUrlOrId) =>
+    request(`/api/import-playlist?url=${encodeURIComponent(playlistUrlOrId)}`),
 
   // QR Login (Device Linking) & 4-Digit PIN Authentication
   createQRSession: (user = null) =>
@@ -417,4 +542,12 @@ export const api = {
       body: JSON.stringify({ code, newUserId }),
     }),
   getReferralStats: (code) => request(`/api/referral/stats/${encodeURIComponent(code)}`),
+
+  // Song Recognizer (Shazam / AudD)
+  recognizeSong: async (base64Audio, audioUrl = null) => {
+    return await request("/api/recognize", {
+      method: "POST",
+      body: JSON.stringify({ audio: base64Audio, url: audioUrl }),
+    });
+  },
 };

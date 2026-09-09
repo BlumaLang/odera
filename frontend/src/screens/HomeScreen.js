@@ -10,14 +10,14 @@ import {
   Image,
   Platform,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import Header from "../components/Header";
 import SectionList from "../components/SectionList";
 import SongCard from "../components/SongCard";
-import PulseScreen from "./PulseScreen";
+import ArtistModal from "../components/ArtistModal";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
-import { useAudio } from "../context/AudioContext";
+import { useAudioPlayback } from "../context/AudioContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useUser } from "../context/UserContext";
 import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
@@ -30,6 +30,7 @@ import {
   subscribeRecentlyPlayed,
   getAppTrendingTracksRTDB,
   subscribeAppTrendingRTDB,
+  subscribeFriendActivity,
 } from "../services/firebase";
 
 function getHighResArtwork(url) {
@@ -94,24 +95,90 @@ function getDaySeed() {
   return now.getFullYear() * 10000 + (now.getMonth() + 1) * 100 + now.getDate();
 }
 
+function UserAvatar({ user, size = 44, fontSize = 15, style }) {
+  const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [user?.avatar, user?.photoURL, user?.avatarUrl]);
+
+  const avatarUri =
+    !imgError &&
+    ((user?.avatar && typeof user.avatar === "string" && user.avatar.startsWith("http"))
+      ? user.avatar
+      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http"))
+      ? user.photoURL
+      : (user?.avatarUrl && typeof user.avatarUrl === "string" && user.avatarUrl.startsWith("http"))
+      ? user.avatarUrl
+      : null);
+
+  const iconName =
+    user?.avatar &&
+    user.avatar !== "initial" &&
+    typeof user.avatar === "string" &&
+    !user.avatar.startsWith("http")
+      ? user.avatar
+      : user?.icon && typeof user.icon === "string" && !user.icon.startsWith("http")
+      ? user.icon
+      : null;
+
+  const initial = (user?.username?.[0] || user?.displayName?.[0] || user?.name?.[0] || "U").toUpperCase();
+  const bgColor = user?.avatarColor || colors.primary;
+
+  return (
+    <View
+      style={[
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: bgColor,
+          alignItems: "center",
+          justifyContent: "center",
+          overflow: "hidden",
+        },
+        style,
+      ]}
+    >
+      {avatarUri ? (
+        <Image
+          source={{ uri: avatarUri }}
+          style={{ width: "100%", height: "100%" }}
+          resizeMode="cover"
+          onError={() => setImgError(true)}
+        />
+      ) : iconName ? (
+        <Ionicons name={iconName} size={fontSize + 2} color="#000000" />
+      ) : (
+        <Text
+          style={{
+            fontFamily: fonts.bold,
+            fontWeight: "700",
+            fontSize: fontSize,
+            color: "#000000",
+            textAlign: "center",
+            includeFontPadding: false,
+          }}
+        >
+          {initial}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 export default function HomeScreen({ onNavigate } = {}) {
   const { isDesktop, isTablet, isPhone } = useResponsive();
   const [feed, setFeed] = useState(null);
   const feedRef = useRef(null);
-  const [activeFilter, setActiveFilter] = useState(() => {
-    if (Platform.OS === "web" && typeof window !== "undefined") {
-      const p = window.location.pathname.toLowerCase().replace(/^\/+/, "");
-      if (p === "feed" || p === "pulse") return "Feed";
-    }
-    return "All";
-  });
-  const [isPulseComposerOpen, setIsPulseComposerOpen] = useState(false);
+  const [activeFilter, setActiveFilter] = useState("All");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
-  const { userProfile } = useUser() || {};
+  const { userProfile, friends } = useUser() || {};
   const favoriteArtists = userProfile?.favoriteArtists || userProfile?.favorite_artists || [];
+  const friendsList = friends || [];
   const [followingSections, setFollowingSections] = useState([]);
   const [followingQuickItems, setFollowingQuickItems] = useState([]);
   const [allFollowingTracks, setAllFollowingTracks] = useState([]);
@@ -119,8 +186,10 @@ export default function HomeScreen({ onNavigate } = {}) {
   const [recentlyPlayed, setRecentlyPlayed] = useState([]);
   const [appTrending, setAppTrending] = useState([]);
   const [artistImages, setArtistImages] = useState({});
+  const [friendsActivity, setFriendsActivity] = useState({});
+  const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
 
-  const { currentTrack, isPlaying, togglePlayPause, playTrack } = useAudio();
+  const { currentTrack, isPlaying, togglePlayPause, playTrack } = useAudioPlayback();
 
   const loadFeed = useCallback(async (forceRefresh = false) => {
     try {
@@ -255,6 +324,32 @@ export default function HomeScreen({ onNavigate } = {}) {
     };
   }, []);
 
+  // Real-time synchronization of Friends live listening activity
+  useEffect(() => {
+    if (!friendsList || friendsList.length === 0) {
+      setFriendsActivity({});
+      return;
+    }
+
+    const unsubs = friendsList.map((f) => {
+      if (!f?.uid) return () => {};
+      return subscribeFriendActivity(f.uid, (act) => {
+        setFriendsActivity((prev) => ({
+          ...prev,
+          [f.uid]: act,
+        }));
+      });
+    });
+
+    return () => {
+      unsubs.forEach((unsub) => {
+        try {
+          unsub();
+        } catch (_) {}
+      });
+    };
+  }, [friendsList]);
+
   const onRefresh = () => {
     setIsRefreshing(true);
     const uid = auth.currentUser?.uid || "guest";
@@ -350,21 +445,192 @@ export default function HomeScreen({ onNavigate } = {}) {
     }
   }, [activeFilter, fetchFollowingSongs]);
 
-  // Fetch artist images for followed artists
+  // Fetch latest high-res artist images for followed artists
   useEffect(() => {
-    if (favoriteArtists.length === 0) return;
-    const missing = favoriteArtists.filter(
-      (name) => !artistImages[name] && !DEFAULT_ARTIST_IMAGES[name]
-    );
+    if (!favoriteArtists || favoriteArtists.length === 0) return;
+    const missing = favoriteArtists.filter((name) => !artistImages[name]);
     if (missing.length === 0) return;
-    api.getBatchArtistImages(missing.slice(0, 6)).then((res) => {
-      if (res && res.images && Object.keys(res.images).length > 0) {
-        setArtistImages((prev) => ({ ...prev, ...res.images }));
-      }
-    }).catch(() => {});
+
+    api
+      .getBatchArtistImages(missing)
+      .then((res) => {
+        if (res && res.images && Object.keys(res.images).length > 0) {
+          setArtistImages((prev) => ({ ...prev, ...res.images }));
+        }
+      })
+      .catch(() => {});
+
+    // Also fetch individual high-res image (identical to ArtistModal)
+    missing.forEach((name) => {
+      api
+        .getArtistImage(name)
+        .then((res) => {
+          const photo = res?.image || res?.image_url;
+          if (
+            photo &&
+            !photo.includes("artist-default-music.png") &&
+            !photo.includes("default_artist")
+          ) {
+            setArtistImages((prev) => ({ ...prev, [name]: photo }));
+          }
+        })
+        .catch(() => {});
+    });
   }, [favoriteArtists]);
 
-  // 1. Personal "Jump Back In" from user's listening history
+  // 1. Fresh New Releases (First section on Home / All)
+  const freshNewReleasesSection = useMemo(() => {
+    const allSecs = feed?.sections || [];
+    const found = allSecs.find(
+      (s) => s.id === "new_releases" || s.title?.toLowerCase().includes("new release")
+    );
+    const items = found?.items || found?.tracks || allSecs[0]?.items || allSecs[0]?.tracks || [];
+    if (items.length === 0) return null;
+    return {
+      id: "fresh_new_releases",
+      title: "Fresh New Releases",
+      description: "Brand new singles and albums out today",
+      items,
+    };
+  }, [feed?.sections]);
+
+  // 2. Daily Mix: 3-4 personal curated mix playlists based on history & favorite artists
+  const dailyMixSection = useMemo(() => {
+    const pool = [
+      ...recentlyPlayed,
+      ...allFollowingTracks,
+      ...appTrending,
+      ...(feed?.sections?.flatMap((s) => s.items || s.tracks || []) || []),
+    ];
+
+    if (pool.length === 0) return null;
+
+    const uniqueMap = new Map();
+    pool.forEach((t) => {
+      const vid = t.videoId || t.video_id || t.id;
+      if (vid && !uniqueMap.has(vid)) {
+        uniqueMap.set(vid, t);
+      }
+    });
+    const uniquePool = Array.from(uniqueMap.values());
+    if (uniquePool.length < 3) return null;
+
+    const mix1Tracks = uniquePool.slice(0, 15);
+    const mix1Artists = Array.from(new Set(mix1Tracks.map((t) => t.artist).filter(Boolean))).slice(0, 3).join(", ");
+
+    const mix2Tracks = uniquePool.slice(8, 23).length >= 5 ? uniquePool.slice(8, 23) : uniquePool.slice(0, 15);
+    const mix2Artists = Array.from(new Set(mix2Tracks.map((t) => t.artist).filter(Boolean))).slice(0, 3).join(", ");
+
+    const mix3Tracks = uniquePool.slice(16, 31).length >= 5 ? uniquePool.slice(16, 31) : uniquePool.slice(4, 19);
+    const mix3Artists = Array.from(new Set(mix3Tracks.map((t) => t.artist).filter(Boolean))).slice(0, 3).join(", ");
+
+    const mixes = [
+      {
+        id: "daily_mix_1",
+        videoId: mix1Tracks[0]?.videoId || mix1Tracks[0]?.video_id || "mix_1",
+        title: "Daily Mix 1",
+        artist: mix1Artists ? `${mix1Artists} and more` : "Curated for you",
+        artwork_url: mix1Tracks[0]?.artwork_url || mix1Tracks[0]?.thumbnail,
+        thumbnail: mix1Tracks[0]?.thumbnail || mix1Tracks[0]?.artwork_url,
+        mixTracks: mix1Tracks,
+        badgeColor: "#1DB954",
+      },
+      {
+        id: "daily_mix_2",
+        videoId: mix2Tracks[0]?.videoId || mix2Tracks[0]?.video_id || "mix_2",
+        title: "Daily Mix 2",
+        artist: mix2Artists ? `${mix2Artists} and more` : "Curated for you",
+        artwork_url: mix2Tracks[0]?.artwork_url || mix2Tracks[0]?.thumbnail,
+        thumbnail: mix2Tracks[0]?.thumbnail || mix2Tracks[0]?.artwork_url,
+        mixTracks: mix2Tracks,
+        badgeColor: "#8C52FF",
+      },
+      {
+        id: "daily_mix_3",
+        videoId: mix3Tracks[0]?.videoId || mix3Tracks[0]?.video_id || "mix_3",
+        title: "Daily Mix 3",
+        artist: mix3Artists ? `${mix3Artists} and more` : "Curated for you",
+        artwork_url: mix3Tracks[0]?.artwork_url || mix3Tracks[0]?.thumbnail,
+        thumbnail: mix3Tracks[0]?.thumbnail || mix3Tracks[0]?.artwork_url,
+        mixTracks: mix3Tracks,
+        badgeColor: "#2EBDD7",
+      },
+    ];
+
+    return {
+      id: "daily_mix",
+      title: "Daily Mix",
+      description: "Made for you based on your listening",
+      items: mixes,
+    };
+  }, [recentlyPlayed, allFollowingTracks, appTrending, feed?.sections]);
+
+  // 3. Trending Now
+  const trendingNowSection = useMemo(() => {
+    const feedTrending = (feed?.sections || []).find(
+      (s) => s.id === "trending_now" || s.title?.toLowerCase().includes("trending")
+    );
+    const items = appTrending.length > 0
+      ? appTrending
+      : feedTrending?.items || feedTrending?.tracks || [];
+
+    if (items.length === 0) return null;
+    return {
+      id: "trending_now",
+      title: "Trending Now",
+      description: "Most played by listeners across the app right now",
+      items,
+    };
+  }, [appTrending, feed?.sections]);
+
+  // 4. Romantic Melodies Section
+  const romanticMelodiesSection = useMemo(() => {
+    const sec = (feed?.sections || []).find(
+      (s) =>
+        s.id === "romantic_melodies" ||
+        s.id === "romantic_vibes" ||
+        s.title?.toLowerCase().includes("romantic")
+    );
+    const items = sec?.items || sec?.tracks || [];
+    if (items.length === 0) return null;
+    return {
+      id: "romantic_melodies",
+      title: "Romantic Melodies",
+      description: "Heartwarming Bollywood love songs and heartfelt melodies",
+      items,
+    };
+  }, [feed?.sections]);
+
+  // 5. Friends' Listening Activity Section
+  const friendsListeningTracks = useMemo(() => {
+    const list = [];
+    const seen = new Set();
+    Object.entries(friendsActivity || {}).forEach(([fUid, act]) => {
+      if (act?.track) {
+        const vid = act.track.videoId || act.track.video_id;
+        if (vid && !seen.has(vid)) {
+          seen.add(vid);
+          const friend = friendsList.find((f) => f.uid === fUid);
+          list.push({
+            ...act.track,
+            videoId: vid,
+            video_id: vid,
+            customSubtitle: friend?.username ? `Listened by @${friend.username}` : undefined,
+          });
+        }
+      }
+    });
+    return list;
+  }, [friendsActivity, friendsList]);
+
+  const friendsListeningSection = friendsListeningTracks.length > 0 ? {
+    id: "friends_listening_section",
+    title: "Friends are Listening To",
+    description: "Real-time tracks your friends have on repeat",
+    items: friendsListeningTracks,
+  } : null;
+
+  // 6. Personal "Jump Back In" from user's listening history
   const jumpBackInSection = recentlyPlayed.length > 0 ? {
     id: "jump_back_in",
     title: "Jump Back In",
@@ -372,24 +638,22 @@ export default function HomeScreen({ onNavigate } = {}) {
     items: recentlyPlayed,
   } : null;
 
-  // 2. Community "Trending on Staytup" from real playback counts in Firebase across all profiles
-  const appTrendingSection = appTrending.length > 0 ? {
-    id: "app_trending",
-    title: "Trending on Staytup",
-    description: "Most played by listeners across the app right now",
-    items: appTrending,
-  } : null;
-
-  // 3. Filter & normalize backend sections: map tracks -> items, remove stale/empty sections
-  // 4. Daily seeded shuffle — sections reorder once per day based on date seed (memoized to prevent render glitch)
+  // 7. Remaining Categorical Backend Sections (shuffled once per day)
   const daySeed = getDaySeed();
-  const shuffledBackendSections = useMemo(() => {
+  const remainingBackendSections = useMemo(() => {
     const raw = (feed?.sections || [])
       .filter((section) => {
         const tracks = section.tracks || section.items || [];
         if (!section || tracks.length === 0) return false;
+        if (section.id === "new_releases" || section.title?.toLowerCase().includes("new release")) return false;
+        if (section.id === "trending_now" || section.title?.toLowerCase().includes("trending")) return false;
         if (section.id === "trending_global" || section.title?.toLowerCase().includes("global")) return false;
         if (section.id === "trending_india" || section.title?.toLowerCase().includes("youtube india")) return false;
+        if (
+          section.id === "romantic_melodies" ||
+          section.id === "romantic_vibes" ||
+          section.title?.toLowerCase().includes("romantic")
+        ) return false;
         if (
           section.id?.startsWith("mood_") ||
           section.id?.includes("morning") ||
@@ -406,27 +670,23 @@ export default function HomeScreen({ onNavigate } = {}) {
     return seededShuffle(raw, daySeed);
   }, [feed?.sections, daySeed]);
 
+  // Combined Home / All Feed:
+  // 1. Fresh New Releases -> 2. Daily Mix -> 3. Trending Now -> 4. Romantic Melodies -> 5. Friends are Listening To -> 6. Jump Back In -> 7. Remaining Genres
   const allDisplayedSections = [
+    freshNewReleasesSection,
+    dailyMixSection,
+    trendingNowSection,
+    romanticMelodiesSection,
+    friendsListeningSection,
     jumpBackInSection,
-    appTrendingSection,
-    ...shuffledBackendSections,
+    ...remainingBackendSections,
   ].filter(Boolean).filter((section) => section.items && section.items.length > 0);
-
-  // Quick 6-Grid items for Spotify top row:
-  // Priority: 1. User's recently played history (Jump Back In) -> 2. App trending tracks -> 3. Suggested tracks
-  const quickItems = (recentlyPlayed.length > 0
-    ? recentlyPlayed.slice(0, 6)
-    : appTrending.length > 0
-    ? appTrending.slice(0, 6)
-    : shuffledBackendSections?.[0]?.items?.slice(0, 6) || []
-  );
 
   return (
     <View style={styles.container}>
       <Header
         activeFilter={activeFilter}
         onSelectFilter={setActiveFilter}
-        onAddPress={() => setIsPulseComposerOpen(true)}
       />
 
       {isLoading ? (
@@ -443,13 +703,6 @@ export default function HomeScreen({ onNavigate } = {}) {
             <Text style={styles.retryButtonText}>Retry Feed</Text>
           </TouchableOpacity>
         </View>
-      ) : activeFilter === "Feed" || activeFilter === "Pulse" ? (
-        <PulseScreen
-          embedded={true}
-          composerOpen={isPulseComposerOpen}
-          onCloseComposer={() => setIsPulseComposerOpen(false)}
-          onNavigate={onNavigate}
-        />
       ) : (
         <ScrollView
           showsVerticalScrollIndicator={false}
@@ -466,6 +719,119 @@ export default function HomeScreen({ onNavigate } = {}) {
           <View style={[styles.mainInner, (isDesktop || isTablet) && styles.desktopMainInner]}>
             {activeFilter === "Following" ? (
               <View style={styles.followingContainer}>
+                {/* 1. Friends Listening Now (Horizontal Scrolling Live Pills ONLY) */}
+                {(() => {
+                  const listeningFriends = friendsList.filter((f) => {
+                    const act = friendsActivity[f.uid];
+                    return Boolean(act?.isPlaying && act?.track);
+                  });
+
+                  if (listeningFriends.length === 0) return null;
+
+                  return (
+                    <View style={styles.followingFriendsSection}>
+                      <View style={styles.followingFriendsHeaderRow}>
+                        <View style={styles.followingFriendsTitleGroup}>
+                          <Ionicons name="people" size={16} color={colors.primary} />
+                          <Text style={styles.followingFriendsTitle}>Friends Listening Now</Text>
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => onNavigate && onNavigate("Friends")}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.followingFriendsViewAllText}>View All</Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.listeningPillsScrollContent}
+                        style={styles.listeningPillsScrollView}
+                      >
+                        {listeningFriends.map((friend) => {
+                          const act = friendsActivity[friend.uid];
+                          const track = act?.track;
+                          const isCurrentPlayingThis =
+                            currentTrack &&
+                            track &&
+                            ((track.videoId && currentTrack.videoId === track.videoId) ||
+                              (track.video_id && currentTrack.videoId === track.video_id) ||
+                              currentTrack.id === track.id);
+
+                          return (
+                            <TouchableOpacity
+                              key={`listening_pill_${friend.uid}`}
+                              style={[
+                                styles.listeningPill,
+                                isCurrentPlayingThis && styles.listeningPillActive,
+                              ]}
+                              onPress={() => {
+                                if (track) {
+                                  playTrack(
+                                    {
+                                      ...track,
+                                      videoId: track.videoId || track.video_id || track.id,
+                                    },
+                                    [track],
+                                    0
+                                  );
+                                }
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <View style={styles.listeningPillAvatarWrap}>
+                                <UserAvatar user={friend} size={30} fontSize={12} />
+                                <View style={styles.listeningPillLiveDot} />
+                              </View>
+
+                              <View style={styles.listeningPillInfo}>
+                                <Text style={styles.listeningPillName} numberOfLines={1}>
+                                  {friend.username}
+                                </Text>
+                                <View style={styles.listeningPillTrackRow}>
+                                  <MaterialCommunityIcons
+                                    name="waveform"
+                                    size={10}
+                                    color={colors.primary}
+                                    style={{ marginRight: 3 }}
+                                  />
+                                  <Text style={styles.listeningPillTrackTitle} numberOfLines={1}>
+                                    {cleanTitle(track.title)}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              <View style={styles.listeningPillPlayBtn}>
+                                <Ionicons
+                                  name={isCurrentPlayingThis && isPlaying ? "pause" : "play"}
+                                  size={11}
+                                  color="#000000"
+                                />
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+                  );
+                })()}
+
+                {/* 2. Your Following Mix */}
+                {allFollowingTracks.length > 0 && (
+                  <SectionList
+                    section={{
+                      id: "your_following_mix",
+                      title: "Your Following Mix",
+                      description: "Fresh tracks from the artists and curators you follow",
+                      items: allFollowingTracks,
+                    }}
+                    sectionIndex={0}
+                  />
+                )}
+
+                {/* 3. Top Hits From Your Artists */}
                 {loadingFollowing ? (
                   <View style={styles.followingLoadingBox}>
                     <ActivityIndicator size="small" color={colors.primary} />
@@ -473,125 +839,78 @@ export default function HomeScreen({ onNavigate } = {}) {
                   </View>
                 ) : favoriteArtists.length === 0 ? (
                   <View style={styles.followingEmptyBox}>
-                    <Ionicons name="person-add-outline" size={44} color="rgba(255,255,255,0.25)" />
-                    <Text style={styles.followingEmptyTitle}>No followed artists yet</Text>
+                    <Ionicons name="person-add-outline" size={40} color={colors.primary} />
+                    <Text style={styles.followingEmptyTitle}>Follow Your Favorite Artists</Text>
                     <Text style={styles.followingEmptySub}>
-                      Follow artists on their profiles to see their tracks here.
+                      Follow artists from search or their profiles to see all their fresh tracks right here.
                     </Text>
                   </View>
                 ) : (
-                  <>
-                    {favoriteArtists.length > 0 && (
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.followedArtistsRow}
-                        style={styles.followedArtistsScrollView}
-                      >
-                        {favoriteArtists.map((name, idx) => {
-                          const img = resolveLocalArtistImage(name, artistImages[name]);
-                          return (
-                            <TouchableOpacity
-                              key={`fav_artist_${idx}`}
-                              style={styles.followedArtistItem}
-                              onPress={() => {
-                                const section = followingSections.find(
-                                  (s) => s.artistName === name
-                                );
-                                if (section && section.items.length > 0) {
-                                  playTrack(section.items[0], section.items, 0);
-                                } else {
-                                  const track = allFollowingTracks.find((t) =>
-                                    t.artist?.toLowerCase().includes(name.toLowerCase())
-                                  );
-                                  if (track) {
-                                    playTrack(track, allFollowingTracks, 0);
-                                  }
-                                }
-                              }}
-                              activeOpacity={0.8}
-                            >
+                  <View style={styles.followingArtistsSection}>
+                    <Text style={styles.followingArtistsSectionTitle}>Top Hits From Your Artists</Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.followedArtistsRow}
+                      style={styles.followedArtistsScrollView}
+                    >
+                      {favoriteArtists.map((name, idx) => {
+                        const img = artistImages[name] || resolveLocalArtistImage(name);
+                        return (
+                          <TouchableOpacity
+                            key={`fav_artist_${idx}`}
+                            style={styles.followedArtistItem}
+                            onPress={() => setSelectedArtistForModal(name)}
+                            activeOpacity={0.8}
+                          >
+                            {img ? (
                               <Image
                                 source={{ uri: img }}
                                 style={styles.followedArtistImg}
                                 resizeMode="cover"
                               />
-                              <Text style={styles.followedArtistName} numberOfLines={1}>
-                                {name}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </ScrollView>
-                    )}
-                    {followingQuickItems.length > 0 && (
-                      <View style={styles.quickGridContainer}>
-                        {followingQuickItems.map((item, index) => {
-                          const artistImg = resolveLocalArtistImage(item.artist, artistImages[item.artist]);
-                          const thumb = artistImg || getHighResArtwork(item.artwork_url || item.thumbnail);
-                          return (
-                            <TouchableOpacity
-                              key={`following_quick_${item.videoId || item.video_id}_${index}`}
-                              style={[
-                                styles.quickCard,
-                                { width: isDesktop ? "32.4%" : isTablet ? "32%" : "48.5%" },
-                              ]}
-                              onPress={() => playTrack(item, allFollowingTracks, index)}
-                              activeOpacity={0.8}
-                            >
-                              <Image source={{ uri: thumb }} style={styles.quickCardThumb} resizeMode="cover" />
-                              <View style={styles.quickCardInfo}>
-                                <Text style={styles.quickCardTitle} numberOfLines={1}>{item.artist || "Followed Artist"}</Text>
-                                <Text style={styles.quickCardArtist} numberOfLines={1}>{cleanTitle(item.title)}</Text>
+                            ) : (
+                              <View style={[styles.followedArtistImg, styles.followedArtistFallback]}>
+                                <Ionicons name="person" size={24} color="#777777" />
                               </View>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                    )}
+                            )}
+                            <Text style={styles.followedArtistName} numberOfLines={1}>
+                              {name}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+
                     {followingSections.map((section, idx) => (
-                      <SectionList key={section.id} section={section} sectionIndex={idx} />
+                      <SectionList key={section.id} section={section} sectionIndex={idx + 1} />
                     ))}
-                  </>
+                  </View>
                 )}
               </View>
             ) : (
-              <>
-                {quickItems.length > 0 && (
-                  <View style={styles.quickGridContainer}>
-                    {quickItems.map((item, index) => {
-                      const isItemActive = currentTrack?.videoId === (item.videoId || item.video_id);
-                      const thumb = getHighResArtwork(item.artwork_url || item.thumbnail);
-                      return (
-                        <TouchableOpacity
-                          key={`quick_${item.videoId || item.video_id}_${index}`}
-                          style={[
-                            styles.quickCard,
-                            { width: isDesktop ? "32.4%" : isTablet ? "32%" : "48.5%" },
-                          ]}
-                          onPress={() => isItemActive ? togglePlayPause() : playTrack(item, quickItems, index)}
-                          activeOpacity={0.8}
-                        >
-                          <Image source={{ uri: thumb }} style={styles.quickCardThumb} resizeMode="cover" />
-                          <View style={styles.quickCardInfo}>
-                            <Text style={styles.quickCardTitle} numberOfLines={1}>{cleanTitle(item.title)}</Text>
-                            <Text style={styles.quickCardArtist} numberOfLines={1}>{item.artist || "Recently Played"}</Text>
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                )}
-                {allDisplayedSections?.map((section, idx) => (
-                  <SectionList key={section.id} section={section} sectionIndex={idx} />
-                ))}
-              </>
+              /* Home / All Feed: Fresh New Releases -> Daily Mix -> Trending Now -> Friends Are Listening To -> Jump Back In */
+              allDisplayedSections?.map((section, idx) => (
+                <SectionList key={section.id} section={section} sectionIndex={idx} />
+              ))
             )}
 
             <View style={{ height: isDesktop || isTablet ? 24 : 140 }} />
           </View>
         </ScrollView>
       )}
+
+      <ArtistModal
+        visible={Boolean(selectedArtistForModal)}
+        artistName={selectedArtistForModal}
+        initialPhoto={selectedArtistForModal ? (artistImages[selectedArtistForModal] || resolveLocalArtistImage(selectedArtistForModal)) : null}
+        onArtistImageResolved={(name, photo) => {
+          if (name && photo) {
+            setArtistImages((prev) => ({ ...prev, [name]: photo }));
+          }
+        }}
+        onClose={() => setSelectedArtistForModal(null)}
+      />
     </View>
   );
 }
@@ -880,6 +1199,11 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     backgroundColor: "#1a1a1a",
   },
+  followedArtistFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+  },
   followedArtistName: {
     fontFamily: fonts.medium,
     fontSize: 11,
@@ -907,5 +1231,215 @@ const styles = StyleSheet.create({
     textAlign: "center",
     maxWidth: 320,
     lineHeight: 18,
+  },
+
+  // Following Friends Live Activity
+  followingFriendsSection: {
+    marginBottom: 20,
+    marginTop: 4,
+  },
+  followingFriendsHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 4,
+    marginBottom: 12,
+  },
+  followingFriendsTitleGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  followingFriendsTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: "#FFFFFF",
+    letterSpacing: -0.2,
+  },
+  followingFriendsViewAllText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: colors.primary,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  listeningPillsScrollView: {
+    marginHorizontal: -4,
+  },
+  listeningPillsScrollContent: {
+    paddingHorizontal: 4,
+    gap: 10,
+    alignItems: "center",
+  },
+  listeningPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    borderRadius: 24,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    gap: 10,
+    maxWidth: 240,
+    minWidth: 140,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  listeningPillActive: {
+    backgroundColor: "rgba(29, 185, 84, 0.12)",
+    borderColor: "rgba(29, 185, 84, 0.4)",
+  },
+  listeningPillAvatarWrap: {
+    position: "relative",
+  },
+  listeningPillLiveDot: {
+    position: "absolute",
+    bottom: -1,
+    right: -1,
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: "#1DB954",
+    borderWidth: 1.5,
+    borderColor: "#000000",
+  },
+  listeningPillInfo: {
+    flex: 1,
+  },
+  listeningPillName: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: "#FFFFFF",
+  },
+  listeningPillTrackRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  listeningPillTrackTitle: {
+    fontFamily: fonts.regular,
+    fontSize: 10.5,
+    color: "#1DB954",
+    flexShrink: 1,
+  },
+  listeningPillPlayBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  compactFriendCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.06)",
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  compactFriendCardLive: {
+    backgroundColor: "rgba(29, 185, 84, 0.06)",
+    borderColor: "rgba(29, 185, 84, 0.22)",
+  },
+  compactFriendMain: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    gap: 12,
+    marginRight: 10,
+  },
+  compactAvatarWrapper: {
+    position: "relative",
+  },
+  compactStatusDot: {
+    position: "absolute",
+    bottom: -1,
+    right: -1,
+    width: 11,
+    height: 11,
+    borderRadius: 5.5,
+    borderWidth: 2,
+    borderColor: "#000000",
+  },
+  compactStatusDotLive: {
+    backgroundColor: "#1DB954",
+  },
+  compactStatusDotOffline: {
+    backgroundColor: "#555555",
+  },
+  compactFriendInfo: {
+    flex: 1,
+  },
+  compactNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 2,
+  },
+  compactFriendName: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: "#FFFFFF",
+  },
+  compactStatusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  compactStatusSmallDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  compactStatusText: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  compactStatusTextLive: {
+    color: "#1DB954",
+  },
+  compactTrackRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  compactTrackTitle: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: "rgba(255, 255, 255, 0.85)",
+    flexShrink: 1,
+  },
+  compactInactiveText: {
+    fontFamily: fonts.regular,
+    fontSize: 11,
+    color: "rgba(255, 255, 255, 0.4)",
+  },
+  compactPlayActionBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+
+  // Following Artists Section
+  followingArtistsSection: {
+    marginTop: 10,
+    marginBottom: 24,
+  },
+  followingArtistsSectionTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 19,
+    color: "#FFFFFF",
+    letterSpacing: -0.3,
+    paddingHorizontal: 4,
+    marginBottom: 12,
   },
 });

@@ -95,6 +95,22 @@ export default function LoginScreen({ onLoginSuccess }) {
     }
   }, []);
 
+  // Check for any stored OAuth redirect errors
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const storedErr =
+        window.sessionStorage?.getItem("@staytup_auth_error") ||
+        window.localStorage?.getItem("@staytup_auth_error");
+      if (storedErr) {
+        setErrorMessage(storedErr);
+        try {
+          window.sessionStorage?.removeItem("@staytup_auth_error");
+          window.localStorage?.removeItem("@staytup_auth_error");
+        } catch (_) {}
+      }
+    }
+  }, []);
+
   // PWA install prompt listeners
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -116,14 +132,30 @@ export default function LoginScreen({ onLoginSuccess }) {
     try {
       if (onLoginSuccess) {
         const res = await onLoginSuccess({ provider, ...extra });
+        if (res && res.redirecting) {
+          // Keep loading indicator active while browser navigates to OAuth redirect
+          return;
+        }
         if (res && res.success === false) {
-          if (res.code === "auth/popup-closed-by-user") setErrorMessage("Sign-in cancelled");
-          else if (res.code === "auth/operation-not-allowed") setErrorMessage("Please enable Auth in Firebase Console");
-          else setErrorMessage(res.error || "Sign-in failed. Please try again.");
+          let msg = res.error || "Sign-in failed. Please try again.";
+          if (res.code === "auth/popup-closed-by-user") {
+            msg = "Sign-in was cancelled before completion.";
+          } else if (res.code === "auth/operation-not-allowed") {
+            msg = "Sign-in provider is disabled in Firebase Console.";
+          } else if (res.code === "auth/unauthorized-domain") {
+            msg = "Domain not authorized in Firebase Console -> Authentication -> Settings.";
+          } else if (res.code === "auth/network-request-failed") {
+            msg = "Network error. Please check your internet connection.";
+          } else if (res.code === "auth/account-exists-with-different-credential") {
+            msg = "An account already exists with this email under a different sign-in method.";
+          } else if (res.code) {
+            msg = `${res.error || "Sign-in failed"} (${res.code})`;
+          }
+          setErrorMessage(msg);
         }
       }
     } catch (err) {
-      setErrorMessage(err.message || "Failed to sign in");
+      setErrorMessage(err.message || "Failed to sign in. Please try again.");
     } finally {
       setLoadingProvider(null);
     }
@@ -196,17 +228,35 @@ export default function LoginScreen({ onLoginSuccess }) {
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.guestButton}
-              activeOpacity={0.85}
-              disabled={!!loadingProvider}
-              onPress={() => handleProviderLogin("guest")}
+              style={[
+                styles.appleButton,
+                isAndroid && styles.appleButtonDisabled,
+              ]}
+              activeOpacity={isAndroid ? 1 : 0.85}
+              disabled={isAndroid || !!loadingProvider}
+              onPress={() => {
+                if (isAndroid) return;
+                handleProviderLogin("apple");
+              }}
             >
-              {loadingProvider === "guest" ? (
-                <ActivityIndicator size="small" color="rgba(255,255,255,0.7)" />
+              {loadingProvider === "apple" ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
                 <>
-                  <Ionicons name="person-outline" size={18} color="rgba(255,255,255,0.7)" style={{ marginRight: 10 }} />
-                  <Text style={styles.guestButtonText}>Continue as Guest</Text>
+                  <Ionicons
+                    name="logo-apple"
+                    size={20}
+                    color={isAndroid ? "rgba(255,255,255,0.35)" : "#FFFFFF"}
+                    style={{ marginRight: 10 }}
+                  />
+                  <Text style={[styles.appleButtonText, isAndroid && styles.appleButtonTextDisabled]}>
+                    Continue with Apple
+                  </Text>
+                  {isAndroid && (
+                    <View style={styles.appleDisabledBadge}>
+                      <Text style={styles.appleDisabledBadgeText}>iOS only</Text>
+                    </View>
+                  )}
                 </>
               )}
             </TouchableOpacity>
@@ -399,22 +449,48 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     letterSpacing: 0.2,
   },
-  guestButton: {
+  appleButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: "rgba(255,255,255,0.06)",
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#000000",
+    borderWidth: 1.2,
+    borderColor: "rgba(255,255,255,0.22)",
+    paddingHorizontal: 24,
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  appleButtonDisabled: {
+    backgroundColor: "rgba(255,255,255,0.03)",
+    borderColor: "rgba(255,255,255,0.08)",
+    opacity: 0.55,
+  },
+  appleButtonText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 15,
+    color: "#FFFFFF",
+    letterSpacing: 0.2,
+  },
+  appleButtonTextDisabled: {
+    color: "rgba(255,255,255,0.35)",
+  },
+  appleDisabledBadge: {
+    marginLeft: 10,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
-    paddingHorizontal: 24,
   },
-  guestButtonText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 14.5,
-    color: "rgba(255,255,255,0.75)",
-    letterSpacing: 0.2,
+  appleDisabledBadgeText: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: "rgba(255,255,255,0.45)",
+    letterSpacing: 0.3,
   },
   downloadWrap: {
     width: "100%",

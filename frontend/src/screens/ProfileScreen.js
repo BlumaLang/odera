@@ -20,11 +20,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { api, getApiBaseUrl, setApiBaseUrl } from "../api/client";
 import { useUser } from "../context/UserContext";
-import { useAudio } from "../context/AudioContext";
+import { useAudioPlayback } from "../context/AudioContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { DEFAULT_ARTIST_IMAGES, resolveLocalArtistImage } from "../theme/artistImages";
 import ArtistModal from "../components/ArtistModal";
 import SongCard from "../components/SongCard";
+import ChangelogModal from "../components/ChangelogModal";
+import { auth, getOrCreateReferralCode, getReferralCount } from "../services/firebase";
+import { APP_VERSION, BUILD_NUMBER, BUILD_DATE } from "../config/version";
 
 const globalArtistPhotoCache = {};
 
@@ -104,7 +107,7 @@ export default function ProfileScreen({ visible, onClose }) {
     recentlyPlayed,
     streamCount,
   } = useUser();
-  const { playTrack, currentTrack } = useAudio();
+  const { playTrack, currentTrack } = useAudioPlayback();
 
   // Profile and listening statistics
   const [historyData, setHistoryData] = useState(null);
@@ -128,6 +131,10 @@ export default function ProfileScreen({ visible, onClose }) {
   const [referralCount, setReferralCount] = useState(0);
   const [copiedReferralCode, setCopiedReferralCode] = useState(false);
   const [copiedFullInvite, setCopiedFullInvite] = useState(false);
+  const [dbReferralCode, setDbReferralCode] = useState(null);
+
+  // Changelog & Credits Modal
+  const [showChangelogModal, setShowChangelogModal] = useState(false);
 
   // Official Channels Modal
   const [showChannelsModal, setShowChannelsModal] = useState(false);
@@ -238,6 +245,21 @@ export default function ProfileScreen({ visible, onClose }) {
     loadProfileData();
     resolveArtistPhotos();
   }, [loadProfileData, resolveArtistPhotos]);
+
+  // Load referral code from Firebase DB
+  useEffect(() => {
+    if (!visible) return;
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    (async () => {
+      try {
+        const data = await getOrCreateReferralCode(uid);
+        if (data?.code) setDbReferralCode(data.code);
+        const count = await getReferralCount(uid);
+        setReferralCount(count || 0);
+      } catch (_) {}
+    })();
+  }, [visible]);
 
   const listeningHours = useMemo(() => {
     if (historyData?.stats?.total_listening_hours !== undefined && historyData.stats.total_listening_hours > 0) {
@@ -363,6 +385,8 @@ export default function ProfileScreen({ visible, onClose }) {
   };
 
   const getVipCode = () => {
+    if (dbReferralCode) return dbReferralCode;
+    // Fallback while DB code is loading
     const raw = (userProfile?.username || username || "USER").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
     return `STAYTUP-${raw || "VIP"}`;
   };
@@ -373,14 +397,11 @@ export default function ProfileScreen({ visible, onClose }) {
     const referralUrl = `${baseUrl}?ref=${vipCode}`;
 
     return (
-      `You’re Invited to Staytup\n` +
-      `Staytup is a music streaming app where you can listen to your favorite songs, discover new music, and enjoy a high-quality, ad-free listening experience.\n\n` +
-      `Exclusive VIP Offer\n` +
-      `Join Staytup using my VIP invite code and get 1 Month of VIP Pro Access FREE.\n\n` +
-      `VIP Code: ${vipCode}\n\n` +
-      `Claim your free VIP Pro Access:\n` +
-      `${referralUrl}\n\n` +
-      `Listen to more. Discover your vibe. Staytup.`
+      `Staytup VIP Invite\n` +
+      `Join Staytup and get 1 Month FREE VIP Pro\n\n` +
+      `VIP Code: ${vipCode}\n` +
+      `Join now: ${referralUrl}\n\n` +
+      `Listen more. Discover your vibe. Staytup.`
     );
   };
 
@@ -392,13 +413,13 @@ export default function ProfileScreen({ visible, onClose }) {
 
       if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.share) {
         await navigator.share({
-          title: "You’re Invited to Staytup",
+          title: "Staytup VIP Invite",
           text: inviteMsg,
           url: referralUrl,
         });
       } else {
         await Share.share({
-          title: "You’re Invited to Staytup",
+          title: "Staytup VIP Invite",
           message: inviteMsg,
         });
       }
@@ -556,6 +577,22 @@ export default function ProfileScreen({ visible, onClose }) {
           <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.3)" />
         </TouchableOpacity>
 
+        {/* Changelog */}
+        <TouchableOpacity
+          style={styles.qrCodeBtn}
+          onPress={() => setShowChangelogModal(true)}
+          activeOpacity={0.85}
+        >
+          <View style={[styles.qrCodeIconWrap, { backgroundColor: "rgba(255,255,255,0.06)" }]}>
+            <Ionicons name="sparkles-outline" size={22} color="rgba(255,255,255,0.5)" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.qrCodeTitle}>Changelog</Text>
+            <Text style={styles.qrCodeSub}>v{APP_VERSION} • What's new & bug fixes</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.3)" />
+        </TouchableOpacity>
+
         {/* Switch Account / Log Out */}
         <TouchableOpacity
           style={styles.logoutCardBtn}
@@ -619,8 +656,8 @@ export default function ProfileScreen({ visible, onClose }) {
             {renderAllContent()}
 
             <View style={styles.footerVersion}>
-              <Text style={styles.versionText}>Staytup Music • v2.4.0</Text>
-              <Text style={styles.versionSub}>High-Fidelity Personalized Music Streaming</Text>
+              <Text style={styles.versionText}>Staytup Music • v{APP_VERSION}</Text>
+              <Text style={styles.versionSub}>Build {BUILD_NUMBER} • {BUILD_DATE}</Text>
             </View>
 
             <View style={{ height: 60 }} />
@@ -793,9 +830,9 @@ export default function ProfileScreen({ visible, onClose }) {
                 <View style={styles.referralIconCircle}>
                   <Ionicons name="gift" size={38} color={colors.primary} />
                 </View>
-                <Text style={styles.referralHeroTitle}>You’re Invited to Staytup</Text>
+                <Text style={styles.referralHeroTitle}>Staytup VIP Invite</Text>
                 <Text style={styles.referralHeroSub}>
-                  Give your friends 1 Month of VIP Pro Access FREE. When they sign up using your VIP invite code, you both unlock exclusive listening perks.
+                  Share your VIP code with friends — they get 1 Month FREE VIP Pro and you both unlock exclusive listening perks.
                 </Text>
               </View>
 
@@ -905,6 +942,12 @@ export default function ProfileScreen({ visible, onClose }) {
           </View>
         </View>
       </Modal>
+
+      {/* Flat Full-Width Changelog Modal */}
+      <ChangelogModal
+        visible={showChangelogModal}
+        onClose={() => setShowChangelogModal(false)}
+      />
 
       {/* Official Channels Bottom Sheet */}
       <Modal
