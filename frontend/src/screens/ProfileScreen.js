@@ -542,113 +542,121 @@ export default function ProfileScreen({ visible, onClose }) {
           </View>
         </View>
 
-        {/* Referral */}
-        <TouchableOpacity
-          style={styles.qrCodeBtn}
-          onPress={() => setShowReferralModal(true)}
-          activeOpacity={0.85}
-        >
-          <View style={[styles.qrCodeIconWrap, { backgroundColor: "rgba(255,255,255,0.06)" }]}>
-            <Ionicons name="gift-outline" size={22} color="rgba(255,255,255,0.7)" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.qrCodeTitle}>Invite Friends</Text>
-            <Text style={styles.qrCodeSub}>Share your referral link, earn rewards</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.3)" />
-        </TouchableOpacity>
+        {/* Simple Clean Profile Actions List (No Cards, No Heavy Boxes) */}
+        <View style={styles.simpleListContainer}>
+          {/* Referral / Invite */}
+          <TouchableOpacity
+            style={styles.simpleActionRow}
+            onPress={() => setShowReferralModal(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.simpleActionIconWrap}>
+              <Ionicons name="gift-outline" size={20} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.simpleActionTitle}>Invite Friends</Text>
+              <Text style={styles.simpleActionSub}>Share your referral link, earn rewards</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.25)" />
+          </TouchableOpacity>
+          <View style={styles.simpleRowDivider} />
 
-        {/* Official Channels & Developer */}
-        <TouchableOpacity
-          style={styles.qrCodeBtn}
-          onPress={() => setShowChannelsModal(true)}
-          activeOpacity={0.85}
-        >
-          <View style={[styles.qrCodeIconWrap, { backgroundColor: "rgba(255,255,255,0.06)" }]}>
-            <Ionicons name="globe-outline" size={22} color="rgba(255,255,255,0.7)" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.qrCodeTitle}>Official Channels & Developer</Text>
-            <Text style={styles.qrCodeSub}>Instagram, Email & More</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.3)" />
-        </TouchableOpacity>
+          {/* Official Channels & Developer */}
+          <TouchableOpacity
+            style={styles.simpleActionRow}
+            onPress={() => setShowChannelsModal(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.simpleActionIconWrap}>
+              <Ionicons name="globe-outline" size={20} color="rgba(255,255,255,0.75)" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.simpleActionTitle}>Official Channels & Developer</Text>
+              <Text style={styles.simpleActionSub}>Instagram, Email & More</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.25)" />
+          </TouchableOpacity>
+          <View style={styles.simpleRowDivider} />
 
-        {/* Terms of Service */}
-        <TouchableOpacity
-          style={styles.qrCodeBtn}
-          onPress={() => setShowTermsModal(true)}
-          activeOpacity={0.85}
-        >
-          <View style={[styles.qrCodeIconWrap, { backgroundColor: "rgba(255,255,255,0.06)" }]}>
-            <Ionicons name="document-text-outline" size={22} color="rgba(255,255,255,0.5)" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.qrCodeTitle}>Terms of Service</Text>
-            <Text style={styles.qrCodeSub}>Usage terms & conditions</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.3)" />
-        </TouchableOpacity>
+          {/* Terms of Service */}
+          <TouchableOpacity
+            style={styles.simpleActionRow}
+            onPress={() => setShowTermsModal(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.simpleActionIconWrap}>
+              <Ionicons name="document-text-outline" size={20} color="rgba(255,255,255,0.55)" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.simpleActionTitle}>Terms of Service</Text>
+              <Text style={styles.simpleActionSub}>Usage terms & conditions</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.25)" />
+          </TouchableOpacity>
+          <View style={styles.simpleRowDivider} />
 
-        {/* Privacy Policy */}
-        <TouchableOpacity
-          style={styles.qrCodeBtn}
-          onPress={() => setShowPrivacyModal(true)}
-          activeOpacity={0.85}
-        >
-          <View style={[styles.qrCodeIconWrap, { backgroundColor: "rgba(255,255,255,0.06)" }]}>
-            <Ionicons name="shield-checkmark-outline" size={22} color="rgba(255,255,255,0.5)" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.qrCodeTitle}>Privacy Policy</Text>
-            <Text style={styles.qrCodeSub}>How we handle your data</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.3)" />
-        </TouchableOpacity>
+          {/* Privacy Policy */}
+          <TouchableOpacity
+            style={styles.simpleActionRow}
+            onPress={() => setShowPrivacyModal(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.simpleActionIconWrap}>
+              <Ionicons name="shield-checkmark-outline" size={20} color="rgba(255,255,255,0.55)" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.simpleActionTitle}>Privacy Policy</Text>
+              <Text style={styles.simpleActionSub}>How we handle your data</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.25)" />
+          </TouchableOpacity>
+          <View style={styles.simpleRowDivider} />
 
-        {/* Ad Disclaimer */}
-        <TouchableOpacity
-          style={styles.qrCodeBtn}
-          onPress={() => setShowDisclaimerModal(true)}
-          activeOpacity={0.85}
-        >
-          <View style={[styles.qrCodeIconWrap, { backgroundColor: "rgba(255,255,255,0.06)" }]}>
-            <Ionicons name="alert-circle-outline" size={22} color="rgba(255,255,255,0.5)" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.qrCodeTitle}>Ad Disclaimer</Text>
-            <Text style={styles.qrCodeSub}>Third-party ad content notice</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.3)" />
-        </TouchableOpacity>
+          {/* Ad Disclaimer */}
+          <TouchableOpacity
+            style={styles.simpleActionRow}
+            onPress={() => setShowDisclaimerModal(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.simpleActionIconWrap}>
+              <Ionicons name="alert-circle-outline" size={20} color="rgba(255,255,255,0.55)" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.simpleActionTitle}>Ad Disclaimer</Text>
+              <Text style={styles.simpleActionSub}>Third-party ad content notice</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.25)" />
+          </TouchableOpacity>
+          <View style={styles.simpleRowDivider} />
 
-        {/* Changelog */}
-        <TouchableOpacity
-          style={styles.qrCodeBtn}
-          onPress={() => setShowChangelogModal(true)}
-          activeOpacity={0.85}
-        >
-          <View style={[styles.qrCodeIconWrap, { backgroundColor: "rgba(255,255,255,0.06)" }]}>
-            <Ionicons name="sparkles-outline" size={22} color="rgba(255,255,255,0.5)" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.qrCodeTitle}>Changelog</Text>
-            <Text style={styles.qrCodeSub}>v{APP_VERSION} • What's new & bug fixes</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.3)" />
-        </TouchableOpacity>
+          {/* Changelog */}
+          <TouchableOpacity
+            style={styles.simpleActionRow}
+            onPress={() => setShowChangelogModal(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.simpleActionIconWrap}>
+              <Ionicons name="sparkles-outline" size={20} color="rgba(255,255,255,0.55)" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.simpleActionTitle}>Changelog</Text>
+              <Text style={styles.simpleActionSub}>v{APP_VERSION} • What's new & bug fixes</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.25)" />
+          </TouchableOpacity>
+        </View>
 
-        {/* Switch Account / Log Out */}
+        {/* Switch Account / Log Out (Simple, Minimal Flat Action) */}
         <TouchableOpacity
-          style={styles.logoutCardBtn}
+          style={styles.simpleLogoutRow}
           onPress={() => {
             onClose();
             logoutUser();
           }}
-          activeOpacity={0.85}
+          activeOpacity={0.75}
         >
           <Ionicons name="log-out-outline" size={18} color="#FF5252" style={{ marginRight: 8 }} />
-          <Text style={styles.logoutCardBtnText}>Switch Account / Log Out</Text>
+          <Text style={styles.simpleLogoutText}>Switch Account / Log Out</Text>
         </TouchableOpacity>
       </>
     );
@@ -2139,6 +2147,56 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     fontSize: 14,
     color: "#000000",
+  },
+  simpleListContainer: {
+    width: "100%",
+    marginTop: 20,
+    marginBottom: 20,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255, 255, 255, 0.08)",
+  },
+  simpleActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    gap: 14,
+  },
+  simpleActionIconWrap: {
+    width: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  simpleActionTitle: {
+    fontFamily: fonts.medium,
+    fontSize: 15,
+    color: "#FFFFFF",
+    letterSpacing: -0.2,
+  },
+  simpleActionSub: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: "rgba(255, 255, 255, 0.45)",
+    marginTop: 2,
+  },
+  simpleRowDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    marginLeft: 46,
+  },
+  simpleLogoutRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 32,
+  },
+  simpleLogoutText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: "#FF5252",
+    letterSpacing: 0.2,
   },
   logoutCardBtn: {
     flexDirection: "row",

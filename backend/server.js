@@ -524,17 +524,18 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       return res.json({ query: '', count: 0, results: [], tracks: [], has_more: false });
     }
 
-    let songs = [];
-    try {
-      // First try /search/songs (higher quality metadata & pagination)
-      const data = await fetchSaavnJson(`/search/songs?query=${encodeURIComponent(query)}&limit=30`);
-      if (data && data.success && Array.isArray(data.data?.results)) {
-        songs = data.data.results;
-      }
-    } catch (_) {}
+    const isExplicitInstrumental = /instrumental|karaoke|bgm/i.test(query);
 
-    // Fallback to /search?query=...
-    if (!songs || songs.length === 0) {
+    // Fetch both JioSaavn and YouTube search concurrently in parallel for maximum speed and complete catalog
+    const [saavnRes, ytRes] = await Promise.allSettled([
+      fetchSaavnJson(`/search/songs?query=${encodeURIComponent(query)}&limit=30`).catch(() => null),
+      scrapeYouTubeSearch(query).catch(() => [])
+    ]);
+
+    let songs = [];
+    if (saavnRes.status === 'fulfilled' && saavnRes.value?.success && Array.isArray(saavnRes.value.data?.results)) {
+      songs = saavnRes.value.data.results;
+    } else if (saavnRes.status === 'fulfilled') {
       try {
         const fallbackData = await fetchSaavnJson(`/search?query=${encodeURIComponent(query)}`);
         if (fallbackData && fallbackData.success && Array.isArray(fallbackData.data?.songs?.results)) {
@@ -543,17 +544,111 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       } catch (_) {}
     }
 
-    const normalized = songs.map(s => normalizeSaavnSong(s, null)).filter(Boolean);
+    let normalized = songs.map(s => normalizeSaavnSong(s, null)).filter(Boolean);
+
+    // Filter out instrumental/karaoke noise from Saavn unless user specifically asked for it
+    if (!isExplicitInstrumental) {
+      normalized = normalized.filter(s => {
+        const t = (s.title || '').toLowerCase();
+        if (/instrumental|karaoke|originally\s*performed|\(lofi\)|\(hardstyle\)|\(nightcore\)|\(techno\)/i.test(t)) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // Process YouTube search results
+    let ytResults = [];
+    if (ytRes.status === 'fulfilled' && Array.isArray(ytRes.value)) {
+      ytResults = ytRes.value;
+    }
+
+    // Relevance scoring: guarantees exact song title matches (e.g. "The Girls" by BLACKPINK) rank at the top
+    const qLower = query.toLowerCase().trim();
+    const qWords = qLower.split(/\s+/).filter(w => w.length > 1);
+
+    function parseViewCount(viewStr) {
+      if (!viewStr) return 0;
+      const clean = String(viewStr).replace(/,/g, '').toLowerCase();
+      const match = clean.match(/([\d.]+)\s*([kmb])?/);
+      if (!match) return 0;
+      const num = parseFloat(match[1]) || 0;
+      const unit = match[2];
+      if (unit === 'b') return num * 1e9;
+      if (unit === 'm') return num * 1e6;
+      if (unit === 'k') return num * 1e3;
+      return num;
+    }
+
+    function cleanSearchTitle(t) {
+      return (t || '')
+        .replace(/\s*\(.*?\)/g, '')
+        .replace(/\s*\[.*?\]/g, '')
+        .replace(/official\s*(music\s*)?(video|audio)|lyrics|mv|full\s*song/gi, '')
+        .replace(/[^a-z0-9]/gi, ' ')
+        .trim()
+        .toLowerCase();
+    }
+
+    const scoreTrack = (t) => {
+      const titleLower = (t.title || '').toLowerCase();
+      const cleanT = cleanSearchTitle(t.title || '');
+      let score = 0;
+
+      if (titleLower === qLower || cleanT === qLower) score += 100;
+      else if (cleanT.includes(qLower) || titleLower.includes(qLower)) score += 80;
+      else if (qWords.length > 0 && qWords.every(w => cleanT.includes(w) || titleLower.includes(w))) score += 55;
+      else if (qWords.some(w => cleanT.includes(w))) score += 20;
+
+      // Penalize instrumental/karaoke/covers when user didn't ask for them
+      if (!isExplicitInstrumental) {
+        if (/instrumental|karaoke|cover|remake|orchestra/i.test(titleLower) || /instrumental/i.test(t.album || '')) {
+          score -= 50;
+        }
+      }
+
+      // Bonus for genuine official 320kbps Saavn tracks
+      if (t.source === 'saavn') score += 15;
+
+      // Popularity score based on real view count / play count
+      const views = parseViewCount(t.views);
+      if (views > 100000000) score += 85; // 100M+ views
+      else if (views > 10000000) score += 60; // 10M+ views
+      else if (views > 1000000) score += 40; // 1M+ views
+      else if (views > 100000) score += 20; // 100K+ views
+
+      const playCount = Number(t.playCount) || 0;
+      if (playCount > 10000000) score += 75;
+      else if (playCount > 1000000) score += 50;
+      else if (playCount > 100000) score += 25;
+
+      return score;
+    };
+
+    const combinedPool = [...normalized, ...ytResults];
+    combinedPool.sort((a, b) => scoreTrack(b) - scoreTrack(a));
+
+    const seenKeys = new Set();
+    const finalTracks = [];
+
+    for (const t of combinedPool) {
+      const cleanTitle = (t.title || '').toLowerCase().replace(/\s*\([^)]*\)/g, '').replace(/[^a-z0-9]/g, '').trim();
+      if (!cleanTitle || seenKeys.has(cleanTitle)) continue;
+      seenKeys.add(cleanTitle);
+      finalTracks.push(t);
+      if (finalTracks.length >= 35) break;
+    }
+
     res.json({
       query,
-      count: normalized.length,
-      results: normalized,
-      tracks: normalized,
-      has_more: normalized.length >= 25
+      count: finalTracks.length,
+      results: finalTracks,
+      tracks: finalTracks,
+      has_more: finalTracks.length >= 25
     });
   } catch (err) {
-    console.error('Saavn search error:', err.message);
-    res.status(500).json({ error: 'Saavn search failed', details: err.message, results: [], tracks: [] });
+    console.error('Unified search error:', err.message);
+    res.status(500).json({ error: 'Search failed', details: err.message, results: [], tracks: [] });
   }
 });
 

@@ -102,22 +102,45 @@ export const api = {
   // Health check
   getHealth: () => request("/api/health"),
 
-  // Search songs via Saavn direct audio catalog
+  // Search songs via Saavn direct audio catalog with automatic YouTube enrichment
   search: async (query, offset = 0, limit = 30) => {
     if (!query || !query.trim()) {
       return { query: "", count: 0, results: [], tracks: [], has_more: false };
     }
+    const cleanQ = query.trim();
     try {
-      const q = encodeURIComponent(query.trim());
+      const q = encodeURIComponent(cleanQ);
       const data = await request(`/api/search/saavn?q=${q}&offset=${offset}&limit=${limit}`);
-      const raw = data?.results || data?.tracks || [];
+      let raw = data?.results || data?.tracks || [];
+
+      // If results are sparse or missing direct match on offset 0, query YouTube search to ensure no songs are missed
+      if (raw.length < 5 && offset === 0) {
+        try {
+          const ytData = await request(`/api/search?q=${q}&offset=${offset}&limit=${limit}`);
+          const ytRaw = ytData?.results || ytData?.tracks || [];
+          if (ytRaw.length > 0) {
+            const seen = new Set(
+              raw.map((item) => (item.title || "").toLowerCase().replace(/[^a-z0-9]/g, ""))
+            );
+            for (const item of ytRaw) {
+              const norm = (item.title || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+              if (!seen.has(norm)) {
+                seen.add(norm);
+                raw.push(item);
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
       const list = raw.map((item) => ({
         ...item,
         artwork_url: item.artwork_url || item.thumbnail || "",
         thumbnail: item.thumbnail || item.artwork_url || "",
       }));
+
       return {
-        query,
+        query: cleanQ,
         count: list.length,
         results: list,
         tracks: list,
@@ -127,12 +150,12 @@ export const api = {
       console.warn("Saavn search request error:", err.message);
       // Fallback to standard search if Saavn endpoint fails
       try {
-        const q = encodeURIComponent(query.trim());
+        const q = encodeURIComponent(cleanQ);
         const data = await request(`/api/search?q=${q}&offset=${offset}&limit=${limit}`);
         const raw = data?.results || data?.tracks || [];
-        return { query, count: raw.length, results: raw, tracks: raw, has_more: false };
+        return { query: cleanQ, count: raw.length, results: raw, tracks: raw, has_more: false };
       } catch (_) {
-        return { query, count: 0, results: [], tracks: [], has_more: false };
+        return { query: cleanQ, count: 0, results: [], tracks: [], has_more: false };
       }
     }
   },
