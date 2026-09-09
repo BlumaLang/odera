@@ -22,6 +22,8 @@ import {
   update,
   onValue,
   off,
+  goOnline,
+  goOffline,
 } from "firebase/database";
 
 const firebaseConfig = {
@@ -47,6 +49,22 @@ if (typeof window !== "undefined") {
       console.warn("[Auth] setPersistence warning:", err);
     });
   } catch (_) {}
+
+  // Gracefully handle browser Back-Forward Cache (bfcache)
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted && db) {
+      try {
+        goOnline(db);
+      } catch (_) {}
+    }
+  });
+  window.addEventListener("pagehide", (event) => {
+    if (event.persisted && db) {
+      try {
+        goOffline(db);
+      } catch (_) {}
+    }
+  });
 }
 
 // Detect installed/standalone PWA mode on iOS (Homescreen webclip), Android (WebAPK/TWA), and desktop

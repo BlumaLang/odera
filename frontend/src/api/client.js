@@ -445,7 +445,7 @@ export const api = {
   },
 
   // Get official artist songs (deduplicated original movie/album releases)
-  getArtistSongs: async (artistIdOrName, page = 0, limit = 25) => {
+  getArtistSongs: async (artistIdOrName, page = 0, limit = 20) => {
     if (!artistIdOrName) return { tracks: [], results: [], has_more: false };
     try {
       const param = encodeURIComponent(String(artistIdOrName).trim());

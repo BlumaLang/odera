@@ -24,7 +24,7 @@ import SongCard from "./SongCard";
 import AddToPlaylistModal from "./AddToPlaylistModal";
 
 const { width, height } = Dimensions.get("window");
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 20;
 
 // In-memory module cache for artist info and songs to prevent re-fetching and flicker
 const artistDataCache = new Map();
@@ -181,7 +181,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
           const list = data.tracks || data.results || [];
           const deduped = dedupeArtistSongs([], list);
           setSongs(deduped);
-          const more = Boolean(data.has_more !== false && list.length >= PAGE_SIZE);
+          const more = Boolean(data.has_more !== false && list.length > 0);
           setHasMore(more);
           pageRef.current = 0;
           artistDataCache.set(cleanName, {
@@ -222,12 +222,12 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
           artistDataCache.set(cleanName, {
             ...(artistDataCache.get(cleanName) || {}),
             songs: updated,
-            hasMore: Boolean(newTracks.length >= PAGE_SIZE && data.has_more !== false),
+            hasMore: Boolean(data.has_more !== false && uniqueNew.length > 0),
             page: nextPage,
           });
           return updated;
         });
-        if (newTracks.length < PAGE_SIZE || data.has_more === false) {
+        if (data.has_more === false) {
           setHasMore(false);
         }
       } else {

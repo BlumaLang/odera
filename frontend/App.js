@@ -452,6 +452,7 @@ function AppContent() {
 }
 
 export default function App() {
+  const isWeb = Platform.OS === "web";
   const [fontsLoaded] = useFonts({
     Poppins_400Regular,
     Poppins_500Medium,
@@ -459,15 +460,17 @@ export default function App() {
     Poppins_700Bold,
     Poppins_800ExtraBold,
   });
-  const [fontTimeout, setFontTimeout] = useState(false);
+  const [fontTimeout, setFontTimeout] = useState(isWeb);
 
   useEffect(() => {
-    const timer = setTimeout(() => setFontTimeout(true), 1200);
+    if (isWeb) return;
+    const timer = setTimeout(() => setFontTimeout(true), 1000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [isWeb]);
 
-  // Show the React splash screen while fonts are loading (max 1.2s safety)
-  if (!fontsLoaded && !fontTimeout) {
+  // On web, Poppins is preloaded with font-display: swap in CSS, so it starts immediately
+  // On native, wait for bundled fonts or 1s timeout
+  if (!isWeb && !fontsLoaded && !fontTimeout) {
     return (
       <SafeAreaProvider>
         <SplashScreen onFinish={() => setFontTimeout(true)} />

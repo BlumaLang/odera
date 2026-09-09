@@ -17,10 +17,48 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Staytup" />
     <meta name="msapplication-navbutton-color" content="#000000" />
-    <meta name="msapplication-TileColor" content="#000000" />
+    <!-- Instant Preload for Google Fonts Poppins with font-display: swap -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" />
 
     <!-- React Native Web Reset & Outline / Zoom Elimination -->
     <style id="staytup-pwa-styles">
+      @font-face {
+        font-family: 'Poppins_400Regular';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: local('Poppins'), local('Poppins-Regular');
+      }
+      @font-face {
+        font-family: 'Poppins_500Medium';
+        font-style: normal;
+        font-weight: 500;
+        font-display: swap;
+        src: local('Poppins Medium'), local('Poppins-Medium');
+      }
+      @font-face {
+        font-family: 'Poppins_600SemiBold';
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: local('Poppins SemiBold'), local('Poppins-SemiBold');
+      }
+      @font-face {
+        font-family: 'Poppins_700Bold';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: local('Poppins Bold'), local('Poppins-Bold');
+      }
+      @font-face {
+        font-family: 'Poppins_800ExtraBold';
+        font-style: normal;
+        font-weight: 800;
+        font-display: swap;
+        src: local('Poppins ExtraBold'), local('Poppins-ExtraBold');
+      }
       html, body {
         height: 100%;
         height: 100dvh;
@@ -168,6 +206,13 @@
           }).catch(function() {});
         });
       }
+
+      // Handle bfcache (Back-Forward Cache) page restoration gracefully
+      window.addEventListener('pageshow', function(e) {
+        if (e.persisted) {
+          window.dispatchEvent(new CustomEvent('staytup-bfcache-resume'));
+        }
+      });
 
       // Hide the HTML splash once React has rendered (MutationObserver watches #root)
       (function() {
