@@ -15,6 +15,8 @@ import {
   recordUserStream,
   saveCachedTrackImage,
   getCachedTrackImage,
+  getCollabPlaylistDetails,
+  addTrackToCollabPlaylist,
 } from "../services/firebase";
 import { getAccurateDeviceInfo } from "./ResponsiveContext";
 
@@ -27,6 +29,34 @@ try {
 
 const AudioContext = createContext(null);
 export const AudioPlaybackContext = createContext(null);
+
+// Auto-add played songs to blend playlists if not already present
+async function autoAddToBlendPlaylists(uid, track) {
+  if (!uid || !track?.videoId) return;
+  try {
+    const { ref: dbRef, get, child } = await import("firebase/database");
+    const { db } = await import("../services/firebase");
+    const userCollabsSnap = await get(child(dbRef(db), `users/${uid}/collab_playlists`));
+    if (!userCollabsSnap.exists()) return;
+    const collabIds = Object.keys(userCollabsSnap.val());
+    for (const collabId of collabIds) {
+      const plSnap = await get(child(dbRef(db), `collab_playlists/${collabId}`));
+      if (!plSnap.exists()) continue;
+      const pl = plSnap.val();
+      if (!pl.isBlend) continue;
+      const existingTracks = pl.tracks || [];
+      const alreadyAdded = existingTracks.some((t) => (t.videoId || t.id) === track.videoId);
+      if (!alreadyAdded) {
+        await addTrackToCollabPlaylist(collabId, {
+          ...track,
+          videoId: track.videoId,
+          addedAt: Date.now(),
+          blendSource: "auto",
+        });
+      }
+    }
+  } catch (_) {}
+}
 
 export function fisherYatesShuffle(arr) {
   if (!Array.isArray(arr)) return [];
@@ -1161,6 +1191,9 @@ const AudioProvider = ({ children }) => {
         trackTitle: sanitizedTrack.title,
         isPlaying: true,
       });
+
+      // Auto-add played song to blend playlists if not already present
+      autoAddToBlendPlaylists(uid, sanitizedTrack).catch(() => {});
     } catch (_) {}
 
     // Resolve proper 500x500 high-res image from Server / RTDB / Staytup API

@@ -588,17 +588,57 @@ export default function FriendsScreen({ onNavigate }) {
     });
   };
 
+  // Find existing blend playlist for a friend pair
+  const findExistingBlend = useCallback((friendUid) => {
+    if (!collabPlaylists || !currentUser?.uid) return null;
+    return collabPlaylists.find((pl) => {
+      if (!pl?.isBlend) return false;
+      const collabs = pl.collaborators || {};
+      const collabKeys = Object.keys(collabs);
+      // Check if both users are collaborators
+      const hasMe = collabKeys.some((k) => {
+        const c = collabs[k];
+        return (c?.uid || k) === currentUser.uid;
+      });
+      const hasFriend = collabKeys.some((k) => {
+        const c = collabs[k];
+        return (c?.uid || k) === friendUid;
+      });
+      return hasMe && hasFriend;
+    });
+  }, [collabPlaylists, currentUser?.uid]);
+
   const handleOpenBlend = async (friend) => {
     if (!friend?.uid || !getFriendBlend) return;
     setSelectedBlendFriend(friend);
     setIsLoadingBlend(true);
     setShowBlendModal(true);
     setCopiedBlendShare(false);
+
+    // Check if a blend playlist already exists for this friend pair
+    const existingBlend = findExistingBlend(friend.uid);
+    if (existingBlend) {
+      const matchPct = existingBlend.matchPercentage || existingBlend.matchPercentage || 85;
+      setBlendFriendsMap((prev) => ({ ...prev, [friend.uid]: matchPct }));
+      // Use existing playlist tracks if available
+      const existingTracks = existingBlend.tracks || [];
+      if (existingTracks.length > 0) {
+        setBlendResult({
+          matchPercentage: matchPct,
+          sharedSongsCount: existingTracks.filter((t) => t.blendSource === "both").length,
+          topVibe: "music styles",
+          tracks: existingTracks,
+          friend,
+          updatedAt: existingBlend.updatedAt,
+        });
+        setIsLoadingBlend(false);
+        return;
+      }
+    }
+
     try {
       const res = await getFriendBlend(friend.uid, friend);
       setBlendResult(res);
-      // NOTE: Do not auto-create or save blend here!
-      // The user must explicitly tap "Create Blend Playlist" inside the modal.
     } catch (err) {
       console.warn("Failed to calculate blend:", err);
     } finally {
@@ -618,44 +658,63 @@ export default function FriendsScreen({ onNavigate }) {
         videoId: t.videoId || t.video_id,
       }));
 
-      let created = null;
-      if (createCollabPlaylist) {
-        created = await createCollabPlaylist({
-          name: `Blend: ${myName} + ${friendName}`,
-          description: `${matchPct}% Music Match • Auto-curated daily shared blend`,
-          tracks: formattedTracks,
-          cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
-          collaborators: {
-            [currentUser?.uid]: true,
-            [selectedBlendFriend.uid]: true,
-          },
-          isBlend: true,
-        });
-      }
+      // Check if a blend already exists for this friend pair
+      const existingBlend = findExistingBlend(selectedBlendFriend.uid);
+      let activeCollabId;
 
-      const activeCollabId = created?.collabId || created?.playlist?.id || created?.id;
+      if (existingBlend) {
+        // Update existing blend playlist with new tracks
+        activeCollabId = existingBlend.collabId || existingBlend.id;
+        if (addTracksToCollab && formattedTracks.length > 0) {
+          // Get existing track IDs to avoid duplicates
+          const existingTrackIds = new Set((existingBlend.tracks || []).map((t) => t.videoId || t.id));
+          const newTracks = formattedTracks.filter((t) => !existingTrackIds.has(t.videoId));
+          if (newTracks.length > 0) {
+            await addTracksToCollab(activeCollabId, newTracks);
+          }
+        }
+        setBlendSuccessMsg("Blend playlist updated!");
+      } else {
+        // Create new blend playlist
+        let created = null;
+        if (createCollabPlaylist) {
+          created = await createCollabPlaylist({
+            name: `Blend: ${myName} + ${friendName}`,
+            description: `${matchPct}% Music Match • Auto-curated daily shared blend`,
+            tracks: formattedTracks,
+            cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
+            collaborators: {
+              [currentUser?.uid]: true,
+              [selectedBlendFriend.uid]: true,
+            },
+            isBlend: true,
+            matchPercentage: matchPct,
+          });
+        }
+        activeCollabId = created?.collabId || created?.playlist?.id || created?.id;
 
-      if (sendCollabInvite && selectedBlendFriend.uid) {
-        await sendCollabInvite(selectedBlendFriend.uid, {
-          collabId: activeCollabId,
-          playlistId: activeCollabId,
-          id: activeCollabId,
-          name: `Blend: ${myName} + ${friendName}`,
-          playlistName: `Blend: ${myName} + ${friendName}`,
-          tracks: formattedTracks,
-          tracksCount: formattedTracks.length,
-          cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
-          type: "blend",
-          matchPercentage: matchPct,
-          playlist: created?.playlist,
-        });
+        if (sendCollabInvite && selectedBlendFriend.uid) {
+          await sendCollabInvite(selectedBlendFriend.uid, {
+            collabId: activeCollabId,
+            playlistId: activeCollabId,
+            id: activeCollabId,
+            name: `Blend: ${myName} + ${friendName}`,
+            playlistName: `Blend: ${myName} + ${friendName}`,
+            tracks: formattedTracks,
+            tracksCount: formattedTracks.length,
+            cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
+            type: "blend",
+            matchPercentage: matchPct,
+            playlist: created?.playlist,
+          });
+        }
+        setBlendSuccessMsg("Collab Blend request sent!");
       }
 
       setBlendFriendsMap((prev) => ({
         ...prev,
         [selectedBlendFriend.uid]: matchPct,
       }));
-      setBlendSuccessMsg("Collab Blend request sent!");
       setTimeout(() => setBlendSuccessMsg(""), 4000);
     } catch (err) {
       console.warn("Failed to create blend playlist:", err);
@@ -1946,7 +2005,7 @@ export default function FriendsScreen({ onNavigate }) {
                     </View>
                   ) : null}
 
-                  {/* Actions Row: Play Blend + Share OR Create Blend Playlist */}
+                  {/* Actions Row: Play Blend + Share OR Create/Update Blend Playlist */}
                   {selectedBlendFriend && blendFriendsMap[selectedBlendFriend.uid] ? (
                     <View style={styles.blendActionButtonsRow}>
                       {blendResult.tracks?.length > 0 && (
