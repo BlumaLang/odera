@@ -12,3 +12,5 @@ services:
         value: 10000
       - key: SAAVN_API_BASE_URL
         value: https://staytup-api.onrender.com/api
+      - key: BLUMALANG_API_BASE
+        value: https://saavn.dev
