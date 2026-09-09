@@ -2476,20 +2476,20 @@ app.get(['/api/artists/:idOrName/songs', '/artists/:idOrName/songs', '/api/artis
         fetchSaavnJson(`/artists/${artistId}/songs?page=${subpage1}`).catch(() => null),
         fetchSaavnJson(`/artists/${artistId}/songs?page=${subpage2}`).catch(() => null),
         fetch(`https://www.jiosaavn.com/api.php?__call=artist.getArtistMoreSong&_format=json&_marker=0&api_version=4&ctx=web6dot0&artistId=${artistId}&page=${subpage1}&category=popularity&sort_order=desc&n=20`, {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          signal: AbortSignal.timeout(6000)
+          headers: JIOSAAVN_HEADERS,
+          signal: AbortSignal.timeout(8000)
         }).then(r => r.json()).catch(() => null),
         fetch(`https://www.jiosaavn.com/api.php?__call=artist.getArtistMoreSong&_format=json&_marker=0&api_version=4&ctx=web6dot0&artistId=${artistId}&page=${subpage2}&category=popularity&sort_order=desc&n=20`, {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          signal: AbortSignal.timeout(6000)
+          headers: JIOSAAVN_HEADERS,
+          signal: AbortSignal.timeout(8000)
         }).then(r => r.json()).catch(() => null),
       ];
 
       if (page === 0) {
         discographyPromises.push(
           fetch(`https://www.jiosaavn.com/api.php?__call=artist.getArtistPageDetails&_format=json&_marker=0&artistId=${artistId}`, {
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            signal: AbortSignal.timeout(6000)
+            headers: JIOSAAVN_HEADERS,
+            signal: AbortSignal.timeout(8000)
           }).then(r => r.json()).catch(() => null)
         );
       }
