@@ -361,7 +361,8 @@ app.get(['/api/health', '/health'], async (req, res) => {
   const fb = await checkFirebaseHealth();
   res.json({
     status: 'ok',
-    service: 'YouTube Music Server',
+    service: 'Staytup Music Server',
+    version: '2026.09.09-pure-saavn-v2',
     uptime: Math.round(process.uptime()),
     cacheSize: streamCache.size,
     firebase: fb.status,
