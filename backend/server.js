@@ -471,11 +471,22 @@ async function fetchSaavnJson(endpoint, retries = 2, timeoutMs = 10000) {
   throw lastError;
 }
 
+function decodeHtmlEntities(str) {
+  return String(str)
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#x27;/g, "'")
+    .replace(/&apos;/g, "'");
+}
+
 function normalizeSaavnSong(song, streamUrl = null) {
   if (!song || !song.id) return null;
   const rawId = String(song.id);
-  const title = (song.name || song.title || song.song || '').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&');
-  
+  const title = decodeHtmlEntities(song.name || song.title || song.song || '');
+
   let artist = '';
   if (song.more_info?.artistMap?.primary_artists && Array.isArray(song.more_info.artistMap.primary_artists) && song.more_info.artistMap.primary_artists.length > 0) {
     artist = song.more_info.artistMap.primary_artists.map(a => a.name).filter(Boolean).join(', ');
@@ -491,35 +502,35 @@ function normalizeSaavnSong(song, streamUrl = null) {
     artist = String(song.singers);
   } else if (song.subtitle) {
     const parts = String(song.subtitle).split(' - ');
-    artist = parts[0] || String(song.subtitle);
+    artist = decodeHtmlEntities(parts[0] || String(song.subtitle));
   } else if (song.artist) {
     artist = String(song.artist);
   }
 
-  // Album name
   const rawAlbum = song.more_info?.album || (typeof song.album === 'object' ? song.album?.name : song.album) || '';
-  const album = String(rawAlbum).replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&');
+  const album = decodeHtmlEntities(rawAlbum);
 
-  // Year & Language
   const year = String(song.year || song.more_info?.year || song.release_date?.slice(0, 4) || '');
   const language = String(song.language || song.more_info?.language || '');
 
-  // Exact original JioSaavn perma_url
   const permaUrl = String(song.perma_url || song.url || '');
 
-  // Artwork: use JioSaavn image, prefer 500x500 or largest available
   let artworkUrl = '';
   if (typeof song.image === 'string') {
     artworkUrl = song.image;
   } else if (Array.isArray(song.image) && song.image.length > 0) {
     const fiveHundred = song.image.find(img => img.quality === '500x500');
-    artworkUrl = fiveHundred?.url || song.image[song.image.length - 1]?.url || '';
+    const largest = song.image.reduce((best, img) => {
+      const size = parseInt(img.quality, 10) || 0;
+      const bestSize = parseInt(best.quality, 10) || 0;
+      return size > bestSize ? img : best;
+    }, song.image[0]);
+    artworkUrl = fiveHundred?.url || largest?.url || song.image[song.image.length - 1]?.url || '';
   }
   if (artworkUrl) {
     artworkUrl = artworkUrl.replace(/150x150\.jpg/g, '500x500.jpg').replace(/50x50\.jpg/g, '500x500.jpg');
   }
 
-  // Duration in seconds
   let duration = 0;
   if (song.more_info?.duration) {
     duration = Number(song.more_info.duration) || 0;
@@ -527,7 +538,6 @@ function normalizeSaavnSong(song, streamUrl = null) {
     duration = Number(song.duration) || 0;
   }
 
-  // If streamUrl not passed, check if song.downloadUrl exists
   let resolvedStream = streamUrl;
   if (!resolvedStream && Array.isArray(song.downloadUrl) && song.downloadUrl.length > 0) {
     const sorted = [...song.downloadUrl].sort((a, b) => (parseInt(b.quality, 10) || 0) - (parseInt(a.quality, 10) || 0));
@@ -537,7 +547,7 @@ function normalizeSaavnSong(song, streamUrl = null) {
   return {
     id: rawId,
     source: 'saavn',
-    videoId: rawId, // UI compatibility
+    videoId: rawId,
     video_id: rawId,
     title,
     artist: artist || 'Staytup Artist',
@@ -554,7 +564,7 @@ function normalizeSaavnSong(song, streamUrl = null) {
   };
 }
 
-// 1. Saavn Search Route (Direct Staytup API + JioSaavn search, no YouTube fallback)
+// 1. Saavn Search Route (Direct JioSaavn API + Staytup API fallback)
 app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
   try {
     const query = req.query.q ? String(req.query.q).trim() : (req.query.query ? String(req.query.query).trim() : '');
@@ -565,101 +575,134 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       return res.json({ query: '', count: 0, results: [], tracks: [], has_more: false });
     }
 
-    // 1. Direct JioSaavn Link Detection (e.g. https://www.jiosaavn.com/song/girls/GxsPVQZABV0)
+    // Direct JioSaavn Link Detection
     if (query.includes('jiosaavn.com/song/') || query.includes('jiosaavn.com/album/')) {
       try {
         const linkData = await fetchSaavnJson(`/songs?link=${encodeURIComponent(query)}`);
         if (linkData && linkData.success && Array.isArray(linkData.data) && linkData.data.length > 0) {
           const matched = linkData.data.map(s => normalizeSaavnSong(s, null)).filter(Boolean);
           if (matched.length > 0) {
-            return res.json({
-              query,
-              count: matched.length,
-              results: matched,
-              tracks: matched,
-              has_more: false
-            });
+            return res.json({ query, total: matched.length, count: matched.length, offset: 0, page: 1, results: matched, tracks: matched, has_more: false });
           }
         }
       } catch (_) {}
     }
 
     const isExplicitInstrumental = /instrumental|karaoke|bgm/i.test(query);
+    const encodedQuery = encodeURIComponent(query);
 
-    // 2. Fetch concurrently from JioSaavn Direct API across multiple subpages & Staytup API
-    // (JioSaavn caps results at ~40 per page regardless of n=500, so querying subpages yields the full catalog)
+    // Primary: Direct JioSaavn search.getResults API (v1) — most reliable source of real songs
     const baseSubpage = (page - 1) * 3 + 1;
-    const searchPromises = [
-      fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query)}&p=${baseSubpage}&n=50`, {
+    const directV1Promises = [
+      fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodedQuery}&p=${baseSubpage}&n=50`, {
         headers: JIOSAAVN_HEADERS,
-        signal: AbortSignal.timeout(10000)
-      }).then(r => r.json()).catch(() => null),
-      fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query)}&p=${baseSubpage + 1}&n=50`, {
+        signal: AbortSignal.timeout(12000)
+      }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }).catch(e => { console.warn(`[saavn-search] Direct v1 p${baseSubpage} failed: ${e.message}`); return null; }),
+      fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodedQuery}&p=${baseSubpage + 1}&n=50`, {
         headers: JIOSAAVN_HEADERS,
-        signal: AbortSignal.timeout(10000)
-      }).then(r => r.json()).catch(() => null),
-      fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query)}&p=${baseSubpage + 2}&n=50`, {
+        signal: AbortSignal.timeout(12000)
+      }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }).catch(e => { console.warn(`[saavn-search] Direct v1 p${baseSubpage + 1} failed: ${e.message}`); return null; }),
+      fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodedQuery}&p=${baseSubpage + 2}&n=50`, {
         headers: JIOSAAVN_HEADERS,
-        signal: AbortSignal.timeout(10000)
-      }).then(r => r.json()).catch(() => null),
-      fetchSaavnJson(`/search/songs?query=${encodeURIComponent(query)}&page=${page}&limit=${limit}`).catch(() => null),
+        signal: AbortSignal.timeout(12000)
+      }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }).catch(e => { console.warn(`[saavn-search] Direct v1 p${baseSubpage + 2} failed: ${e.message}`); return null; }),
     ];
 
-    if (!/songs?$/i.test(query)) {
-      searchPromises.push(
-        fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query + ' songs')}&p=${baseSubpage}&n=50`, {
-          headers: JIOSAAVN_HEADERS,
-          signal: AbortSignal.timeout(10000)
-        }).then(r => r.json()).catch(() => null),
-        fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodeURIComponent(query + ' songs')}&p=${baseSubpage + 1}&n=50`, {
-          headers: JIOSAAVN_HEADERS,
-          signal: AbortSignal.timeout(10000)
-        }).then(r => r.json()).catch(() => null)
-      );
-    }
+    // Secondary: Staytup proxy API (fallback when direct JioSaavn is blocked)
+    const proxyPromises = [
+      fetchSaavnJson(`/search/songs?query=${encodedQuery}&page=${page}&limit=${Math.min(limit, 50)}`).catch(e => { console.warn(`[saavn-search] Proxy failed: ${e.message}`); return null; }),
+    ];
 
-    if (page === 1) {
-      searchPromises.push(
-        fetch(`https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&query=${encodeURIComponent(query)}`, {
-          headers: JIOSAAVN_HEADERS,
-          signal: AbortSignal.timeout(6000)
-        }).then(r => r.json()).catch(() => null)
-      );
-    }
+    // Supplementary: query with " songs" suffix for broader matches
+    const extraPromises = !/songs?$/i.test(query) ? [
+      fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${encodedQuery}%20songs&p=${baseSubpage}&n=50`, {
+        headers: JIOSAAVN_HEADERS,
+        signal: AbortSignal.timeout(12000)
+      }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }).catch(() => null),
+    ] : [];
 
-    const searchResponses = await Promise.allSettled(searchPromises);
+    // Autocomplete for page 1 (supplementary)
+    const autoPromises = page === 1 ? [
+      fetch(`https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&query=${encodedQuery}`, {
+        headers: JIOSAAVN_HEADERS,
+        signal: AbortSignal.timeout(6000)
+      }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }).catch(() => null),
+    ] : [];
+
+    const allPromises = [...directV1Promises, ...proxyPromises, ...extraPromises, ...autoPromises];
+    const searchResponses = await Promise.allSettled(allPromises);
+
     let rawSongs = [];
+    let directCount = 0;
+    let proxyCount = 0;
 
     for (const res of searchResponses) {
-      if (res.status === 'fulfilled' && res.value) {
-        if (Array.isArray(res.value?.results)) {
-          rawSongs.push(...res.value.results);
-        } else if (Array.isArray(res.value?.data?.results)) {
-          rawSongs.push(...res.value.data.results);
-        } else if (Array.isArray(res.value?.songs?.data)) {
-          rawSongs.push(...res.value.songs.data);
-        }
+      if (res.status !== 'fulfilled' || !res.value) continue;
+      const val = res.value;
+
+      // v1 format: { results: [...], total: N }
+      if (Array.isArray(val.results)) {
+        const hasSaavnData = val.results.length > 0 && (val.results[0]?.more_info?.artistMap || val.results[0]?.perma_url);
+        rawSongs.push(...val.results);
+        if (hasSaavnData) directCount += val.results.length;
+      }
+      // proxy format: { success: true, data: { results: [...] } }
+      else if (val.success && Array.isArray(val.data?.results)) {
+        rawSongs.push(...val.data.results);
+        proxyCount += val.data.results.length;
+      }
+      // v2 format: { data: { results: [...] } }
+      else if (Array.isArray(val.data?.results)) {
+        rawSongs.push(...val.data.results);
+      }
+      // autocomplete format: { songs: { data: [...] } }
+      else if (Array.isArray(val.songs?.data)) {
+        rawSongs.push(...val.songs.data);
       }
     }
 
+    console.log(`[saavn-search] q="${query}" raw=${rawSongs.length} (direct=${directCount} proxy=${proxyCount})`);
+
     let normalized = rawSongs.map(s => normalizeSaavnSong(s, null)).filter(Boolean);
 
-    // Filter out instrumental/karaoke noise from Saavn unless user specifically asked for it
+    // Aggressive garbage/instrumental filter
     if (!isExplicitInstrumental) {
       normalized = normalized.filter(s => {
         const t = (s.title || '').toLowerCase();
         const a = (s.artist || '').toLowerCase();
-        if (/instrumental|karaoke|originally\s*performed|\(lofi\)|\(hardstyle\)|\(nightcore\)|\(techno\)|arcade\s*player|8-bit|16-bit/i.test(t) ||
-            /zzang\s*karaoke|8-bit\s*arcade|arcade\s*player/i.test(a)) {
+        const alb = (s.album || '').toLowerCase();
+        const lang = (s.language || '').toLowerCase();
+
+        // Filter by language field — proxy API often marks garbage as "instrumental"
+        if (lang === 'instrumental') return false;
+
+        // Filter by title patterns
+        if (/(?:^|\s)instrumental|(?:\s|^)karaoke|originally\s*performed|\(lofi\)|\(hardstyle\)|\(nightcore\)|\(techno\)|8-bit|16-bit|hypertechno|sped\s*up|slowed\s*(?:&|and)?\s*reverb|emulation|(?:cover|remake|version)\s*(?:by|of)/i.test(t)) {
           return false;
         }
+
+        // Filter by artist patterns (known garbage producers)
+        if (/zzang\s*karaoke|8-bit\s*arcade|arcade\s*player|hyperave|turborave|basston|très\s*moyen|lost\s*soul|th3\s*darp|lauren\s*st\s*james/i.test(a)) {
+          return false;
+        }
+
+        // Filter by album patterns
+        if (/soundtrack.*vol|impossible\s*game/i.test(alb)) {
+          return false;
+        }
+
         return true;
       });
     }
 
-    // Relevance scoring: guarantees exact song title matches rank at the top
+    // Relevance scoring
     const qLower = query.toLowerCase().trim();
     const qWords = qLower.split(/\s+/).filter(w => w.length > 1);
+
+    // Detect if query is primarily an artist name (vs a song title)
+    // Heuristic: if query has >= 2 words and doesn't contain common song-title words, treat as artist search
+    const songTitleWords = /(?:official|music|video|audio|lyrics|song|album|live|remix|feat|ft|version)/i;
+    const qIsArtistName = qWords.length >= 2 && !songTitleWords.test(query);
 
     function cleanSearchTitle(t) {
       return (t || '')
@@ -677,6 +720,7 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       const artistLower = (t.artist || '').toLowerCase();
       let score = 0;
 
+      // Title match scoring
       if (titleLower === qLower) score += 300;
       else if (cleanT === qLower) score += 200;
       else if (cleanT.startsWith(qLower + ' ') || titleLower.startsWith(qLower + ' ')) score += 120;
@@ -690,6 +734,14 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       else if (artistLower.includes(qLower)) score += 180;
       else if (qWords.length > 0 && qWords.every(w => artistLower.includes(w))) score += 120;
       else if (qWords.some(w => artistLower.includes(w))) score += 40;
+
+      // Penalty for artist-name queries when artist doesn't match at all
+      if (qIsArtistName) {
+        const anyWordInArtist = qWords.some(w => artistLower.includes(w));
+        if (!anyWordInArtist) {
+          score -= 150;
+        }
+      }
 
       if (!isExplicitInstrumental) {
         if (/instrumental|karaoke|cover|remake|orchestra/i.test(titleLower) || /instrumental/i.test(t.album || '')) {
@@ -727,7 +779,6 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       if (finalTracks.length >= limit) break;
     }
 
-    // Determine total count from JioSaavn response if present
     let totalCount = finalTracks.length;
     for (const r of searchResponses) {
       if (r.status === 'fulfilled' && r.value) {
@@ -737,6 +788,8 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
         }
       }
     }
+
+    console.log(`[saavn-search] q="${query}" final=${finalTracks.length} total=${totalCount}`);
 
     res.json({
       query,
@@ -749,7 +802,7 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       has_more: normalized.length >= 10 || finalTracks.length >= 15
     });
   } catch (err) {
-    console.error('Saavn search error:', err.message);
+    console.error('[saavn-search] Error:', err.message, err.stack);
     res.status(500).json({ error: 'Search failed', details: err.message, results: [], tracks: [] });
   }
 });
