@@ -709,6 +709,12 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       if (finalTracks.length >= limit) break;
     }
 
+    const providersDebug = searchResponses.map((r, idx) => ({
+      idx,
+      status: r.status,
+      count: r.status === 'fulfilled' ? (r.value?.results?.length || r.value?.data?.results?.length || r.value?.songs?.data?.length || (Array.isArray(r.value) ? r.value.length : 0)) : (r.reason?.message || 'failed')
+    }));
+
     res.json({
       query,
       offset,
@@ -716,7 +722,8 @@ app.get(['/api/search/saavn', '/search/saavn'], async (req, res) => {
       count: finalTracks.length,
       results: finalTracks,
       tracks: finalTracks,
-      has_more: normalized.length >= 10 || finalTracks.length >= 15
+      has_more: normalized.length >= 10 || finalTracks.length >= 15,
+      debug_providers: providersDebug
     });
   } catch (err) {
     console.error('Saavn search error:', err.message);
