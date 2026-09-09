@@ -24,6 +24,7 @@ import ArtistModal from "./ArtistModal";
 import LikeConfetti from "./LikeConfetti";
 import { resolveLocalArtistImage } from "../theme/artistImages";
 import { useResponsive } from "../context/ResponsiveContext";
+import { registerBackAction } from "../services/navigation";
 
 const { width, height } = Dimensions.get("window");
 // Larger artwork size for better visual impact
@@ -228,6 +229,70 @@ export default function FullPlayerModal() {
 
   const [showPreviousQueue, setShowPreviousQueue] = useState(false);
   const lyricsListRef = useRef(null);
+
+  // Android hardware back button handler stack
+  useEffect(() => {
+    if (selectedArtistForModal) {
+      return registerBackAction(() => {
+        setSelectedArtistForModal(null);
+        return true;
+      });
+    }
+  }, [selectedArtistForModal]);
+
+  useEffect(() => {
+    if (showArtistPickerModal) {
+      return registerBackAction(() => {
+        setShowArtistPickerModal(false);
+        return true;
+      });
+    }
+  }, [showArtistPickerModal]);
+
+  useEffect(() => {
+    if (showSleepModal) {
+      return registerBackAction(() => {
+        setShowSleepModal(false);
+        return true;
+      });
+    }
+  }, [showSleepModal]);
+
+  useEffect(() => {
+    if (showAddToPlaylist) {
+      return registerBackAction(() => {
+        setShowAddToPlaylist(false);
+        return true;
+      });
+    }
+  }, [showAddToPlaylist]);
+
+  useEffect(() => {
+    if (showQueue) {
+      return registerBackAction(() => {
+        setShowQueue(false);
+        return true;
+      });
+    }
+  }, [showQueue]);
+
+  useEffect(() => {
+    if (showLyrics) {
+      return registerBackAction(() => {
+        setShowLyrics(false);
+        return true;
+      });
+    }
+  }, [showLyrics]);
+
+  useEffect(() => {
+    if (isFullPlayerVisible) {
+      return registerBackAction(() => {
+        setFullPlayerVisible(false);
+        return true;
+      });
+    }
+  }, [isFullPlayerVisible, setFullPlayerVisible]);
 
   const handleArtistPress = () => {
     const artists = parseTrackArtists(currentTrack?.artist);

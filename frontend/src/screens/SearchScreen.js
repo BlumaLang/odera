@@ -23,6 +23,7 @@ import { resolveLocalArtistImage } from "../theme/artistImages";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
 import { useAudioPlayback } from "../context/AudioContext";
+import { registerBackAction } from "../services/navigation";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useUser } from "../context/UserContext";
 import {
@@ -278,6 +279,19 @@ export default function SearchScreen() {
   const requestVersionRef = useRef(0);
   const searchTimeoutRef = useRef(null);
   const searchInputRef = useRef(null);
+
+  // Android hardware back action for search
+  useEffect(() => {
+    if (isSearchActive || query) {
+      return registerBackAction(() => {
+        setIsSearchActive(false);
+        setQuery("");
+        setResults([]);
+        setHasSearched(false);
+        return true;
+      });
+    }
+  }, [isSearchActive, query]);
 
   // Dynamically fetch official high-res photos for featured artists
   useEffect(() => {

@@ -17,6 +17,7 @@ import { useResponsive } from "../context/ResponsiveContext";
 import { useUser } from "../context/UserContext";
 import LikeConfetti from "./LikeConfetti";
 import CreatePlaylistModal from "./CreatePlaylistModal";
+import { registerBackAction } from "../services/navigation";
 
 export default function AddToPlaylistModal({ visible, onClose, track, onSuccess }) {
   const { isDesktop, isTablet } = useResponsive();
@@ -54,6 +55,24 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
   const [statusMessage, setStatusMessage] = useState("");
   const [confettiPlaylistId, setConfettiPlaylistId] = useState(null);
   const [showBannerConfetti, setShowBannerConfetti] = useState(false);
+
+  useEffect(() => {
+    if (showCreateModal) {
+      return registerBackAction(() => {
+        setShowCreateModal(false);
+        return true;
+      });
+    }
+  }, [showCreateModal]);
+
+  useEffect(() => {
+    if (visible && onClose) {
+      return registerBackAction(() => {
+        onClose();
+        return true;
+      });
+    }
+  }, [visible, onClose]);
 
   useEffect(() => {
     if (visible) {

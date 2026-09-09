@@ -164,7 +164,8 @@ export default function OnboardingScreen() {
   const [username, setUsername] = useState(
     userProfile?.username &&
       userProfile.username !== "Staytup Listener" &&
-      userProfile.username !== "Music Lover"
+      userProfile.username !== "Music Lover" &&
+      !userProfile.username.startsWith("listener_")
       ? userProfile.username
       : ""
   );

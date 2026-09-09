@@ -1,7 +1,7 @@
 // Auto-generated on each build. Do NOT edit manually.
 // To update, run: node scripts/bump-version.js
 const APP_VERSION = "2.8.1";
-const BUILD_NUMBER = "1788968108";
-const BUILD_DATE = "2026-09-09 15:35:08 UTC";
+const BUILD_NUMBER = "1788972162";
+const BUILD_DATE = "2026-09-09 16:42:42 UTC";
 
 export { APP_VERSION, BUILD_NUMBER, BUILD_DATE };

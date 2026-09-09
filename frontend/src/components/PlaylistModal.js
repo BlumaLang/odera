@@ -17,6 +17,7 @@ import SongCard from "./SongCard";
 import AddToPlaylistModal from "./AddToPlaylistModal";
 import CreatePlaylistModal from "./CreatePlaylistModal";
 import ImportPlaylistLinkModal from "./ImportPlaylistLinkModal";
+import { registerBackAction } from "../services/navigation";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
 import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
@@ -145,6 +146,70 @@ export default function PlaylistModal({
   const [copiedLink, setCopiedLink] = useState(false);
   const [invitingUids, setInvitingUids] = useState(new Set());
   const [enablingCollab, setEnablingCollab] = useState(false);
+
+  // Android hardware back button handler stack
+  useEffect(() => {
+    if (showRenameModal) {
+      return registerBackAction(() => {
+        setShowRenameModal(false);
+        return true;
+      });
+    }
+  }, [showRenameModal]);
+
+  useEffect(() => {
+    if (showDeleteModal) {
+      return registerBackAction(() => {
+        setShowDeleteModal(false);
+        return true;
+      });
+    }
+  }, [showDeleteModal]);
+
+  useEffect(() => {
+    if (showCollabDeleteModal) {
+      return registerBackAction(() => {
+        setShowCollabDeleteModal(false);
+        return true;
+      });
+    }
+  }, [showCollabDeleteModal]);
+
+  useEffect(() => {
+    if (showCollabModal) {
+      return registerBackAction(() => {
+        setShowCollabModal(false);
+        return true;
+      });
+    }
+  }, [showCollabModal]);
+
+  useEffect(() => {
+    if (showImportModal) {
+      return registerBackAction(() => {
+        setShowImportModal(false);
+        return true;
+      });
+    }
+  }, [showImportModal]);
+
+  useEffect(() => {
+    if (addToPlaylistTrack) {
+      return registerBackAction(() => {
+        setAddToPlaylistTrack(null);
+        return true;
+      });
+    }
+  }, [addToPlaylistTrack]);
+
+  useEffect(() => {
+    if (visible && onClose) {
+      return registerBackAction(() => {
+        onClose();
+        return true;
+      });
+    }
+  }, [visible, onClose]);
 
   // Sync state with playlist prop and refresh details from backend
   useEffect(() => {

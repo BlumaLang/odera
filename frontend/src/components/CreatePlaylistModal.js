@@ -16,6 +16,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { useResponsive } from "../context/ResponsiveContext";
+import { registerBackAction } from "../services/navigation";
 
 export const PLAYLIST_PRESET_COVERS = [
   { id: "preset1", label: "Cover 1", url: "https://i.pinimg.com/736x/0a/0c/1e/0a0c1e61f487c99518f1cf2aff8df6b8.jpg" },
@@ -106,6 +107,15 @@ export default function CreatePlaylistModal({
       setLoading(false);
     }
   }, [visible, initialName, initialCover]);
+
+  useEffect(() => {
+    if (visible && onClose) {
+      return registerBackAction(() => {
+        onClose();
+        return true;
+      });
+    }
+  }, [visible, onClose]);
 
   const handleSave = async () => {
     const trimmed = playlistName.trim();

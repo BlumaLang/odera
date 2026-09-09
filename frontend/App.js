@@ -33,6 +33,7 @@ import DesktopPlayerBar from "./src/components/DesktopPlayerBar";
 import ChangelogModal from "./src/components/ChangelogModal";
 import { BUILD_NUMBER, APP_VERSION } from "./src/config/version";
 import { colors, fonts } from "./src/theme/colors";
+import { handleGlobalBack, registerBackAction } from "./src/services/navigation";
 
 const Tab = createBottomTabNavigator();
 
@@ -127,6 +128,7 @@ function updateBrowserPathname(page) {
 
 // Spotify-style Bottom Navigation Bar
 function SpotifyBottomTabBar({ activeTab, onSelectTab, fixedTabBarHeight, bottomLift }) {
+  const { pendingRequestsCount } = useUser() || {};
   const tabs = [
     { id: "Home", label: "Home", icon: "home", iconOutline: "home-outline" },
     { id: "Search", label: "Search", icon: "search", iconOutline: "search-outline" },
@@ -159,11 +161,20 @@ function SpotifyBottomTabBar({ activeTab, onSelectTab, fixedTabBarHeight, bottom
             style={styles.spotifyTabItem}
             activeOpacity={0.7}
           >
-            <Ionicons
-              name={isFocused ? tab.icon : tab.iconOutline}
-              size={22}
-              color={isFocused ? activeColor : inactiveColor}
-            />
+            <View style={styles.tabIconContainer}>
+              <Ionicons
+                name={isFocused ? tab.icon : tab.iconOutline}
+                size={22}
+                color={isFocused ? activeColor : inactiveColor}
+              />
+              {tab.id === "Friends" && pendingRequestsCount > 0 && (
+                <View style={styles.tabRedBadge}>
+                  <Text style={styles.tabRedBadgeText}>
+                    {pendingRequestsCount > 99 ? "99+" : pendingRequestsCount}
+                  </Text>
+                </View>
+              )}
+            </View>
             <Text
               style={[
                 styles.spotifyTabLabel,
@@ -203,7 +214,12 @@ function MainTabs() {
     if (Platform.OS !== "android") return;
 
     const onHardwareBack = () => {
-      // If we are not on Home, navigate to previous tab in history or to Home
+      // 1. Check if any topmost modal/sheet is open in the navigation stack
+      if (handleGlobalBack()) {
+        return true; // handled by topmost modal
+      }
+
+      // 2. If no modal is open, navigate to previous tab in history or to Home
       if (tabHistoryRef.current.length > 1) {
         tabHistoryRef.current.pop(); // remove current
         const prevTab = tabHistoryRef.current[tabHistoryRef.current.length - 1] || "Home";
@@ -285,7 +301,7 @@ function MainTabs() {
 
   // Phone Form Factor (< 768px): Spotify-Style Mobile Layout with Lifted Bottom Nav + Flush MiniPlayer
   const safeBottom = insets?.bottom ? Math.min(insets.bottom, 24) : 0;
-  const bottomLift = safeBottom > 0 ? safeBottom + 4 : 10;
+  const bottomLift = safeBottom > 0 ? safeBottom + 4 : (Platform.OS === "android" ? 14 : 10);
   const fixedTabBarHeight = 56 + bottomLift;
   const miniPlayerBottom = fixedTabBarHeight;
 
@@ -340,19 +356,22 @@ function AppContent() {
 
   const [showUpdateChangelog, setShowUpdateChangelog] = useState(false);
 
-  // Android back gesture: close profile modal first if open
+  // Profile modal back handler registration
   useEffect(() => {
-    if (Platform.OS !== "android") return;
-    const onBack = () => {
-      if (isProfileOpen) {
+    if (isProfileOpen) {
+      return registerBackAction(() => {
         closeProfile();
         return true;
-      }
-      return false;
-    };
-    const sub = BackHandler.addEventListener("hardwareBackPress", onBack);
-    return () => sub.remove();
+      });
+    }
   }, [isProfileOpen, closeProfile]);
+
+  // Reset window scroll offset on login
+  useEffect(() => {
+    if (isLoggedIn && Platform.OS === "web" && typeof window !== "undefined") {
+      window.scrollTo(0, 0);
+    }
+  }, [isLoggedIn]);
 
   // Enforce pure black PWA theme-color and status bar on Web and Mobile browsers
   useEffect(() => {
@@ -560,5 +579,31 @@ const styles = StyleSheet.create({
     marginTop: 3,
     textAlign: "center",
     letterSpacing: 0.1,
+  },
+  tabIconContainer: {
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tabRedBadge: {
+    position: "absolute",
+    top: -4,
+    right: -8,
+    backgroundColor: "#FF3B30",
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#000000",
+  },
+  tabRedBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    fontFamily: fonts.bold,
+    lineHeight: 11,
+    textAlign: "center",
   },
 });

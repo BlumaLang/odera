@@ -25,6 +25,7 @@ import { useResponsive } from "../context/ResponsiveContext";
 import ArtistModal from "../components/ArtistModal";
 import SongCard from "../components/SongCard";
 import ChangelogModal from "../components/ChangelogModal";
+import { registerBackAction } from "../services/navigation";
 import { auth, getOrCreateReferralCode, getReferralCount } from "../services/firebase";
 import { APP_VERSION, BUILD_NUMBER, BUILD_DATE } from "../config/version";
 
@@ -155,6 +156,88 @@ export default function ProfileScreen({ visible, onClose }) {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
+
+  // Android hardware back button handler stack
+  useEffect(() => {
+    if (selectedArtistForModal) {
+      return registerBackAction(() => {
+        setSelectedArtistForModal(null);
+        return true;
+      });
+    }
+  }, [selectedArtistForModal]);
+
+  useEffect(() => {
+    if (showEditProfileModal) {
+      return registerBackAction(() => {
+        setShowEditProfileModal(false);
+        return true;
+      });
+    }
+  }, [showEditProfileModal]);
+
+  useEffect(() => {
+    if (showReferralModal) {
+      return registerBackAction(() => {
+        setShowReferralModal(false);
+        return true;
+      });
+    }
+  }, [showReferralModal]);
+
+  useEffect(() => {
+    if (showChangelogModal) {
+      return registerBackAction(() => {
+        setShowChangelogModal(false);
+        return true;
+      });
+    }
+  }, [showChangelogModal]);
+
+  useEffect(() => {
+    if (showChannelsModal) {
+      return registerBackAction(() => {
+        setShowChannelsModal(false);
+        return true;
+      });
+    }
+  }, [showChannelsModal]);
+
+  useEffect(() => {
+    if (showTermsModal) {
+      return registerBackAction(() => {
+        setShowTermsModal(false);
+        return true;
+      });
+    }
+  }, [showTermsModal]);
+
+  useEffect(() => {
+    if (showPrivacyModal) {
+      return registerBackAction(() => {
+        setShowPrivacyModal(false);
+        return true;
+      });
+    }
+  }, [showPrivacyModal]);
+
+  useEffect(() => {
+    if (showDisclaimerModal) {
+      return registerBackAction(() => {
+        setShowDisclaimerModal(false);
+        return true;
+      });
+    }
+  }, [showDisclaimerModal]);
+
+  useEffect(() => {
+    if (visible && onClose) {
+      return registerBackAction(() => {
+        onClose();
+        return true;
+      });
+    }
+  }, [visible, onClose]);
 
   // Settings state
   const [audioQuality, setAudioQuality] = useState("Lossless (320 kbps)");

@@ -713,6 +713,19 @@ export async function saveLastPlayback(uid, track, queue) {
       queue: queue || [],
       updatedAt: new Date().toISOString(),
     });
+    // Mirror last played track to publicUsers so friends search & suggested users see real track info
+    if (track) {
+      const publicPlaybackRef = ref(db, `publicUsers/${uid}/lastPlayback`);
+      await set(publicPlaybackRef, {
+        track: {
+          videoId: track.videoId || track.video_id || track.id,
+          title: track.title || "",
+          artist: track.artist || "",
+          artwork_url: track.artwork_url || track.thumbnail || "",
+        },
+        updatedAt: new Date().toISOString(),
+      }).catch(() => {});
+    }
   } catch (error) {
     console.warn("Failed to save last playback to RTDB:", error.message);
   }
@@ -2507,6 +2520,92 @@ export function subscribeCollabPlaylists(uid, callback) {
     activeListeners.forEach((unsub) => unsub());
     activeListeners.clear();
   };
+}
+
+/**
+ * Send a collaborative playlist / blend invitation to a friend
+ */
+export async function sendCollabInvite(senderUid, senderProfile = {}, targetUid, playlistData = {}) {
+  if (!senderUid || !targetUid) return { success: false, error: "Missing sender or target" };
+  try {
+    const res = await createCollabPlaylist(senderUid, senderProfile, playlistData);
+    if (!res.success) return res;
+
+    const collabId = res.collabId;
+    const inviteId = `invite_${collabId}`;
+
+    const inviteRecord = {
+      id: inviteId,
+      collabId,
+      playlistName: playlistData.name || "Collaborative Blend",
+      description: playlistData.description || "",
+      coverUrl: playlistData.cover_url || playlistData.preview_artwork || "",
+      matchPercentage: playlistData.matchPercentage || null,
+      type: playlistData.type || (playlistData.name?.startsWith("Blend:") ? "blend" : "collab"),
+      senderUid,
+      senderName: senderProfile?.username || senderProfile?.displayName || "Friend",
+      senderAvatar: senderProfile?.avatar || "initial",
+      senderAvatarColor: senderProfile?.avatarColor || "#1DB954",
+      createdAt: Date.now(),
+    };
+
+    await set(ref(db, `users/${targetUid}/collab_invites/${collabId}`), inviteRecord);
+    return { success: true, collabId, playlist: res.playlist };
+  } catch (err) {
+    console.warn("sendCollabInvite error:", err);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Subscribe to incoming collaborative playlist / blend invitations
+ */
+export function subscribeCollabInvites(uid, callback) {
+  if (!uid || typeof callback !== "function") return () => {};
+  const invitesRef = ref(db, `users/${uid}/collab_invites`);
+  const unsub = onValue(invitesRef, (snap) => {
+    if (snap.exists()) {
+      const data = snap.val() || {};
+      const list = Object.values(data).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      callback(list);
+    } else {
+      callback([]);
+    }
+  });
+  return () => {
+    try {
+      off(invitesRef, "value", unsub);
+    } catch (_) {}
+  };
+}
+
+/**
+ * Accept a collaborative playlist invitation
+ */
+export async function acceptCollabInvite(uid, userProfile = {}, collabId) {
+  if (!uid || !collabId) return { success: false };
+  try {
+    const res = await joinCollabPlaylist(uid, userProfile, collabId);
+    await set(ref(db, `users/${uid}/collab_invites/${collabId}`), null);
+    return res;
+  } catch (err) {
+    console.warn("acceptCollabInvite error:", err);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Decline a collaborative playlist invitation
+ */
+export async function declineCollabInvite(uid, collabId) {
+  if (!uid || !collabId) return { success: false };
+  try {
+    await set(ref(db, `users/${uid}/collab_invites/${collabId}`), null);
+    return { success: true };
+  } catch (err) {
+    console.warn("declineCollabInvite error:", err);
+    return { success: false, error: err.message };
+  }
 }
 
 // ─── BLEND & MUSIC COMPATIBILITY RADAR ──────────────────────────────────────

@@ -24,6 +24,7 @@ import {
 } from "../services/firebase";
 import PlaylistModal from "../components/PlaylistModal";
 import CreatePlaylistModal from "../components/CreatePlaylistModal";
+import { registerBackAction } from "../services/navigation";
 
 /**
  * Robust UserAvatar component using Dicebear Toon Head default preset
@@ -76,7 +77,7 @@ function UserAvatar({ user, size = 44, fontSize = 15, style }) {
       ) : (
         <Image
           source={{ uri: avatarUri }}
-          style={{ width: "100%", height: "100%" }}
+          style={{ width: size, height: size }}
           resizeMode="cover"
           onError={() => setImgError(true)}
         />
@@ -101,6 +102,11 @@ export default function FriendsScreen({ onNavigate }) {
     collabPlaylists,
     createCollabPlaylist,
     getFriendBlend,
+    collabInvites,
+    sendCollabInvite,
+    acceptCollabInvite,
+    declineCollabInvite,
+    pendingRequestsCount,
   } = useUser() || {};
 
   const { playTrack, currentTrack, isPlaying, togglePlayPause } = useAudioPlayback();
@@ -123,6 +129,7 @@ export default function FriendsScreen({ onNavigate }) {
   const [blendFriendsMap, setBlendFriendsMap] = useState({});
   const [copiedBlendShare, setCopiedBlendShare] = useState(false);
   const [isCreatingBlend, setIsCreatingBlend] = useState(false);
+  const [blendSuccessMsg, setBlendSuccessMsg] = useState("");
   const searchInputRef = useRef(null);
 
   // Collab Playlist states
@@ -195,6 +202,64 @@ export default function FriendsScreen({ onNavigate }) {
       isMounted = false;
     };
   }, [selectedUserProfile?.uid]);
+
+  // Android hardware back button handler registrations
+  useEffect(() => {
+    if (selectedUserProfile) {
+      return registerBackAction(() => {
+        setSelectedUserProfile(null);
+        return true;
+      });
+    }
+  }, [selectedUserProfile]);
+
+  useEffect(() => {
+    if (showBlendModal) {
+      return registerBackAction(() => {
+        setShowBlendModal(false);
+        setSelectedBlendFriend(null);
+        setBlendResult(null);
+        return true;
+      });
+    }
+  }, [showBlendModal]);
+
+  useEffect(() => {
+    if (friendToDelete) {
+      return registerBackAction(() => {
+        setFriendToDelete(null);
+        return true;
+      });
+    }
+  }, [friendToDelete]);
+
+  useEffect(() => {
+    if (showCollabCreateModal) {
+      return registerBackAction(() => {
+        setShowCollabCreateModal(false);
+        return true;
+      });
+    }
+  }, [showCollabCreateModal]);
+
+  useEffect(() => {
+    if (selectedCollabPlaylist) {
+      return registerBackAction(() => {
+        setSelectedCollabPlaylist(null);
+        return true;
+      });
+    }
+  }, [selectedCollabPlaylist]);
+
+  useEffect(() => {
+    if (isSearchActive) {
+      return registerBackAction(() => {
+        setIsSearchActive(false);
+        setSearchQuery("");
+        return true;
+      });
+    }
+  }, [isSearchActive]);
 
   const userInitial = (userProfile?.username?.[0] || currentUser?.displayName?.[0] || "U").toUpperCase();
   const avatarIcon = userProfile?.avatar && userProfile.avatar !== "initial" ? userProfile.avatar : null;
@@ -549,12 +614,29 @@ export default function FriendsScreen({ onNavigate }) {
         videoId: t.videoId || t.video_id,
       }));
 
+      let created = null;
       if (createCollabPlaylist) {
-        await createCollabPlaylist({
+        created = await createCollabPlaylist({
           name: `Blend: ${myName} + ${friendName}`,
           description: `${matchPct}% Music Match • Auto-curated daily shared blend`,
           tracks: formattedTracks,
           cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
+          collaborators: {
+            [currentUser?.uid]: true,
+            [selectedBlendFriend.uid]: true,
+          },
+          isBlend: true,
+        });
+      }
+
+      if (sendCollabInvite && selectedBlendFriend.uid) {
+        await sendCollabInvite(selectedBlendFriend.uid, {
+          playlistId: created?.id || `blend_${Date.now()}`,
+          playlistName: `Blend: ${myName} + ${friendName}`,
+          tracksCount: formattedTracks.length,
+          cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
+          type: "blend",
+          matchPercentage: matchPct,
         });
       }
 
@@ -562,6 +644,8 @@ export default function FriendsScreen({ onNavigate }) {
         ...prev,
         [selectedBlendFriend.uid]: matchPct,
       }));
+      setBlendSuccessMsg("Collab Blend request sent!");
+      setTimeout(() => setBlendSuccessMsg(""), 4000);
     } catch (err) {
       console.warn("Failed to create blend playlist:", err);
     } finally {
@@ -765,10 +849,10 @@ export default function FriendsScreen({ onNavigate }) {
                 <Text style={[styles.tabText, activeTab === "requests" && styles.activeTabText]}>
                   Requests
                 </Text>
-                {incomingRequests.length > 0 && (
+                {(incomingRequests.length + (collabInvites?.length || 0)) > 0 && (
                   <View style={[styles.tabPillBadge, activeTab === "requests" && styles.tabPillBadgeActive]}>
                     <Text style={[styles.tabPillBadgeText, activeTab === "requests" && styles.tabPillBadgeTextActive]}>
-                      {incomingRequests.length}
+                      {incomingRequests.length + (collabInvites?.length || 0)}
                     </Text>
                   </View>
                 )}
@@ -851,8 +935,12 @@ export default function FriendsScreen({ onNavigate }) {
                       <TouchableOpacity
                         key={`search_item_${u.uid}`}
                         style={styles.userRowItem}
-                        onPress={() => setSelectedUserProfile(u)}
-                        activeOpacity={0.7}
+                        onPress={() => {
+                          if (u.isFriend) {
+                            setSelectedUserProfile(u);
+                          }
+                        }}
+                        activeOpacity={u.isFriend ? 0.7 : 1}
                       >
                         <View style={styles.avatarWrapper}>
                           <UserAvatar user={u} size={46} fontSize={16} />
@@ -877,10 +965,20 @@ export default function FriendsScreen({ onNavigate }) {
                                 {activity.track.title}{activity.track.artist ? ` • ${activity.track.artist}` : ""}
                               </Text>
                             </View>
-                          ) : activity?.track ? (
-                            <Text style={styles.userHandleSubText} numberOfLines={1}>
-                              {activity.track.title}{activity.track.artist ? ` • ${activity.track.artist}` : ""}
-                            </Text>
+                          ) : (activity?.track || u.lastPlayback?.track || u.lastPlayback || u.lastPlayed) ? (
+                            (() => {
+                              const s = activity?.track || u.lastPlayback?.track || u.lastPlayback || u.lastPlayed;
+                              const sTitle = s?.title || s?.name || "";
+                              const sArtist = s?.artist || s?.subtitle || "";
+                              return (
+                                <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+                                  <Ionicons name="musical-note" size={12} color="#888888" style={{ marginRight: 4 }} />
+                                  <Text style={styles.userHandleSubText} numberOfLines={1}>
+                                    {sTitle}{sArtist ? ` • ${sArtist}` : ""}
+                                  </Text>
+                                </View>
+                              );
+                            })()
                           ) : (
                             <Text style={styles.userHandleSubText} numberOfLines={1}>
                               @{formatUsername(u.username || "")}
@@ -1005,10 +1103,20 @@ export default function FriendsScreen({ onNavigate }) {
                                     </Text>
                                   ) : null}
                                 </View>
-                              ) : activity?.track ? (
-                                <Text style={styles.userHandleSubText} numberOfLines={1}>
-                                  {activity.track.title}{activity.track.artist ? ` • ${activity.track.artist}` : ""}
-                                </Text>
+                              ) : (activity?.track || friend.lastPlayback?.track || friend.lastPlayback || friend.lastPlayed) ? (
+                                (() => {
+                                  const s = activity?.track || friend.lastPlayback?.track || friend.lastPlayback || friend.lastPlayed;
+                                  const sTitle = s?.title || s?.name || "";
+                                  const sArtist = s?.artist || s?.subtitle || "";
+                                  return (
+                                    <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+                                      <Ionicons name="musical-note" size={12} color="#888888" style={{ marginRight: 4 }} />
+                                      <Text style={styles.userHandleSubText} numberOfLines={1}>
+                                        {sTitle}{sArtist ? ` • ${sArtist}` : ""}
+                                      </Text>
+                                    </View>
+                                  );
+                                })()
                               ) : (
                                 <Text style={styles.userHandleSubText} numberOfLines={1}>
                                   Staytup Listener
@@ -1139,64 +1247,112 @@ export default function FriendsScreen({ onNavigate }) {
                   )}
                 </View>
               ) : activeTab === "requests" ? (
-                /* ── REQUESTS TAB (Incoming Requests Only) ── */
+                /* ── REQUESTS TAB (Incoming Requests & Collab Invites) ── */
                 <View style={styles.sectionBlock}>
-                  {incomingRequests.length > 0 ? (
-                    <View style={styles.unifiedUserList}>
-                      {incomingRequests.map((req) => (
-                        <TouchableOpacity
-                          key={`req_${req.uid}`}
-                          style={styles.userRowItem}
-                          onPress={() => setSelectedUserProfile(req)}
-                          activeOpacity={0.7}
-                        >
-                          <UserAvatar user={req} size={46} fontSize={16} />
-
-                          <View style={styles.userInfoWrap}>
-                            <Text style={styles.userNameText} numberOfLines={1}>
-                              {req.username}
-                            </Text>
-                            <Text style={styles.userHandleSubText} numberOfLines={1}>
-                              @{req.username}
-                            </Text>
+                  {collabInvites && collabInvites.length > 0 && (
+                    <View style={{ marginBottom: 20 }}>
+                      <Text style={[styles.sectionHeaderTitle, { fontSize: 13, color: "#1DB954", marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.6 }]}>
+                        Blend & Collab Invites ({collabInvites.length})
+                      </Text>
+                      <View style={styles.unifiedUserList}>
+                        {collabInvites.map((inv) => (
+                          <View key={`collab_inv_${inv.inviteId || inv.id}`} style={styles.userRowItem}>
+                            <UserAvatar user={{ username: inv.senderName || "Friend", avatar: inv.senderAvatar }} size={46} fontSize={16} />
+                            <View style={styles.userInfoWrap}>
+                              <Text style={styles.userNameText} numberOfLines={1}>
+                                {inv.playlistName || "Collab Playlist"}
+                              </Text>
+                              <Text style={styles.userHandleSubText} numberOfLines={1}>
+                                Invited by @{inv.senderName || "Friend"}{inv.matchPercentage ? ` • ${inv.matchPercentage}% Match` : ""}
+                              </Text>
+                            </View>
+                            <View style={styles.requestActionsRow}>
+                              <TouchableOpacity
+                                style={styles.acceptBtn}
+                                onPress={() => acceptCollabInvite && acceptCollabInvite(inv.inviteId || inv.id, inv.playlistId)}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="checkmark" size={14} color="#000000" style={{ marginRight: 4 }} />
+                                <Text style={styles.acceptBtnText}>Join</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={styles.declineCloseBtn}
+                                onPress={() => declineCollabInvite && declineCollabInvite(inv.inviteId || inv.id)}
+                                activeOpacity={0.8}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              >
+                                <Ionicons name="close" size={18} color="#888888" />
+                              </TouchableOpacity>
+                            </View>
                           </View>
-
-                          <View style={styles.requestActionsRow}>
-                            <TouchableOpacity
-                              style={styles.acceptBtn}
-                              onPress={(e) => {
-                                e.stopPropagation();
-                                handleAcceptRequest(req);
-                              }}
-                              activeOpacity={0.8}
-                            >
-                              <Ionicons name="checkmark" size={14} color="#000000" style={{ marginRight: 4 }} />
-                              <Text style={styles.acceptBtnText}>Accept</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={styles.declineCloseBtn}
-                              onPress={(e) => {
-                                e.stopPropagation();
-                                handleDeclineRequest(req.uid);
-                              }}
-                              activeOpacity={0.8}
-                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                              accessibilityLabel="Decline request"
-                            >
-                              <Ionicons name="close" size={18} color="#888888" />
-                            </TouchableOpacity>
-                          </View>
-                        </TouchableOpacity>
-                      ))}
+                        ))}
+                      </View>
                     </View>
-                  ) : (
+                  )}
+
+                  {incomingRequests.length > 0 ? (
+                    <View>
+                      {collabInvites && collabInvites.length > 0 && (
+                        <Text style={[styles.sectionHeaderTitle, { fontSize: 13, color: colors.textMuted, marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.6 }]}>
+                          Friend Requests ({incomingRequests.length})
+                        </Text>
+                      )}
+                      <View style={styles.unifiedUserList}>
+                        {incomingRequests.map((req) => (
+                          <TouchableOpacity
+                            key={`req_${req.uid}`}
+                            style={styles.userRowItem}
+                            onPress={() => setSelectedUserProfile(req)}
+                            activeOpacity={0.7}
+                          >
+                            <UserAvatar user={req} size={46} fontSize={16} />
+
+                            <View style={styles.userInfoWrap}>
+                              <Text style={styles.userNameText} numberOfLines={1}>
+                                {req.username}
+                              </Text>
+                              <Text style={styles.userHandleSubText} numberOfLines={1}>
+                                @{req.username}
+                              </Text>
+                            </View>
+
+                            <View style={styles.requestActionsRow}>
+                              <TouchableOpacity
+                                style={styles.acceptBtn}
+                                onPress={(e) => {
+                                  e.stopPropagation();
+                                  handleAcceptRequest(req);
+                                }}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="checkmark" size={14} color="#000000" style={{ marginRight: 4 }} />
+                                <Text style={styles.acceptBtnText}>Accept</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={styles.declineCloseBtn}
+                                onPress={(e) => {
+                                  e.stopPropagation();
+                                  handleDeclineRequest(req.uid);
+                                }}
+                                activeOpacity={0.8}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                accessibilityLabel="Decline request"
+                              >
+                                <Ionicons name="close" size={18} color="#888888" />
+                              </TouchableOpacity>
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+                  ) : (!collabInvites || collabInvites.length === 0) ? (
                     /* Center-oriented empty state with subtle gray icon for requests */
                     <View style={styles.emptyCenterState}>
                       <Ionicons name="mail-unread-outline" size={48} color="#444444" style={styles.emptyCenterIcon} />
                       <Text style={styles.emptyCenterTitle}>No friend requests</Text>
                       <Text style={styles.emptyCenterSub}>You're all caught up.</Text>
                     </View>
-                  )}
+                  ) : null}
                 </View>
               ) : (
                 /* ── COLLAB PLAYLISTS TAB ── */
@@ -1762,6 +1918,12 @@ export default function FriendsScreen({ onNavigate }) {
                   <Text style={styles.blendMatchDescription}>
                     You and {selectedBlendFriend?.username} are in sync! Sharing {blendResult.topVibe || "music styles"}.
                   </Text>
+
+                  {blendSuccessMsg ? (
+                    <View style={{ backgroundColor: "#1DB95420", borderColor: "#1DB954", borderWidth: 1, paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, marginBottom: 16, alignSelf: "center" }}>
+                      <Text style={{ color: "#1DB954", fontFamily: fonts.medium, fontSize: 13 }}>{blendSuccessMsg}</Text>
+                    </View>
+                  ) : null}
 
                   {/* Actions Row: Play Blend + Share OR Create Blend Playlist */}
                   {selectedBlendFriend && blendFriendsMap[selectedBlendFriend.uid] ? (
@@ -3258,9 +3420,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   blendScoreNumber: {
-    fontFamily: fonts.black || fonts.bold,
+    fontFamily: fonts.bold || "Poppins_700Bold",
     fontSize: 48,
-    fontWeight: "900",
     color: "#1DB954",
     letterSpacing: -1.5,
   },

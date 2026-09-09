@@ -44,6 +44,10 @@ import {
   removeCollaboratorFromCollabPlaylist as fbRemoveCollaboratorFromCollabPlaylist,
   deleteCollabPlaylist as fbDeleteCollabPlaylist,
   calculateFriendBlend as fbCalculateFriendBlend,
+  sendCollabInvite as fbSendCollabInvite,
+  subscribeCollabInvites as fbSubscribeCollabInvites,
+  acceptCollabInvite as fbAcceptCollabInvite,
+  declineCollabInvite as fbDeclineCollabInvite,
   loginOrCreatePinUser,
   getLocalSession,
   saveLocalSession,
@@ -136,6 +140,7 @@ export const UserProvider = ({ children }) => {
   const [friends, setFriends] = useState([]);
   const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
   const [collabPlaylists, setCollabPlaylists] = useState([]);
+  const [collabInvites, setCollabInvites] = useState([]);
   const [isLoadingUser, setIsLoadingUser] = useState(true);
   const [isPremium, setIsPremium] = useState(false);
   const [premiumPlan, setPremiumPlan] = useState("Free");
@@ -152,6 +157,7 @@ export const UserProvider = ({ children }) => {
     let unsubscribeFriends = null;
     let unsubscribeRequests = null;
     let unsubscribeCollab = null;
+    let unsubscribeCollabInvites = null;
 
     const isPendingRedirect =
       typeof window !== "undefined" &&
@@ -270,6 +276,14 @@ export const UserProvider = ({ children }) => {
         unsubscribeRequests();
         unsubscribeRequests = null;
       }
+      if (unsubscribeCollab) {
+        unsubscribeCollab();
+        unsubscribeCollab = null;
+      }
+      if (unsubscribeCollabInvites) {
+        unsubscribeCollabInvites();
+        unsubscribeCollabInvites = null;
+      }
 
       if (firebaseUser) {
         setCurrentUser(firebaseUser);
@@ -302,16 +316,14 @@ export const UserProvider = ({ children }) => {
           saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
         }
 
-        // Pre-populate initial profile so UI has basic info using Dicebear Toon Head
-        const cleanName =
-          firebaseUser.displayName ||
-          (firebaseUser.email ? firebaseUser.email.split("@")[0] : "Staytup Listener");
-        const defaultDicebear = getDicebearToonHeadAvatar(cleanName);
+        // Pre-populate initial profile with clean handle (DO NOT leak Gmail personal name as username!)
+        const defaultHandle = `listener_${(firebaseUser.uid || "user").slice(0, 5).toLowerCase()}`;
+        const defaultDicebear = getDicebearToonHeadAvatar(defaultHandle);
 
         const initialProfile = {
-          username: cleanName,
+          username: defaultHandle,
           avatar: defaultDicebear,
-          avatarColor: getDeterministicAvatarColor(firebaseUser.uid || cleanName),
+          avatarColor: getDeterministicAvatarColor(firebaseUser.uid || defaultHandle),
           languages: [],
           favoriteArtists: [],
         };
@@ -448,6 +460,10 @@ export const UserProvider = ({ children }) => {
         unsubscribeCollab = fbSubscribeCollabPlaylists(firebaseUser.uid, (collabs) => {
           setCollabPlaylists(collabs || []);
         });
+
+        unsubscribeCollabInvites = fbSubscribeCollabInvites(firebaseUser.uid, (invs) => {
+          setCollabInvites(invs || []);
+        });
       } else {
         // Check for active local PIN or QR session before clearing state
         let storedSession = null;
@@ -492,6 +508,9 @@ export const UserProvider = ({ children }) => {
           unsubscribeCollab = fbSubscribeCollabPlaylists(restoredUser.uid, (collabs) => {
             setCollabPlaylists(collabs || []);
           });
+          unsubscribeCollabInvites = fbSubscribeCollabInvites(restoredUser.uid, (invs) => {
+            setCollabInvites(invs || []);
+          });
           return;
         }
 
@@ -516,6 +535,7 @@ export const UserProvider = ({ children }) => {
         setFriends([]);
         setFriendRequests({ incoming: [], outgoing: [] });
         setCollabPlaylists([]);
+        setCollabInvites([]);
         setIsLoadingUser(false);
       }
     });
@@ -1037,15 +1057,26 @@ export const UserProvider = ({ children }) => {
     return await fbRemoveCollaboratorFromCollabPlaylist(collabId, targetUid);
   };
 
-  const deleteCollab = async (collabId) => {
-    setCollabPlaylists((prev) => (prev || []).filter((p) => (p.id || p.collabId) !== collabId));
-    return await fbDeleteCollabPlaylist(collabId);
+  const sendCollabInvite = async (targetUid, data) => {
+    const uid = currentUser?.uid;
+    if (!uid) return { success: false, error: "Not authenticated" };
+    return await fbSendCollabInvite(uid, userProfile, targetUid, data);
   };
 
-  const getFriendBlend = async (friendUid, friendProfile) => {
-    const uid = currentUser?.uid || DEFAULT_USER_ID;
-    return await fbCalculateFriendBlend(uid, userProfile, friendUid, friendProfile);
+  const acceptCollabInvite = async (collabId) => {
+    const uid = currentUser?.uid;
+    if (!uid) return { success: false };
+    return await fbAcceptCollabInvite(uid, userProfile, collabId);
   };
+
+  const declineCollabInvite = async (collabId) => {
+    const uid = currentUser?.uid;
+    if (!uid) return { success: false };
+    return await fbDeclineCollabInvite(uid, collabId);
+  };
+
+  const pendingRequestsCount =
+    (friendRequests?.incoming?.length || 0) + (collabInvites?.length || 0);
 
   return (
     <UserContext.Provider
@@ -1099,8 +1130,13 @@ export const UserProvider = ({ children }) => {
         cancelFriendRequest,
         removeFriend,
         searchUsers,
-        // Collaborative Playlists
+        // Collaborative Playlists & Blend Invites
         collabPlaylists,
+        collabInvites,
+        sendCollabInvite,
+        acceptCollabInvite,
+        declineCollabInvite,
+        pendingRequestsCount,
         createCollabPlaylist: createCollab,
         joinCollabPlaylist: joinCollab,
         leaveCollabPlaylist: leaveCollab,

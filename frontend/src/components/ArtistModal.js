@@ -22,6 +22,7 @@ import { useResponsive } from "../context/ResponsiveContext";
 import { resolveLocalArtistImage } from "../theme/artistImages";
 import SongCard from "./SongCard";
 import AddToPlaylistModal from "./AddToPlaylistModal";
+import { registerBackAction } from "../services/navigation";
 
 const { width, height } = Dimensions.get("window");
 const PAGE_SIZE = 20;
@@ -105,6 +106,24 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
 
   const isFav = isFavoriteArtist(cleanName);
   const currentTrackId = currentTrack?.videoId;
+
+  useEffect(() => {
+    if (addToPlaylistTrack) {
+      return registerBackAction(() => {
+        setAddToPlaylistTrack(null);
+        return true;
+      });
+    }
+  }, [addToPlaylistTrack]);
+
+  useEffect(() => {
+    if (visible && onClose) {
+      return registerBackAction(() => {
+        onClose();
+        return true;
+      });
+    }
+  }, [visible, onClose]);
 
   useEffect(() => {
     if (initialPhoto) {
