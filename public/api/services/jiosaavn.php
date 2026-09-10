@@ -236,7 +236,7 @@ class JioSaavnService {
     
     // ==================== ARTISTS ====================
     
-    public static function getArtistSongs($artistId, $page = 1, $limit = 20) {
+    public static function getArtistSongs($artistId, $page = 1, $limit = 20, $artistName = null) {
         $page = max(1, (int)$page);
         $limit = max(1, min(50, (int)$limit));
         
@@ -259,7 +259,7 @@ class JioSaavnService {
         }
         
         $topSongsCount = (int)($data['topSongsCount'] ?? count($topSongs));
-        $artistName = $artist['name'] ?? $artistId;
+        $artistName = $artistName ?? $artist['name'] ?? $artistId;
         
         // Step 3: For page 1, return top songs. For subsequent pages, use search API.
         if ($page === 1) {

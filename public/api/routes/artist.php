@@ -71,6 +71,7 @@ class ArtistRoutes {
         
         $page = (int)(getQueryParam('page', 1));
         $limit = (int)(getQueryParam('limit', 20));
+        $originalName = $artistId;
         
         // If not a numeric ID, search for the artist first to get the ID
         if (!ctype_digit($artistId)) {
@@ -80,7 +81,7 @@ class ArtistRoutes {
             }
         }
         
-        $results = JioSaavnService::getArtistSongs($artistId, $page, $limit);
+        $results = JioSaavnService::getArtistSongs($artistId, $page, $limit, $originalName);
         sendJson($results);
     }
     
