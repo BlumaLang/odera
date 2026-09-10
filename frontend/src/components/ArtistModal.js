@@ -27,7 +27,7 @@ import { registerBackAction } from "../services/navigation";
 import { getHighResArtistImage } from "../utils/imageUtils";
 
 const { width, height } = Dimensions.get("window");
-const PAGE_SIZE = 30;
+const PAGE_SIZE = 10;
 
 // In-memory module cache for artist info and songs to prevent re-fetching and flicker
 const artistDataCache = new Map();
@@ -563,7 +563,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
           ListEmptyComponent={emptyComponent}
           renderItem={renderItem}
           onEndReached={handleLoadMore}
-          onEndReachedThreshold={0.8}
+          onEndReachedThreshold={1.5}
           style={styles.scrollView}
           contentContainerStyle={[styles.scrollContent, (isDesktop || isTablet) && styles.desktopContent]}
           showsVerticalScrollIndicator={false}

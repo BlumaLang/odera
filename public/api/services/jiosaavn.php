@@ -243,7 +243,7 @@ class JioSaavnService {
         // Step 1: Get artist page details for top songs and artist info
         $data = self::callApi('artist.getArtistPageDetails', [
             'artistId' => $artistId,
-            'p'        => $page,
+            'p'        => 1,
             'n'        => $limit,
         ]);
         
@@ -259,82 +259,54 @@ class JioSaavnService {
         }
         
         $topSongsCount = (int)($data['topSongsCount'] ?? count($topSongs));
-        
-        // Step 3: If we have fewer top songs than requested, or need more pages,
-        // use search as fallback to get additional songs
-        $allTracks = $topSongs;
         $artistName = $artist['name'] ?? $artistId;
         
-        // Calculate how many songs we already have from top songs
-        $topSongsTotal = $topSongsCount > 0 ? $topSongsCount : count($topSongs);
-        
-        // If the API returned all top songs in one go (common case), 
-        // use search to get more songs for pagination
-        if ($topSongsTotal > 0 && count($topSongs) >= $topSongsTotal && $page > 1) {
-            // For pages beyond the first, use search to find more songs
-            $searchOffset = ($page - 1) * $limit;
+        // Step 3: For page 1, return top songs. For subsequent pages, use search API.
+        if ($page === 1) {
+            // Return top songs for first page
+            $allTracks = $topSongs;
+            
+            // If we have fewer top songs than limit, try search for more
+            if (count($allTracks) < $limit) {
+                $searchData = self::callApi('search.getResults', [
+                    'q' => $artistName . ' songs',
+                    'p' => 1,
+                    'n' => 50,
+                ]);
+                
+                if (!empty($searchData['results'])) {
+                    $searchTracks = self::filterSearchByArtist($searchData['results'], $artistName, $topSongs);
+                    $remaining = $limit - count($allTracks);
+                    $allTracks = array_merge($allTracks, array_slice($searchTracks, 0, $remaining));
+                }
+            }
+            
+            $hasMore = ($topSongsCount > count($allTracks)) || count($allTracks) >= $limit;
+        } else {
+            // For pages beyond the first, use search API to get more songs
+            // Fetch a larger batch and paginate through it
+            $searchPage = 1;
+            $searchLimit = 100; // Fetch 100 results at a time from search
+            
             $searchData = self::callApi('search.getResults', [
                 'q' => $artistName . ' songs',
-                'p' => 1,
-                'n' => $searchOffset + $limit,
+                'p' => $searchPage,
+                'n' => $searchLimit,
             ]);
             
+            $allTracks = [];
             if (!empty($searchData['results'])) {
-                $searchTracks = [];
-                foreach ($searchData['results'] as $song) {
-                    if (($song['type'] ?? '') === 'song') {
-                        $normalized = self::normalizeTrack($song);
-                        // Only include songs that match this artist
-                        $songArtist = strtolower($normalized['artist'] ?? '');
-                        $targetArtist = strtolower($artistName);
-                        if (strpos($songArtist, $targetArtist) !== false || 
-                            strpos($targetArtist, $songArtist) !== false) {
-                            $searchTracks[] = $normalized;
-                        }
-                    }
-                }
+                $searchTracks = self::filterSearchByArtist($searchData['results'], $artistName, []);
                 
-                // Deduplicate against top songs
-                $topIds = array_column($topSongs, 'videoId');
-                $newTracks = array_filter($searchTracks, function($t) use ($topIds) {
-                    return !in_array($t['videoId'], $topIds);
-                });
-                
-                // Slice for the requested page
-                $pageTracks = array_slice($newTracks, $searchOffset, $limit);
-                $allTracks = $pageTracks;
+                // Calculate offset for this page
+                // Page 2 starts after top songs, so offset = (page - 2) * limit
+                $offset = ($page - 2) * $limit;
+                $allTracks = array_slice($searchTracks, $offset, $limit);
             }
-        } elseif ($page === 1 && count($topSongs) < $limit) {
-            // First page has fewer songs than limit, try search for more
-            $searchData = self::callApi('search.getResults', [
-                'q' => $artistName . ' songs',
-                'p' => 1,
-                'n' => $limit * 2,
-            ]);
             
-            if (!empty($searchData['results'])) {
-                $searchTracks = [];
-                foreach ($searchData['results'] as $song) {
-                    if (($song['type'] ?? '') === 'song') {
-                        $normalized = self::normalizeTrack($song);
-                        $songArtist = strtolower($normalized['artist'] ?? '');
-                        $targetArtist = strtolower($artistName);
-                        if (strpos($songArtist, $targetArtist) !== false || 
-                            strpos($targetArtist, $songArtist) !== false) {
-                            $searchTracks[] = $normalized;
-                        }
-                    }
-                }
-                
-                // Deduplicate and merge
-                $topIds = array_column($topSongs, 'videoId');
-                $newTracks = array_filter($searchTracks, function($t) use ($topIds) {
-                    return !in_array($t['videoId'], $topIds);
-                });
-                
-                // Combine top songs + additional search results
-                $allTracks = array_merge($topSongs, array_slice($newTracks, 0, $limit - count($topSongs)));
-            }
+            // Check if there are more songs
+            $totalSearchTracks = isset($searchTracks) ? count($searchTracks) : 0;
+            $hasMore = count($allTracks) >= $limit && ($totalSearchTracks > $offset + $limit || $searchLimit >= $searchLimit);
         }
         
         // Ensure we don't exceed limit
@@ -343,10 +315,48 @@ class JioSaavnService {
         }
         
         // Determine has_more: if we got a full page, there might be more
-        // If we got fewer than limit, we've reached the end
         $hasMore = count($allTracks) >= $limit;
         
-        // Additional check: if topSongsCount is available and we haven't fetched all
+        return [
+            'tracks'   => $allTracks,
+            'results'  => $allTracks,
+            'has_more' => $hasMore,
+            'artist'   => $artist,
+            'total'    => max($topSongsCount, count($allTracks)),
+        ];
+    }
+    
+    /**
+     * Filter search results to only include songs by the target artist
+     */
+    private static function filterSearchByArtist($results, $artistName, $excludeTracks = []) {
+        $filtered = [];
+        $excludeIds = array_column($excludeTracks, 'videoId');
+        $targetArtist = strtolower($artistName);
+        
+        foreach ($results as $song) {
+            if (($song['type'] ?? '') !== 'song') continue;
+            
+            $normalized = self::normalizeTrack($song);
+            $tid = $normalized['videoId'] ?? '';
+            
+            // Skip if already in exclude list
+            if ($tid && in_array($tid, $excludeIds)) continue;
+            
+            // Check if song artist matches target artist
+            $songArtist = strtolower($normalized['artist'] ?? '');
+            $songTitle = strtolower($normalized['title'] ?? '');
+            
+            // Match if artist name appears in the song's artist field or title
+            if (strpos($songArtist, $targetArtist) !== false || 
+                strpos($targetArtist, $songArtist) !== false ||
+                strpos($songTitle, $targetArtist) !== false) {
+                $filtered[] = $normalized;
+            }
+        }
+        
+        return $filtered;
+    }
         if ($topSongsTotal > 0 && $page * $limit < $topSongsTotal) {
             $hasMore = true;
         }
