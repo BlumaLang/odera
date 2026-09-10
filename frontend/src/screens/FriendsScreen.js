@@ -3400,7 +3400,7 @@ const styles = StyleSheet.create({
   collabCardCoverWrap: {
     width: 60,
     height: 60,
-    borderRadius: 30,
+    borderRadius: 8,
     overflow: "hidden",
     position: "relative",
     backgroundColor: "#202020",
@@ -3415,7 +3415,7 @@ const styles = StyleSheet.create({
   collabCardCover: {
     width: "100%",
     height: "100%",
-    borderRadius: 30,
+    borderRadius: 8,
   },
   collabCoverFallback: {
     alignItems: "center",
@@ -3423,7 +3423,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#1e1e1e",
     width: "100%",
     height: "100%",
-    borderRadius: 30,
+    borderRadius: 8,
   },
   collabPlayingOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -4059,7 +4059,7 @@ const styles = StyleSheet.create({
   skeletonCollabCoverWrap: {
     width: 60,
     height: 60,
-    borderRadius: 30,
+    borderRadius: 8,
     overflow: "hidden",
     flexShrink: 0,
   },
