@@ -1679,25 +1679,27 @@ export default function FriendsScreen({ onNavigate }) {
                             activeOpacity={0.75}
                           >
                             {/* Playlist Cover */}
-                            <View style={[
-                              styles.collabCardCoverWrap,
-                              (pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(pl.name || ""))) && {
-                                borderColor: "#8B5CF6",
-                                borderWidth: 2,
-                              }
-                            ]}>
-                              {coverUrl ? (
-                                <Image source={{ uri: getHighResArtwork(coverUrl) || coverUrl }} style={styles.collabCardCover} resizeMode="cover" />
-                              ) : (
-                                <View style={[styles.collabCardCover, styles.collabCoverFallback]}>
-                                  <Ionicons name="musical-notes" size={26} color={colors.primary} />
-                                </View>
-                              )}
-                              {isThisPlaylistPlaying && isPlaying && (
-                                <View style={styles.collabPlayingOverlay}>
-                                  <MaterialCommunityIcons name="waveform" size={18} color="#1DB954" />
-                                </View>
-                              )}
+                            <View style={styles.collabCoverOuter}>
+                              <View style={[
+                                styles.collabCardCoverWrap,
+                                (pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(pl.name || ""))) && {
+                                  borderColor: "#8B5CF6",
+                                  borderWidth: 2,
+                                }
+                              ]}>
+                                {coverUrl ? (
+                                  <Image source={{ uri: getHighResArtwork(coverUrl) || coverUrl }} style={styles.collabCardCover} resizeMode="cover" />
+                                ) : (
+                                  <View style={[styles.collabCardCover, styles.collabCoverFallback]}>
+                                    <Ionicons name="musical-notes" size={26} color={colors.primary} />
+                                  </View>
+                                )}
+                                {isThisPlaylistPlaying && isPlaying && (
+                                  <View style={styles.collabPlayingOverlay}>
+                                    <MaterialCommunityIcons name="waveform" size={18} color="#1DB954" />
+                                  </View>
+                                )}
+                              </View>
                               {(pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(pl.name || ""))) && (
                                 <View style={styles.blendTagOverlay}>
                                   <Ionicons name="flash" size={9} color="#FFFFFF" />
@@ -3404,6 +3406,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#202020",
     flexShrink: 0,
   },
+  collabCoverOuter: {
+    position: "relative",
+    width: 60,
+    height: 60,
+    flexShrink: 0,
+  },
   collabCardCover: {
     width: "100%",
     height: "100%",
@@ -3425,16 +3433,17 @@ const styles = StyleSheet.create({
   },
   blendTagOverlay: {
     position: "absolute",
-    bottom: 0,
-    right: 0,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    top: -4,
+    right: -4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: "#8B5CF6",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
     borderColor: "#141414",
+    zIndex: 10,
   },
   collabCardInfo: {
     flex: 1,
