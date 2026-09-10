@@ -54,6 +54,7 @@ import {
   removeLocalSession,
   generateAutoPlaylist as fbGenerateAutoPlaylist,
   syncAvatarToFriends,
+  syncProfileToFriends,
   saveFollowedArtists as fbSaveFollowedArtists,
   subscribeFollowedArtists as fbSubscribeFollowedArtists,
 } from "../services/firebase";
@@ -836,14 +837,8 @@ export const UserProvider = ({ children }) => {
         user_id: uid,
         ...updatedProfile,
       }).catch((e) => console.warn("Update profile sync error:", e.message));
-      // Sync avatar changes to all friends' stored copies
-      if (cleanUpdates.avatar || cleanUpdates.avatarColor) {
-        syncAvatarToFriends(
-          uid,
-          updatedProfile.avatar,
-          updatedProfile.avatarColor
-        ).catch(() => {});
-      }
+      // Sync profile changes (username, avatar, etc.) to all friends instantly
+      syncProfileToFriends(uid, updatedProfile).catch(() => {});
     } catch (err) {
       console.warn("Error updating profile in Firebase:", err);
     }

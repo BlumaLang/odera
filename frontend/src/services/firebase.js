@@ -2068,6 +2068,33 @@ export async function syncAvatarToFriends(uid, avatar, avatarColor) {
   }
 }
 
+export async function syncProfileToFriends(uid, profile) {
+  if (!uid || !profile) return;
+  try {
+    const snap = await get(ref(db, `users/${uid}/friends`));
+    if (!snap.exists()) return;
+    const friends = snap.val();
+    const updates = {};
+    for (const [friendUid, _data] of Object.entries(friends)) {
+      if (profile.username) {
+        updates[`users/${friendUid}/friends/${uid}/username`] = profile.username;
+      }
+      if (profile.displayName || profile.name) {
+        updates[`users/${friendUid}/friends/${uid}/displayName`] = profile.displayName || profile.name;
+      }
+      if (profile.avatar) {
+        updates[`users/${friendUid}/friends/${uid}/avatar`] = profile.avatar;
+      }
+      if (profile.avatarColor) {
+        updates[`users/${friendUid}/friends/${uid}/avatarColor`] = profile.avatarColor;
+      }
+    }
+    await import("firebase/database").then(({ update }) => update(ref(db), updates));
+  } catch (err) {
+    console.warn("Failed to sync profile to friends:", err.message);
+  }
+}
+
 const SEARCH_AVATAR_BG_COLORS = [
   "#8C52FF", // Amethyst
   "#2EBDD7", // Cyan
