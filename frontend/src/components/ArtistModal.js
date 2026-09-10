@@ -147,7 +147,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
   const [hasMore, setHasMore] = useState(cachedData ? cachedData.hasMore : true);
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
   const [artistInfo, setArtistInfo] = useState(cachedData?.artistInfo || null);
-  const pageRef = useRef(cachedData?.page || 0);
+  const pageRef = useRef(cachedData?.page || 1);
 
   const isFav = isFavoriteArtist(cleanName);
   const currentTrackId = currentTrack?.videoId;
@@ -195,7 +195,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       setHasMore(true);
       setArtistInfo(null);
     }
-    pageRef.current = cached?.page || 0;
+    pageRef.current = cached?.page || 1;
   }, [cleanName, visible]);
 
   // Fetch artist photo and official songs
@@ -274,10 +274,10 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     setIsLoading(true);
     setIsLoadingMore(false);
     setHasMore(true);
-    pageRef.current = 0;
+    pageRef.current = 1;
 
     api
-      .getArtistSongs(cleanName, 0, PAGE_SIZE)
+      .getArtistSongs(cleanName, 1, PAGE_SIZE)
       .then((data) => {
         if (isMounted) {
           const list = data.tracks || data.results || [];
@@ -293,7 +293,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
           }
           
           setHasMore(more);
-          pageRef.current = 0;
+          pageRef.current = 1;
           
           // Get existing cached data to preserve artistInfo
           const existingCache = artistDataCache.get(cleanName) || {};
@@ -301,7 +301,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
             ...existingCache,
             songs: deduped,
             hasMore: more,
-            page: 0,
+            page: 1,
           });
         }
       })
