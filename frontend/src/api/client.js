@@ -152,6 +152,160 @@ export const setApiBaseUrl = () => {};
 export const getApiBaseUrl = () => API_BASE;
 export const warmupBackend = () => backendFetch("health").catch(() => {});
 
+// ─── Client-side YouTube/Spotify playlist scrapers ────────────────────────────
+function extractYouTubePlaylistId(url) {
+  const m = url.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+function extractSpotifyPlaylistId(url) {
+  const m = url.match(/playlist\/([a-zA-Z0-9]+)/);
+  if (m) return m[1];
+  const m2 = url.match(/spotify:playlist:([a-zA-Z0-9]+)/);
+  return m2 ? m2[1] : null;
+}
+
+function cleanYouTubeTitle(title) {
+  return (title || "")
+    .replace(/[\(\[](Official\s*(Music\s*)?Video|Lyrics|Lyric\s*Video|Audio|Official\s*Audio|4K|HD|HQ|Visualizer|Full\s*Song|Video|Official)[\)\]]/gi, "")
+    .replace(/[\(\[]\s*feat\.?.*?[\]\)]/gi, "")
+    .replace(/[\(\[]\s*ft\.?.*?[\]\)]/gi, "")
+    .replace(/[\(\[]\s*prod\.?.*?[\]\)]/gi, "")
+    .replace(/\|.*$/g, "")
+    .replace(/[-–—]\s*YouTube$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchYouTubePlaylistClient(playlistId) {
+  const CORS_PROXIES = [
+    "https://api.allorigins.win/raw?url=",
+    "https://corsproxy.io/?",
+  ];
+
+  let html = null;
+  for (const proxy of CORS_PROXIES) {
+    try {
+      const resp = await fetch(proxy + encodeURIComponent(`https://www.youtube.com/playlist?list=${playlistId}`), { signal: AbortSignal.timeout(10000) });
+      if (resp.ok) {
+        html = await resp.text();
+        if (html && html.includes("videoId")) break;
+      }
+    } catch (_) {}
+  }
+
+  if (!html) {
+    return { success: false, error: "Could not fetch YouTube playlist. Please try again." };
+  }
+
+  const tracks = [];
+
+  // Method 1: Parse ytInitialData JSON
+  const ytMatch = html.match(/var ytInitialData\s*=\s*({.*?});\s*<\/script>/s)
+    || html.match(/window\["ytInitialData"\]\s*=\s*({.*?});\s*<\/script>/s);
+  if (ytMatch) {
+    try {
+      const data = JSON.parse(ytMatch[1]);
+      const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
+      const sections = tabs[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+      const items = sections[0]?.itemSectionRenderer?.contents?.[0]?.playlistVideoListRenderer?.contents
+        || sections[0]?.playlistVideoListRenderer?.contents || [];
+
+      for (const item of items) {
+        const v = item?.playlistVideoRenderer;
+        if (!v) continue;
+        const title = v?.title?.runs?.[0]?.text || "";
+        const artist = v?.shortBylineText?.runs?.[0]?.text || "";
+        if (title) {
+          tracks.push({ title: cleanYouTubeTitle(title), artist, videoId: v?.videoId || "" });
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Method 2: Regex fallback
+  if (tracks.length === 0) {
+    const titles = [...html.matchAll(/"title":\s*\{"runs":\[\{"text":"([^"]+)"/g)].map(m => m[1]);
+    const vids = [...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)].map(m => m[1]);
+    const count = Math.min(titles.length, vids.length);
+    for (let i = 0; i < count; i++) {
+      tracks.push({ title: cleanYouTubeTitle(titles[i]), artist: "", videoId: vids[i] });
+    }
+  }
+
+  if (tracks.length === 0) {
+    return { success: false, error: "Could not parse YouTube playlist. It may be private." };
+  }
+
+  // Get playlist name
+  let name = "YouTube Playlist";
+  const nameMatch = html.match(/"title":\s*\{"runs":\[\{"text":"([^"]+)"/);
+  if (nameMatch) name = nameMatch[1].replace(/&amp;/g, "&").replace(/&#39;/g, "'");
+
+  return {
+    success: true,
+    source: "youtube",
+    playlist: { name, tracks, track_count: tracks.length },
+  };
+}
+
+async function fetchSpotifyPlaylistClient(playlistId) {
+  try {
+    const resp = await fetch(`https://open.spotify.com/oembed?url=https://open.spotify.com/playlist/${playlistId}`, { signal: AbortSignal.timeout(8000) });
+    const oembed = resp.ok ? await resp.json() : {};
+    const name = oembed?.title || "Spotify Playlist";
+
+    // Try embed page via CORS proxy
+    const CORS_PROXIES = [
+      "https://api.allorigins.win/raw?url=",
+      "https://corsproxy.io/?",
+    ];
+    let html = null;
+    for (const proxy of CORS_PROXIES) {
+      try {
+        const r = await fetch(proxy + encodeURIComponent(`https://open.spotify.com/embed/playlist/${playlistId}`), { signal: AbortSignal.timeout(10000) });
+        if (r.ok) { html = await r.text(); break; }
+      } catch (_) {}
+    }
+
+    const tracks = [];
+    if (html) {
+      // Extract from __NEXT_DATA__
+      const nextMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)<\/script>/s);
+      if (nextMatch) {
+        try {
+          const data = JSON.parse(nextMatch[1]);
+          const items = data?.props?.pageProps?.state?.data?.playlist?.tracks?.items || [];
+          for (const item of items) {
+            const t = item?.track;
+            if (!t) continue;
+            tracks.push({
+              title: t.name || "",
+              artist: (t.artists || []).map(a => a.name).join(", "),
+            });
+          }
+        } catch (_) {}
+      }
+      // Regex fallback
+      if (tracks.length === 0) {
+        const names = [...html.matchAll(/"name"\s*:\s*"([^"]+)"/g)].map(m => m[1]);
+        const artists = [...html.matchAll(/"artists?"?\s*:\s*\[?\{[^}]*"name"\s*:\s*"([^"]+)"/g)].map(m => m[1]);
+        for (let i = 0; i < names.length; i++) {
+          tracks.push({ title: names[i], artist: artists[i] || "" });
+        }
+      }
+    }
+
+    if (tracks.length === 0) {
+      return { success: false, error: "Could not parse Spotify playlist. It may be private." };
+    }
+
+    return { success: true, source: "spotify", playlist: { name, tracks, track_count: tracks.length } };
+  } catch (err) {
+    return { success: false, error: "Failed to load Spotify playlist: " + err.message };
+  }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // PUBLIC API — Routes through PHP backend (no CORS issues)
 // ═════════════════════════════════════════════════════════════════════════════
@@ -488,18 +642,35 @@ export const api = {
   deletePlaylist: () => Promise.resolve({}),
   savePremiumSubscription: () => Promise.resolve({}),
 
-  // ─── YouTube Playlist Import (stub) ──────────────────────────────────────
+  // ─── YouTube / Spotify Playlist Import ────────────────────────────────────
   importYouTubePlaylist: async (url) => {
+    // Try backend import first
     try {
       const data = await backendFetch("import", {}, {
         method: "POST",
         body: { url },
+        timeout: 15000,
       });
-      return data;
+      if (data?.success && data?.playlist?.tracks?.length > 0) {
+        return data;
+      }
     } catch (err) {
-      console.warn("[API] YouTube/Spotify import error:", err.message);
-      throw err;
+      console.warn("[API] Backend import failed, trying client-side:", err.message);
     }
+
+    // Client-side fallback: fetch YouTube page via CORS proxy
+    const playlistId = extractYouTubePlaylistId(url);
+    if (playlistId) {
+      return await fetchYouTubePlaylistClient(playlistId);
+    }
+
+    // Spotify fallback
+    const spotifyId = extractSpotifyPlaylistId(url);
+    if (spotifyId) {
+      return await fetchSpotifyPlaylistClient(spotifyId);
+    }
+
+    return { success: false, error: "Could not load playlist. Please check the link and try again." };
   },
 
   // ─── QR Login stubs ──────────────────────────────────────────────────────
