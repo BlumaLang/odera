@@ -26,6 +26,7 @@ import { useAudioPlayback } from "../context/AudioContext";
 import { registerBackAction } from "../services/navigation";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useUser } from "../context/UserContext";
+import { getHighResArtwork } from "../utils/imageUtils";
 import {
   auth,
   getRecentlyPlayed,
@@ -868,7 +869,7 @@ export default function SearchScreen() {
                     <View style={styles.topArtistAvatarWrap}>
                       {topArtistImg ? (
                         <Image
-                          source={{ uri: topArtistImg }}
+                          source={{ uri: getHighResArtwork(topArtistImg) || topArtistImg }}
                           style={styles.topArtistAvatar}
                           resizeMode="cover"
                         />
@@ -911,7 +912,7 @@ export default function SearchScreen() {
                           activeOpacity={0.8}
                         >
                           {artImg ? (
-                            <Image source={{ uri: artImg }} style={styles.artistPillImg} />
+                            <Image source={{ uri: getHighResArtwork(artImg) || artImg }} style={styles.artistPillImg} />
                           ) : (
                             <View style={[styles.artistPillImg, styles.topArtistAvatarFallback]}>
                               <Ionicons name="person" size={14} color={colors.primary} />
@@ -1087,17 +1088,12 @@ export default function SearchScreen() {
                             <View style={styles.spotifyArtworkWrap}>
                               {item.artwork_url || item.thumbnail || item.image ? (
                                 <Image
-                                  source={{ uri: item.artwork_url || item.thumbnail || item.image }}
+                                  source={{ uri: getHighResArtwork(item.artwork_url || item.thumbnail || item.image) || item.artwork_url || item.thumbnail || item.image }}
                                   style={styles.spotifyArtwork}
                                 />
                               ) : (
                                 <View style={[styles.spotifyArtwork, styles.artworkFallback]}>
                                   <Ionicons name="musical-note" size={20} color={colors.primary} />
-                                </View>
-                              )}
-                              {isCurrentlyPlaying && (
-                                <View style={styles.playingIndicatorOverlay}>
-                                  <Ionicons name="volume-high" size={14} color="#FFFFFF" />
                                 </View>
                               )}
                             </View>
@@ -1165,7 +1161,7 @@ export default function SearchScreen() {
                     >
                       <View style={styles.featuredArtistAvatarWrap}>
                         {img ? (
-                          <Image source={{ uri: img }} style={styles.featuredArtistAvatar} />
+                          <Image source={{ uri: getHighResArtwork(img) || img }} style={styles.featuredArtistAvatar} />
                         ) : (
                           <View style={[styles.featuredArtistAvatar, styles.featuredArtistFallback]}>
                             <Ionicons name="person" size={26} color={colors.primary} />
@@ -1214,7 +1210,7 @@ export default function SearchScreen() {
                       {item.title}
                     </Text>
                     <Image
-                      source={{ uri: item.image }}
+                      source={{ uri: getHighResArtwork(item.image) || item.image }}
                       style={styles.vibeCardCoverImage}
                       resizeMode="cover"
                     />

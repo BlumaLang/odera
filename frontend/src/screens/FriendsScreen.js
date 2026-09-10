@@ -27,6 +27,7 @@ import {
 import PlaylistModal from "../components/PlaylistModal";
 import CreatePlaylistModal from "../components/CreatePlaylistModal";
 import { registerBackAction } from "../services/navigation";
+import { getHighResArtwork } from "../utils/imageUtils";
 
 function FriendsSkeleton({ type }) {
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
@@ -56,7 +57,7 @@ function FriendsSkeleton({ type }) {
     return (
       <View style={styles.skeletonWrap}>
         {[1, 2, 3].map((i) => (
-          <View key={i} style={styles.skeletonBlendCard}>
+          <View key={i} style={styles.skeletonBlendRow}>
             <View style={styles.skeletonBlendAvatars}>
               <Animated.View style={[styles.skeletonCircle, { width: 44, height: 44, opacity: pulseAnim }]} />
               <Animated.View style={[styles.skeletonCircle, { width: 44, height: 44, marginLeft: -14, opacity: pulseAnim }]} />
@@ -97,16 +98,19 @@ function FriendsSkeleton({ type }) {
     return (
       <View style={styles.skeletonWrap}>
         {[1, 2, 3].map((i) => (
-          <View key={i} style={styles.skeletonCollabCard}>
-            <Animated.View style={[styles.skeletonSquare, { width: 80, height: 80, opacity: pulseAnim }]} />
+          <View key={i} style={styles.skeletonCollabRow}>
+            <View style={styles.skeletonCollabCoverWrap}>
+              <Animated.View style={[styles.skeletonCircle, { width: 60, height: 60, borderRadius: 30, opacity: pulseAnim }]} />
+            </View>
             <View style={styles.skeletonCollabInfo}>
               <Animated.View style={[styles.skeletonLine, { width: 140 + (i % 2) * 30, height: 14, opacity: pulseAnim }]} />
-              <Animated.View style={[styles.skeletonLine, { width: 100 + (i % 3) * 20, height: 10, marginTop: 6, opacity: pulseAnim }]} />
               <View style={styles.skeletonCollabBadges}>
-                <Animated.View style={[styles.skeletonPill, { width: 50, height: 20, opacity: pulseAnim }]} />
-                <Animated.View style={[styles.skeletonPill, { width: 40, height: 20, opacity: pulseAnim }]} />
+                <Animated.View style={[styles.skeletonPill, { width: 50, height: 18, opacity: pulseAnim }]} />
+                <Animated.View style={[styles.skeletonPill, { width: 40, height: 18, opacity: pulseAnim }]} />
               </View>
+              <Animated.View style={[styles.skeletonLine, { width: 100 + (i % 3) * 20, height: 10, marginTop: 6, opacity: pulseAnim }]} />
             </View>
+            <Animated.View style={[styles.skeletonCircle, { width: 38, height: 38, borderRadius: 19, opacity: pulseAnim }]} />
           </View>
         ))}
       </View>
@@ -747,7 +751,9 @@ export default function FriendsScreen({ onNavigate }) {
     return collabPlaylists.find((pl) => {
       // New Blend records use a stable pair key. Keep the collaborator/name
       // checks for records created before that key existed.
-      const isBlend = pl?.isBlend || pl?.type === "blend" || String(pl?.name || "").startsWith("Blend:");
+      const isBlend = pl?.isBlend || pl?.type === "blend" || 
+        String(pl?.name || "").startsWith("Blend:") || 
+        /^Blend\s*#\d+$/.test(String(pl?.name || ""));
       if (!isBlend) return false;
       if (pl.blendKey === pairKey) return true;
       const collabs = pl.collaborators || {};
@@ -842,8 +848,15 @@ export default function FriendsScreen({ onNavigate }) {
         // Create new blend playlist and send invite
         let created = null;
         if (createCollabPlaylist) {
+          // Find existing blend count for this user to generate Blend #N
+          const existingBlendCount = (collabPlaylists || []).filter(
+            (pl) => pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend")
+          ).length;
+          const blendNumber = existingBlendCount + 1;
+          const blendName = `Blend #${blendNumber}`;
+          
           created = await createCollabPlaylist({
-            name: `Blend: ${myName} + ${friendName}`,
+            name: blendName,
             description: `${matchPct}% Music Match • Auto-curated daily shared blend`,
             tracks: formattedTracks,
             cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
@@ -862,8 +875,8 @@ export default function FriendsScreen({ onNavigate }) {
             collabId: activeCollabId,
             playlistId: activeCollabId,
             id: activeCollabId,
-            name: `Blend: ${myName} + ${friendName}`,
-            playlistName: `Blend: ${myName} + ${friendName}`,
+            name: blendName,
+            playlistName: blendName,
             tracks: formattedTracks,
             tracksCount: formattedTracks.length,
             cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
@@ -1478,13 +1491,24 @@ export default function FriendsScreen({ onNavigate }) {
                               <Text style={styles.blendCardTitle} numberOfLines={1}>
                                 You & {friend.username}
                               </Text>
-                              <Text style={styles.blendCardSubtitle} numberOfLines={1}>
-                                {requestPending
-                                  ? "Waiting for friend to join"
-                                  : savedScore
+                              {requestPending ? (
+                                <Text style={styles.blendCardSubtitle} numberOfLines={1}>
+                                  Waiting for friend to join
+                                </Text>
+                              ) : existingBlend && friendJoined ? (
+                                <View style={styles.blendCardActiveRow}>
+                                  <View style={styles.blendCardActiveDot} />
+                                  <Text style={styles.blendCardActiveText} numberOfLines={1}>
+                                    {existingBlend.track_count || existingBlend.tracks?.length || 0} songs • Active blend
+                                  </Text>
+                                </View>
+                              ) : (
+                                <Text style={styles.blendCardSubtitle} numberOfLines={1}>
+                                  {savedScore
                                     ? `${savedScore}% Music Compatibility`
                                     : "Tap to calculate vibe match & playlist"}
-                              </Text>
+                                </Text>
+                              )}
                             </View>
 
                             <View style={styles.blendCardActionWrap}>
@@ -1655,9 +1679,15 @@ export default function FriendsScreen({ onNavigate }) {
                             activeOpacity={0.75}
                           >
                             {/* Playlist Cover */}
-                            <View style={styles.collabCardCoverWrap}>
+                            <View style={[
+                              styles.collabCardCoverWrap,
+                              (pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(pl.name || ""))) && {
+                                borderColor: "#8B5CF6",
+                                borderWidth: 2,
+                              }
+                            ]}>
                               {coverUrl ? (
-                                <Image source={{ uri: coverUrl }} style={styles.collabCardCover} resizeMode="cover" />
+                                <Image source={{ uri: getHighResArtwork(coverUrl) || coverUrl }} style={styles.collabCardCover} resizeMode="cover" />
                               ) : (
                                 <View style={[styles.collabCardCover, styles.collabCoverFallback]}>
                                   <Ionicons name="musical-notes" size={26} color={colors.primary} />
@@ -1668,6 +1698,11 @@ export default function FriendsScreen({ onNavigate }) {
                                   <MaterialCommunityIcons name="waveform" size={18} color="#1DB954" />
                                 </View>
                               )}
+                              {(pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(pl.name || ""))) && (
+                                <View style={styles.blendTagOverlay}>
+                                  <Ionicons name="flash" size={9} color="#FFFFFF" />
+                                </View>
+                              )}
                             </View>
 
                             {/* Playlist Info */}
@@ -1676,7 +1711,7 @@ export default function FriendsScreen({ onNavigate }) {
                                 <Text style={styles.collabCardTitle} numberOfLines={1}>
                                   {pl.name}
                                 </Text>
-                                {pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend:") ? (
+                                {pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(pl.name || "")) ? (
                                   <View style={[styles.collabGreenBadge, { borderColor: "rgba(139, 92, 246, 0.4)", backgroundColor: "rgba(139, 92, 246, 0.12)" }]}>
                                     <Ionicons name="flash" size={10} color="#8B5CF6" style={{ marginRight: 3 }} />
                                     <Text style={[styles.collabGreenBadgeText, { color: "#8B5CF6" }]}>Blend</Text>
@@ -1895,7 +1930,7 @@ export default function FriendsScreen({ onNavigate }) {
                   >
                     <View style={styles.pmTrackArtwork}>
                       {artworkUrl ? (
-                        <Image source={{ uri: artworkUrl }} style={styles.pmTrackArtworkImg} resizeMode="cover" />
+                        <Image source={{ uri: getHighResArtwork(artworkUrl) || artworkUrl }} style={styles.pmTrackArtworkImg} resizeMode="cover" />
                       ) : (
                         <View style={styles.pmTrackArtworkFallback}>
                           <Ionicons name="musical-notes" size={18} color="#555555" />
@@ -2339,9 +2374,9 @@ export default function FriendsScreen({ onNavigate }) {
                           }}
                           activeOpacity={0.7}
                         >
-                          <View style={styles.blendTrackCoverWrap}>
+                            <View style={styles.blendTrackCoverWrap}>
                             {artwork ? (
-                              <Image source={{ uri: artwork }} style={styles.blendTrackCover} resizeMode="cover" />
+                              <Image source={{ uri: getHighResArtwork(artwork) || artwork }} style={styles.blendTrackCover} resizeMode="cover" />
                             ) : (
                               <View style={[styles.blendTrackCover, styles.blendTrackCoverFallback]}>
                                 <Ionicons name="musical-note" size={16} color="#1DB954" />
@@ -3372,17 +3407,34 @@ const styles = StyleSheet.create({
   collabCardCover: {
     width: "100%",
     height: "100%",
+    borderRadius: 30,
   },
   collabCoverFallback: {
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#1e1e1e",
+    width: "100%",
+    height: "100%",
+    borderRadius: 30,
   },
   collabPlayingOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0, 0, 0, 0.6)",
     alignItems: "center",
     justifyContent: "center",
+  },
+  blendTagOverlay: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "#8B5CF6",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#141414",
   },
   collabCardInfo: {
     flex: 1,
@@ -3565,6 +3617,23 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 12,
     color: colors.textMuted,
+  },
+  blendCardActiveRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 2,
+  },
+  blendCardActiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#1DB954",
+  },
+  blendCardActiveText: {
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    color: "#1DB954",
   },
   blendCardActionWrap: {
     flexShrink: 0,
@@ -3904,7 +3973,7 @@ const styles = StyleSheet.create({
 
   // Skeleton Styles
   skeletonWrap: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 4,
     paddingTop: 8,
   },
   skeletonLine: {
@@ -3955,15 +4024,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  skeletonBlendCard: {
+  skeletonBlendRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#181818",
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.06)",
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.05)",
   },
   skeletonBlendAvatars: {
     flexDirection: "row",
@@ -3972,19 +4039,25 @@ const styles = StyleSheet.create({
   skeletonBlendInfo: {
     flex: 1,
   },
-  skeletonCollabCard: {
+  skeletonCollabRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#181818",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.06)",
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.05)",
+  },
+  skeletonCollabCoverWrap: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    overflow: "hidden",
+    flexShrink: 0,
   },
   skeletonCollabInfo: {
     flex: 1,
-    marginLeft: 12,
+    marginLeft: 14,
+    marginRight: 10,
   },
   skeletonCollabBadges: {
     flexDirection: "row",

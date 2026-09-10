@@ -17,6 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
 import { useResponsive } from "../context/ResponsiveContext";
+import { getHighResArtwork } from "../utils/imageUtils";
 
 export default function ImportPlaylistLinkModal({
   visible,
@@ -358,7 +359,7 @@ export default function ImportPlaylistLinkModal({
 
                         <View style={styles.songArtworkCol}>
                           {artworkUri ? (
-                            <Image source={{ uri: artworkUri }} style={styles.songArtwork} />
+                            <Image source={{ uri: getHighResArtwork(artworkUri) || artworkUri }} style={styles.songArtwork} />
                           ) : (
                             <View style={[styles.songArtwork, styles.artworkFallback]}>
                               <Ionicons name="musical-note" size={16} color={colors.primary} />

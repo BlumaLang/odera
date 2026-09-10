@@ -28,6 +28,7 @@ import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { auth, getRecentlyPlayed, subscribeRecentlyPlayed, removeRecentlyPlayed } from "../services/firebase";
+import { getHighResArtwork } from "../utils/imageUtils";
 
 function LibrarySkeleton({ type }) {
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
@@ -465,7 +466,7 @@ export default function LibraryScreen() {
               >
                 {playlistCover ? (
                   <Image
-                    source={{ uri: playlistCover }}
+                    source={{ uri: getHighResArtwork(playlistCover) || playlistCover }}
                     style={styles.playlistRowThumb}
                   />
                 ) : (
@@ -478,16 +479,26 @@ export default function LibraryScreen() {
                     <Text style={styles.playlistRowTitle} numberOfLines={1}>
                       {item.name}
                     </Text>
-                    {item.isCollab && (
+                    {item.isBlend || item.type === "blend" || String(item.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(item.name || "")) ? (
+                      <View style={[styles.collabBadgePill, { borderColor: "rgba(139, 92, 246, 0.4)", backgroundColor: "rgba(139, 92, 246, 0.12)" }]}>
+                        <Ionicons name="flash" size={10} color="#8B5CF6" style={{ marginRight: 3 }} />
+                        <Text style={[styles.collabBadgeText, { color: "#8B5CF6" }]}>Blend</Text>
+                      </View>
+                    ) : item.isCollab ? (
                       <View style={styles.collabBadgePill}>
                         <Ionicons name="people" size={10} color="#1DB954" style={{ marginRight: 3 }} />
                         <Text style={styles.collabBadgeText}>Collab</Text>
                       </View>
-                    )}
+                    ) : null}
                   </View>
                   <Text style={styles.playlistRowCount}>
                     {trackCount} {trackCount === 1 ? "track" : "tracks"}
-                    {item.description ? ` • ${item.description}` : ""}
+                    {item.isBlend || item.type === "blend" || String(item.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(item.name || ""))
+                      ? (() => {
+                          const matchPct = item.matchPercentage || (item.description || "").match(/(\d+)%/)?.[1];
+                          return matchPct ? ` • ${matchPct}% Match` : "";
+                        })()
+                      : (item.description ? ` • ${item.description}` : "")}
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />

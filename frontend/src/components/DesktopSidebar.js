@@ -13,6 +13,7 @@ import { colors, fonts } from "../theme/colors";
 import { useUser } from "../context/UserContext";
 import { api } from "../api/client";
 import { useResponsive } from "../context/ResponsiveContext";
+import { getHighResArtwork } from "../utils/imageUtils";
 
 export default function DesktopSidebar({
   activeTab = "Home",
@@ -132,7 +133,7 @@ export default function DesktopSidebar({
                 activeOpacity={0.7}
               >
                 {photoUrl ? (
-                  <Image source={{ uri: photoUrl }} style={styles.artistTastePhoto} />
+                  <Image source={{ uri: getHighResArtwork(photoUrl) || photoUrl }} style={styles.artistTastePhoto} />
                 ) : (
                   <View style={styles.artistTasteAvatarFallback}>
                     <Text style={styles.artistTasteInitial}>

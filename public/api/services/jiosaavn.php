@@ -239,38 +239,124 @@ class JioSaavnService {
     public static function getArtistSongs($artistId, $page = 1, $limit = 20) {
         $page = max(1, (int)$page);
         $limit = max(1, min(50, (int)$limit));
+        
+        // Step 1: Get artist page details for top songs and artist info
         $data = self::callApi('artist.getArtistPageDetails', [
             'artistId' => $artistId,
             'p'        => $page,
             'n'        => $limit,
         ]);
         
-        if (!$data) return ['tracks' => [], 'results' => [], 'has_more' => false, 'artist' => null];
-        
-        $tracks = [];
-        foreach ($data['topSongs'] ?? [] as $song) {
-            $tracks[] = self::normalizeTrack($song);
-        }
-        
-        $total = (int)($data['topSongsCount'] ?? 0);
-        if (count($tracks) > $limit) {
-            $offset = ($page - 1) * $limit;
-            $tracks = array_slice($tracks, $offset, $limit);
-        }
-        $hasMore = $total > 0
-            ? ($page * $limit) < $total
-            : count($tracks) === $limit;
-        
         $artist = null;
         if (isset($data['artist'])) {
             $artist = self::normalizeArtist($data['artist']);
         }
         
+        // Step 2: Get top songs from artist page
+        $topSongs = [];
+        foreach ($data['topSongs'] ?? [] as $song) {
+            $topSongs[] = self::normalizeTrack($song);
+        }
+        
+        $topSongsCount = (int)($data['topSongsCount'] ?? count($topSongs));
+        
+        // Step 3: If we have fewer top songs than requested, or need more pages,
+        // use search as fallback to get additional songs
+        $allTracks = $topSongs;
+        $artistName = $artist['name'] ?? $artistId;
+        
+        // Calculate how many songs we already have from top songs
+        $topSongsTotal = $topSongsCount > 0 ? $topSongsCount : count($topSongs);
+        
+        // If the API returned all top songs in one go (common case), 
+        // use search to get more songs for pagination
+        if ($topSongsTotal > 0 && count($topSongs) >= $topSongsTotal && $page > 1) {
+            // For pages beyond the first, use search to find more songs
+            $searchOffset = ($page - 1) * $limit;
+            $searchData = self::callApi('search.getResults', [
+                'q' => $artistName . ' songs',
+                'p' => 1,
+                'n' => $searchOffset + $limit,
+            ]);
+            
+            if (!empty($searchData['results'])) {
+                $searchTracks = [];
+                foreach ($searchData['results'] as $song) {
+                    if (($song['type'] ?? '') === 'song') {
+                        $normalized = self::normalizeTrack($song);
+                        // Only include songs that match this artist
+                        $songArtist = strtolower($normalized['artist'] ?? '');
+                        $targetArtist = strtolower($artistName);
+                        if (strpos($songArtist, $targetArtist) !== false || 
+                            strpos($targetArtist, $songArtist) !== false) {
+                            $searchTracks[] = $normalized;
+                        }
+                    }
+                }
+                
+                // Deduplicate against top songs
+                $topIds = array_column($topSongs, 'videoId');
+                $newTracks = array_filter($searchTracks, function($t) use ($topIds) {
+                    return !in_array($t['videoId'], $topIds);
+                });
+                
+                // Slice for the requested page
+                $pageTracks = array_slice($newTracks, $searchOffset, $limit);
+                $allTracks = $pageTracks;
+            }
+        } elseif ($page === 1 && count($topSongs) < $limit) {
+            // First page has fewer songs than limit, try search for more
+            $searchData = self::callApi('search.getResults', [
+                'q' => $artistName . ' songs',
+                'p' => 1,
+                'n' => $limit * 2,
+            ]);
+            
+            if (!empty($searchData['results'])) {
+                $searchTracks = [];
+                foreach ($searchData['results'] as $song) {
+                    if (($song['type'] ?? '') === 'song') {
+                        $normalized = self::normalizeTrack($song);
+                        $songArtist = strtolower($normalized['artist'] ?? '');
+                        $targetArtist = strtolower($artistName);
+                        if (strpos($songArtist, $targetArtist) !== false || 
+                            strpos($targetArtist, $songArtist) !== false) {
+                            $searchTracks[] = $normalized;
+                        }
+                    }
+                }
+                
+                // Deduplicate and merge
+                $topIds = array_column($topSongs, 'videoId');
+                $newTracks = array_filter($searchTracks, function($t) use ($topIds) {
+                    return !in_array($t['videoId'], $topIds);
+                });
+                
+                // Combine top songs + additional search results
+                $allTracks = array_merge($topSongs, array_slice($newTracks, 0, $limit - count($topSongs)));
+            }
+        }
+        
+        // Ensure we don't exceed limit
+        if (count($allTracks) > $limit) {
+            $allTracks = array_slice($allTracks, 0, $limit);
+        }
+        
+        // Determine has_more: if we got a full page, there might be more
+        // If we got fewer than limit, we've reached the end
+        $hasMore = count($allTracks) >= $limit;
+        
+        // Additional check: if topSongsCount is available and we haven't fetched all
+        if ($topSongsTotal > 0 && $page * $limit < $topSongsTotal) {
+            $hasMore = true;
+        }
+        
         return [
-            'tracks'   => $tracks,
-            'results'  => $tracks,
+            'tracks'   => $allTracks,
+            'results'  => $allTracks,
             'has_more' => $hasMore,
             'artist'   => $artist,
+            'total'    => max($topSongsTotal, count($allTracks)),
         ];
     }
     
@@ -286,8 +372,11 @@ class JioSaavnService {
         $image = $data['image'] ?? null;
         if (!$image) return null;
         
+        // Get best quality image
+        $bestImage = self::getBestImage($image);
+        
         return [
-            'image' => $image,
+            'image' => $bestImage,
             'id'    => $artistId,
         ];
     }
@@ -307,6 +396,42 @@ class JioSaavnService {
         }
         
         return ['artists' => $artists, 'related' => $artists];
+    }
+    
+    public static function getArtistInfo($artistId) {
+        $data = self::callApi('artist.getArtistPageDetails', [
+            'artistId' => $artistId,
+            'n'        => 1,
+        ]);
+        
+        if (!$data) return ['artist' => null, 'top_songs' => [], 'similar_artists' => []];
+        
+        $artist = null;
+        if (isset($data['artist'])) {
+            $artist = self::normalizeArtist($data['artist']);
+            // Add extra fields
+            $artist['follower_count'] = $data['artist']['followerCount'] ?? 0;
+            $artist['monthly_listeners'] = $data['artist']['monthlyListeners'] ?? 0;
+            $artist['bio'] = $data['artist']['bio'] ?? '';
+            $artist['fan_count'] = $data['artist']['fanCount'] ?? 0;
+        }
+        
+        $topSongs = [];
+        foreach ($data['topSongs'] ?? [] as $song) {
+            $topSongs[] = self::normalizeTrack($song);
+        }
+        
+        $similarArtists = [];
+        foreach ($data['similarArtists'] ?? [] as $similar) {
+            $similarArtists[] = self::normalizeArtist($similar);
+        }
+        
+        return [
+            'artist' => $artist,
+            'top_songs' => $topSongs,
+            'similar_artists' => $similarArtists,
+            'top_songs_count' => (int)($data['topSongsCount'] ?? count($topSongs)),
+        ];
     }
     
     public static function getPopularArtists($language = 'hindi', $limit = 20) {
@@ -341,16 +466,59 @@ class JioSaavnService {
     
     // ==================== NORMALIZATION ====================
     
+    /**
+     * Get the highest quality image from JioSaavn image array
+     * JioSaavn returns images as array of {link, size} objects
+     * We want the largest size (typically 500x500)
+     */
+    private static function getBestImage($image) {
+        if (!is_array($image) || empty($image)) {
+            return (string)$image;
+        }
+        
+        // If it's an associative array with 'link' key, return it directly
+        if (isset($image['link'])) {
+            return $image['link'];
+        }
+        
+        // If it's a numeric array of {link, size} objects
+        $bestLink = '';
+        $bestSize = 0;
+        
+        foreach ($image as $img) {
+            if (!is_array($img)) continue;
+            
+            $link = $img['link'] ?? $img['url'] ?? '';
+            $size = $img['size'] ?? $img['quality'] ?? 0;
+            
+            // Parse size from string like "500x500" or use numeric value
+            if (is_string($size)) {
+                preg_match('/(\d+)/', $size, $matches);
+                $size = (int)($matches[1] ?? 0);
+            }
+            
+            // If no size info, prefer later items (usually higher quality)
+            if ($size === 0 && !empty($link)) {
+                $size = $bestSize + 1;
+            }
+            
+            if ($size >= $bestSize && !empty($link)) {
+                $bestSize = $size;
+                $bestLink = $link;
+            }
+        }
+        
+        return $bestLink ?: '';
+    }
+    
     private static function normalizeTrack($song) {
         $videoId = $song['id'] ?? $song['videoId'] ?? '';
         $title = $song['title'] ?? 'Unknown';
         $subtitle = $song['subtitle'] ?? '';
         $image = $song['image'] ?? '';
         
-        // Get best image
-        if (is_array($image) && !empty($image)) {
-            $image = end($image)['link'] ?? $image[0]['link'] ?? '';
-        }
+        // Get best quality image
+        $image = self::getBestImage($image);
         
         // Get artists
         $artists = [];
@@ -385,9 +553,8 @@ class JioSaavnService {
         $name = $artist['name'] ?? 'Unknown';
         $image = $artist['image'] ?? '';
         
-        if (is_array($image) && !empty($image)) {
-            $image = end($image)['link'] ?? $image[0]['link'] ?? '';
-        }
+        // Get best quality image
+        $image = self::getBestImage($image);
         
         return [
             'id'        => $id,

@@ -324,7 +324,7 @@ export const api = {
     }
   },
 
-  // ─── Artist songs (from artist page topSongs) ─────────────────────────────
+  // ─── Artist songs (from artist page topSongs + search fallback) ───────────
   getArtistSongs: async (artistIdOrName, page = 0, limit = 20) => {
     if (!artistIdOrName) return { tracks: [], results: [], has_more: false };
     try {
@@ -334,12 +334,21 @@ export const api = {
       });
       const tracks = data.tracks || [];
       const results = data.results || tracks;
+      
+      // Use backend's has_more if provided, otherwise infer from page size
+      let hasMore;
+      if (typeof data.has_more === "boolean") {
+        hasMore = data.has_more;
+      } else {
+        hasMore = tracks.length >= limit;
+      }
+      
       return {
         tracks,
         results,
-        // Some providers omit has_more. Keep paging while a full page arrives.
-        has_more: typeof data.has_more === "boolean" ? data.has_more : tracks.length >= limit,
+        has_more: hasMore,
         artist: data.artist || {},
+        total: data.total || tracks.length,
       };
     } catch (err) {
       console.warn("[API] Artist songs error:", err.message);
@@ -369,6 +378,23 @@ export const api = {
       }
     } catch (_) {}
     return { image: null };
+  },
+
+  // ─── Artist full info (bio, followers, etc.) ──────────────────────────────
+  getArtistInfo: async (artistIdOrName) => {
+    if (!artistIdOrName) return { artist: null, top_songs: [], similar_artists: [] };
+    try {
+      const data = await backendFetch(`artist/${artistIdOrName}/info`);
+      return {
+        artist: data.artist || null,
+        top_songs: data.top_songs || [],
+        similar_artists: data.similar_artists || [],
+        top_songs_count: data.top_songs_count || 0,
+      };
+    } catch (err) {
+      console.warn("[API] Artist info error:", err.message);
+      return { artist: null, top_songs: [], similar_artists: [] };
+    }
   },
 
   // ─── Related / Similar artists ────────────────────────────────────────────

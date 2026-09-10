@@ -23,6 +23,7 @@ import { api } from "../api/client";
 import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useUser, getDeterministicAvatarColor } from "../context/UserContext";
+import { getHighResArtwork } from "../utils/imageUtils";
 
 function getTrackDurationSeconds(t) {
   if (!t) return 0;
@@ -280,7 +281,7 @@ export default function PlaylistModal({
   }, [visible, playlist?.id]);
 
   const isCollab = Boolean(playlistData?.isCollab || playlistData?.collaborators);
-  const isBlend = Boolean(playlistData?.isBlend || playlistData?.type === "blend" || String(playlistData?.name || "").startsWith("Blend:"));
+  const isBlend = Boolean(playlistData?.isBlend || playlistData?.type === "blend" || String(playlistData?.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(playlistData?.name || "")));
   const collaboratorsObj = playlistData?.collaborators || {};
   const collaboratorList = Object.values(collaboratorsObj);
   const tracks = playlistData?.tracks || [];
@@ -718,7 +719,7 @@ export default function PlaylistModal({
                   ]}
                 >
                   {artwork ? (
-                    <Image source={{ uri: artwork }} style={styles.heroArtwork} />
+                    <Image source={{ uri: getHighResArtwork(artwork) || artwork }} style={styles.heroArtwork} />
                   ) : (
                     <View style={[styles.heroArtwork, styles.heroArtworkFallback]}>
                       <Ionicons name="musical-notes" size={54} color={colors.primary} />

@@ -24,6 +24,7 @@ import { resolveLocalArtistImage } from "../theme/artistImages";
 import SongCard from "./SongCard";
 import AddToPlaylistModal from "./AddToPlaylistModal";
 import { registerBackAction } from "../services/navigation";
+import { getHighResArtistImage } from "../utils/imageUtils";
 
 const { width, height } = Dimensions.get("window");
 const PAGE_SIZE = 30;
@@ -145,6 +146,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(cachedData ? cachedData.hasMore : true);
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
+  const [artistInfo, setArtistInfo] = useState(cachedData?.artistInfo || null);
   const pageRef = useRef(cachedData?.page || 0);
 
   const isFav = isFavoriteArtist(cleanName);
@@ -185,11 +187,13 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       setIsLoading(false);
       if (cached.image) setArtistImage(cached.image);
       else if (initialPhoto) setArtistImage(initialPhoto);
+      if (cached.artistInfo) setArtistInfo(cached.artistInfo);
     } else {
       // No cache – clear everything so previous artist's songs disappear
       setSongs([]);
       setIsLoading(true);
       setHasMore(true);
+      setArtistInfo(null);
     }
     pageRef.current = cached?.page || 0;
   }, [cleanName, visible]);
@@ -239,6 +243,27 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       })
       .catch(() => {});
 
+    // 1b. Fetch full artist info (bio, followers, etc.)
+    api
+      .getArtistInfo(cleanName)
+      .then((info) => {
+        if (isMounted && info.artist) {
+          setArtistInfo(info.artist);
+          artistDataCache.set(cleanName, {
+            ...(artistDataCache.get(cleanName) || {}),
+            artistInfo: info.artist,
+          });
+          // Update image if we got a better one from info
+          if (info.artist.image && !info.artist.image.includes("default")) {
+            setArtistImage(info.artist.image);
+            if (onArtistImageResolved) {
+              onArtistImageResolved(cleanName, info.artist.image);
+            }
+          }
+        }
+      })
+      .catch(() => {});
+
     // 2. If no cache, fetch first page of songs
     if (cached?.songs?.length > 0) {
       // Already populated from the cache-clearing effect
@@ -258,11 +283,22 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
           const list = data.tracks || data.results || [];
           const deduped = dedupeArtistSongs([], list);
           setSongs(deduped);
-          const more = Boolean(data.has_more !== false && list.length > 0);
+          
+          // Determine has_more: use backend value if available, otherwise infer
+          let more;
+          if (typeof data.has_more === "boolean") {
+            more = data.has_more;
+          } else {
+            more = list.length >= PAGE_SIZE;
+          }
+          
           setHasMore(more);
           pageRef.current = 0;
+          
+          // Get existing cached data to preserve artistInfo
+          const existingCache = artistDataCache.get(cleanName) || {};
           artistDataCache.set(cleanName, {
-            ...(artistDataCache.get(cleanName) || {}),
+            ...existingCache,
             songs: deduped,
             hasMore: more,
             page: 0,
@@ -296,22 +332,37 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
         setSongs((prev) => {
           const uniqueNew = dedupeArtistSongs(prev, newTracks);
           const updated = [...prev, ...uniqueNew];
+          
+          // Determine if there are more songs to load
+          const noNewSongs = uniqueNew.length === 0;
+          const backendSaysNoMore = data.has_more === false;
+          const fewerThanRequested = newTracks.length < PAGE_SIZE;
+          
+          const shouldHaveMore = !noNewSongs && !backendSaysNoMore && !fewerThanRequested;
+          
+          // Get existing cached data to preserve artistInfo
+          const existingCache = artistDataCache.get(cleanName) || {};
           artistDataCache.set(cleanName, {
-            ...(artistDataCache.get(cleanName) || {}),
+            ...existingCache,
             songs: updated,
-            hasMore: Boolean(data.has_more !== false && uniqueNew.length > 0),
+            hasMore: shouldHaveMore,
             page: nextPage,
           });
+          
+          // Update hasMore state outside of setSongs to avoid stale closure
+          if (!shouldHaveMore) {
+            setTimeout(() => setHasMore(false), 0);
+          }
+          
           return updated;
         });
-        if (data.has_more === false) {
-          setHasMore(false);
-        }
       } else {
+        // No new tracks returned - we've reached the end
         setHasMore(false);
       }
     } catch (err) {
       console.warn("Error loading more artist tracks:", err);
+      // On error, don't stop trying entirely - user might scroll again
     } finally {
       setIsLoadingMore(false);
     }
@@ -347,7 +398,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       {/* Artist Hero Header */}
       <View style={styles.heroSection}>
         {artistImage ? (
-          <Image source={{ uri: artistImage }} style={styles.heroImage} resizeMode="cover" />
+          <Image source={{ uri: getHighResArtistImage(artistImage) || artistImage }} style={styles.heroImage} resizeMode="cover" />
         ) : (
           <View style={[styles.heroImage, styles.heroFallback]}>
             <Ionicons name="person" size={72} color={colors.primary} />
@@ -366,9 +417,19 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
           <Text style={styles.artistTitle} numberOfLines={2}>
             {cleanName}
           </Text>
-          <Text style={styles.listenerText}>
-            Top Indian & Global Streaming Artist
-          </Text>
+          {artistInfo?.monthly_listeners ? (
+            <Text style={styles.listenerText}>
+              {artistInfo.monthly_listeners.toLocaleString()} monthly listeners
+            </Text>
+          ) : artistInfo?.follower_count ? (
+            <Text style={styles.listenerText}>
+              {artistInfo.follower_count.toLocaleString()} followers
+            </Text>
+          ) : (
+            <Text style={styles.listenerText}>
+              Top Indian & Global Streaming Artist
+            </Text>
+          )}
         </View>
       </View>
 
@@ -410,7 +471,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       </View>
 
     </View>
-  ), [artistImage, cleanName, isFav, handleShuffle, handlePlayAll]);
+  ), [artistImage, cleanName, isFav, handleShuffle, handlePlayAll, artistInfo]);
 
   // Memoized Footer with Related Artists & Collaborators
   const footerComponent = useMemo(() => {
@@ -424,7 +485,9 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
         )}
         {!isLoadingMore && !hasMore && songs.length > 0 && (
           <View style={styles.endOfListFooter}>
-            <Text style={styles.endOfListText}>You've reached the end</Text>
+            <Text style={styles.endOfListText}>
+              {songs.length} song{songs.length !== 1 ? 's' : ''} loaded
+            </Text>
           </View>
         )}
         <View style={{ height: 80 }} />

@@ -1330,7 +1330,7 @@ export default function HomeScreen({ onNavigate } = {}) {
                           >
                             {img ? (
                               <Image
-                                source={{ uri: img }}
+                                source={{ uri: getHighResArtwork(img) || img }}
                                 style={styles.followedArtistImg}
                                 resizeMode="cover"
                               />

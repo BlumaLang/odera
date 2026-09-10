@@ -172,6 +172,8 @@ try {
                 ArtistRoutes::handle('image', $method, ['id' => $subresource]);
             } elseif ($id === 'related') {
                 ArtistRoutes::handle('related', $method, ['id' => $subresource]);
+            } elseif ($id === 'info') {
+                ArtistRoutes::handle('info', $method, ['id' => $subresource]);
             } else {
                 sendError('Unknown artist endpoint', 404);
             }

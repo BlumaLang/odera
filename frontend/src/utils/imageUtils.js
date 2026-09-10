@@ -30,11 +30,38 @@ export function getHighResArtwork(url) {
 }
 
 /**
+ * Get highest quality artist image.
+ * JioSaavn images often have size parameters we can upgrade.
+ */
+export function getHighResArtistImage(url) {
+  if (!url) return null;
+  let clean = url;
+
+  // JioSaavn images: replace size parameter with 500x500
+  clean = clean.replace(/=\d+x\d+/, "=500x500");
+  clean = clean.replace(/\/\d+x\d+\//, "/500x500/");
+
+  // Generic CDN — upgrade to 500px for artist circular images
+  clean = clean.replace(/=w\d+-h\d+[^?&]*/, "=w500-h500-l90-rj");
+  clean = clean.replace(/=s\d+[^?&]*/, "=s500");
+
+  return clean;
+}
+
+/**
  * Resolve artwork from a track object with consistent fallback chain.
  */
 export function resolveArtwork(track) {
   if (!track) return null;
   return getHighResArtwork(track.artwork_url || track.thumbnail || null);
+}
+
+/**
+ * Resolve artist image with high quality.
+ */
+export function resolveArtistImage(artist) {
+  if (!artist) return null;
+  return getHighResArtistImage(artist.image || artist.thumbnail || null);
 }
 
 /**

@@ -21,6 +21,7 @@
  *              GET  /api/artist/:id/songs?page=&limit=
  *              GET  /api/artist/:id/image
  *              GET  /api/artist/:id/related?limit=
+ *              GET  /api/artist/:id/info
  * 
  * Auth:        POST /api/auth/pin         { username, pin }
  *              POST /api/auth/phone       { phone, code }
@@ -172,6 +173,8 @@ try {
                 ArtistRoutes::handle('image', $method, ['id' => $subresource]);
             } elseif ($id === 'related') {
                 ArtistRoutes::handle('related', $method, ['id' => $subresource]);
+            } elseif ($id === 'info') {
+                ArtistRoutes::handle('info', $method, ['id' => $subresource]);
             } else {
                 sendError('Unknown artist endpoint', 404);
             }

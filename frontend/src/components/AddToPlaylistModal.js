@@ -18,6 +18,7 @@ import { useUser } from "../context/UserContext";
 import LikeConfetti from "./LikeConfetti";
 import CreatePlaylistModal from "./CreatePlaylistModal";
 import { registerBackAction } from "../services/navigation";
+import { getHighResArtwork } from "../utils/imageUtils";
 
 export default function AddToPlaylistModal({ visible, onClose, track, onSuccess }) {
   const { isDesktop, isTablet } = useResponsive();
@@ -189,7 +190,7 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
               <View style={styles.trackPreview}>
                 {track.artwork_url || track.thumbnail ? (
                   <Image
-                    source={{ uri: track.artwork_url || track.thumbnail }}
+                    source={{ uri: getHighResArtwork(track.artwork_url || track.thumbnail) || track.artwork_url || track.thumbnail }}
                     style={styles.trackThumb}
                   />
                 ) : (
@@ -284,7 +285,7 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
                     >
                       {playlistCover ? (
                         <Image
-                          source={{ uri: playlistCover }}
+                          source={{ uri: getHighResArtwork(playlistCover) || playlistCover }}
                           style={styles.playlistThumb}
                         />
                       ) : (

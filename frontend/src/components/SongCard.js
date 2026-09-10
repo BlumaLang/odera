@@ -5,6 +5,7 @@ import { colors, fonts } from "../theme/colors";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useAudioPlayback } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
+import { getHighResArtwork } from "../utils/imageUtils";
 
 function formatCardDuration(track) {
   if (
@@ -75,12 +76,8 @@ function SongCard({
     failedUrlsRef.current = new Set();
     let resolved = rawArtwork;
     if (resolved && typeof resolved === "string") {
-      // Normalize YouTube URLs upfront to avoid expired sqp= tokens or broken hq720 thumbnails
-      if (resolved.includes("hq720.jpg") || resolved.includes("maxresdefault.jpg") || resolved.includes("sddefault.jpg")) {
-        const match = resolved.match(/\/vi\/([a-zA-Z0-9_-]+)/);
-        const vid = match ? match[1] : trackVid;
-        resolved = vid ? `https://i.ytimg.com/vi/${vid}/mqdefault.jpg` : resolved.replace(/\/(hq720|maxresdefault|sddefault)\.jpg.*/, "/mqdefault.jpg");
-      }
+      // Upgrade to high resolution
+      resolved = getHighResArtwork(resolved) || resolved;
     } else if (trackVid) {
       resolved = `https://i.ytimg.com/vi/${trackVid}/mqdefault.jpg`;
     }
