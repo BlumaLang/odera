@@ -1708,17 +1708,6 @@ export default function FriendsScreen({ onNavigate }) {
                                 <Text style={styles.collabCardTitle} numberOfLines={1}>
                                   {pl.name}
                                 </Text>
-                                {pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(pl.name || "")) ? (
-                                  <View style={[styles.collabGreenBadge, { borderColor: "rgba(139, 92, 246, 0.4)", backgroundColor: "rgba(139, 92, 246, 0.12)" }]}>
-                                    <Ionicons name="flash" size={10} color="#8B5CF6" style={{ marginRight: 3 }} />
-                                    <Text style={[styles.collabGreenBadgeText, { color: "#8B5CF6" }]}>Blend</Text>
-                                  </View>
-                                ) : (
-                                  <View style={styles.collabGreenBadge}>
-                                    <Ionicons name="people" size={10} color="#1DB954" style={{ marginRight: 3 }} />
-                                    <Text style={styles.collabGreenBadgeText}>Collab</Text>
-                                  </View>
-                                )}
                               </View>
 
                               {/* Collaborator Avatars */}
