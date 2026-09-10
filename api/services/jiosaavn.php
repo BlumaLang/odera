@@ -240,7 +240,7 @@ class JioSaavnService {
         $page = max(1, (int)$page);
         $limit = max(1, min(50, (int)$limit));
         
-        // Get artist info from page details
+        // First, try to get artist info to get the actual artist name
         $data = self::callApi('artist.getArtistPageDetails', [
             'artistId' => $artistId,
             'p'        => 1,
@@ -254,13 +254,48 @@ class JioSaavnService {
         
         $artistName = $artistName ?? $artist['name'] ?? $artistId;
         
-        // Fetch a large batch from search (up to 100 results at once)
-        // Cache the full batch so pagination is just slicing
-        $searchData = self::searchSongs($artistName, 1, 100);
+        // Try to get artist songs directly from JioSaavn API if available
+        $artistSongsData = self::callApi('artist.getArtistSongs', [
+            'artistId' => $artistId,
+            'p'        => $page,
+            'n'        => $limit,
+        ]);
+        
+        $tracks = [];
+        if (!empty($artistSongsData['songs'])) {
+            // We have direct artist songs from API
+            foreach ($artistSongsData['songs'] as $song) {
+                $tracks[] = self::normalizeTrack($song);
+            }
+            
+            $total = $artistSongsData['total'] ?? count($tracks);
+            $hasMore = ($page * $limit) < $total;
+            
+            return [
+                'tracks'   => $tracks,
+                'results'  => $tracks,
+                'has_more' => $hasMore,
+                'artist'   => $artist,
+                'total'    => $total,
+            ];
+        }
+        
+        // Fallback: Search for songs by this artist
+        // Use "artistName songs" query for better results
+        $searchQuery = "{$artistName} songs";
+        $searchData = self::searchSongs($searchQuery, $page, $limit);
         $allSearchResults = $searchData['results'] ?? [];
         
-        // Filter to only this artist's songs
+        // Filter to only this artist's songs with more flexible matching
         $filtered = self::filterSearchByArtist($allSearchResults, $artistName);
+        
+        // If we didn't get enough filtered results, try a broader search
+        if (count($filtered) < $limit && $page === 1) {
+            $broaderSearch = self::searchSongs($artistName, $page, $limit * 2);
+            $broaderResults = $broaderSearch['results'] ?? [];
+            $additionalFiltered = self::filterSearchByArtist($broaderResults, $artistName, $filtered);
+            $filtered = array_merge($filtered, $additionalFiltered);
+        }
         
         // Paginate through filtered results
         $offset = ($page - 1) * $limit;
@@ -283,7 +318,10 @@ class JioSaavnService {
     private static function filterSearchByArtist($results, $artistName, $excludeTracks = []) {
         $filtered = [];
         $excludeIds = array_column($excludeTracks, 'videoId');
-        $targetArtist = strtolower($artistName);
+        $targetArtist = strtolower(trim($artistName));
+        
+        // Split artist name into words for better matching
+        $targetWords = array_filter(preg_split('/\s+/', $targetArtist));
         
         foreach ($results as $song) {
             // Handle both raw and already-normalized results
@@ -293,16 +331,42 @@ class JioSaavnService {
             // Skip if already in exclude list
             if (in_array($tid, $excludeIds)) continue;
             
-            // Use already-normalized artist field if available, otherwise extract
+            // Use already-normalized artist field if available
             $songArtist = strtolower($song['artist'] ?? '');
             $songTitle = strtolower($song['title'] ?? '');
             
-            // Match if artist name appears in the song's artist field or title
+            // Skip if no artist or title
             if (empty($songArtist) && empty($songTitle)) continue;
             
+            // Check if artist name matches (more flexible matching)
+            $matchFound = false;
+            
+            // 1. Direct match
             if (strpos($songArtist, $targetArtist) !== false || 
-                strpos($targetArtist, $songArtist) !== false ||
-                strpos($songTitle, $targetArtist) !== false) {
+                strpos($targetArtist, $songArtist) !== false) {
+                $matchFound = true;
+            }
+            
+            // 2. Word-based matching: check if key words from artist name appear in song artist
+            if (!$matchFound && !empty($targetWords)) {
+                $wordMatchCount = 0;
+                foreach ($targetWords as $word) {
+                    if (strlen($word) > 2 && strpos($songArtist, $word) !== false) {
+                        $wordMatchCount++;
+                    }
+                }
+                // If at least half the words match, consider it a match
+                if ($wordMatchCount >= ceil(count($targetWords) / 2)) {
+                    $matchFound = true;
+                }
+            }
+            
+            // 3. Check if artist name appears in title (for featured artists)
+            if (!$matchFound && strpos($songTitle, $targetArtist) !== false) {
+                $matchFound = true;
+            }
+            
+            if ($matchFound) {
                 $filtered[] = $song;
             }
         }
@@ -357,30 +421,64 @@ class JioSaavnService {
         if (!$data) return ['artist' => null, 'top_songs' => [], 'similar_artists' => []];
         
         $artist = null;
+        // Try different possible response structures
         if (isset($data['artist'])) {
             $artist = self::normalizeArtist($data['artist']);
-            // Add extra fields
-            $artist['follower_count'] = $data['artist']['followerCount'] ?? 0;
-            $artist['monthly_listeners'] = $data['artist']['monthlyListeners'] ?? 0;
-            $artist['bio'] = $data['artist']['bio'] ?? '';
-            $artist['fan_count'] = $data['artist']['fanCount'] ?? 0;
+        } elseif (isset($data['name'])) {
+            // If the data itself is the artist object
+            $artist = self::normalizeArtist($data);
+        }
+        
+        // Add extra fields if we have artist data
+        if ($artist) {
+            $artist['follower_count'] = $data['followerCount'] ?? $data['artist']['followerCount'] ?? 0;
+            $artist['monthly_listeners'] = $data['monthlyListeners'] ?? $data['artist']['monthlyListeners'] ?? 0;
+            $artist['bio'] = $data['bio'] ?? $data['artist']['bio'] ?? '';
+            $artist['fan_count'] = $data['fanCount'] ?? $data['artist']['fanCount'] ?? 0;
+            
+            // Ensure image is properly set
+            if (empty($artist['image']) && isset($data['image'])) {
+                $artist['image'] = self::getBestImage($data['image']);
+                $artist['thumbnail'] = $artist['image'];
+            }
         }
         
         $topSongs = [];
-        foreach ($data['topSongs'] ?? [] as $song) {
+        // Try different possible locations for top songs
+        $songsData = $data['topSongs'] ?? $data['top_songs'] ?? $data['topSongsData'] ?? [];
+        foreach ($songsData as $song) {
             $topSongs[] = self::normalizeTrack($song);
         }
         
         $similarArtists = [];
-        foreach ($data['similarArtists'] ?? [] as $similar) {
-            $similarArtists[] = self::normalizeArtist($similar);
+        // Try different possible locations for similar artists
+        $similarData = $data['similarArtists'] ?? $data['similar_artists'] ?? $data['relatedArtists'] ?? [];
+        foreach ($similarData as $similar) {
+            $normalizedSimilar = self::normalizeArtist($similar);
+            // Ensure similar artists have images
+            if (empty($normalizedSimilar['image']) && isset($similar['image'])) {
+                $normalizedSimilar['image'] = self::getBestImage($similar['image']);
+                $normalizedSimilar['thumbnail'] = $normalizedSimilar['image'];
+            }
+            $similarArtists[] = $normalizedSimilar;
+        }
+        
+        // If we still don't have an artist but have a name from artistId, create basic artist info
+        if (!$artist && !empty($artistId) && !is_numeric($artistId)) {
+            $artist = [
+                'id' => $artistId,
+                'name' => $artistId,
+                'image' => '',
+                'thumbnail' => '',
+                'type' => 'artist'
+            ];
         }
         
         return [
             'artist' => $artist,
             'top_songs' => $topSongs,
             'similar_artists' => $similarArtists,
-            'top_songs_count' => (int)($data['topSongsCount'] ?? count($topSongs)),
+            'top_songs_count' => (int)($data['topSongsCount'] ?? $data['top_songs_count'] ?? count($topSongs)),
         ];
     }
     
@@ -501,10 +599,17 @@ class JioSaavnService {
     private static function normalizeArtist($artist) {
         $id = $artist['artistId'] ?? $artist['id'] ?? '';
         $name = $artist['name'] ?? 'Unknown';
-        $image = $artist['image'] ?? '';
+        $image = $artist['image'] ?? $artist['thumbnail'] ?? $artist['image_url'] ?? '';
         
         // Get best quality image
         $image = self::getBestImage($image);
+        
+        // If we have an ID but no image, try to construct a default Saavn image URL
+        if (empty($image) && !empty($id) && !empty($name)) {
+            // Try to construct a default Saavn artist image URL
+            $cleanName = preg_replace('/[^a-zA-Z0-9]/', '_', $name);
+            $image = "https://c.saavncdn.com/artists/{$cleanName}_50x50.jpg";
+        }
         
         return [
             'id'        => $id,

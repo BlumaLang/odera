@@ -89,33 +89,82 @@ class ArtistRoutes {
         }
         $artistName = $artist['name'] ?? $artistId;
         
-        // Fetch 100 songs from search in one go
-        $searchData = JioSaavnService::searchSongs("{$artistName} songs", 1, 100);
+        // Fetch more songs from search (200 for better coverage)
+        $searchData = JioSaavnService::searchSongs("{$artistName} songs", $page, $limit * 3);
         $allResults = $searchData['results'] ?? [];
         
-        // Filter to only songs by this artist
+        // If we didn't get enough results, try a broader search
+        if (count($allResults) < $limit && $page === 1) {
+            $broaderSearch = JioSaavnService::searchSongs($artistName, $page, $limit * 3);
+            $broaderResults = $broaderSearch['results'] ?? [];
+            $allResults = array_merge($allResults, $broaderResults);
+        }
+        
+        // Filter to only songs by this artist with better matching
         $filtered = [];
-        $target = strtolower($artistName);
+        $target = strtolower(trim($artistName));
+        $targetWords = array_filter(preg_split('/\s+/', $target));
+        
         foreach ($allResults as $song) {
             $songArtist = strtolower($song['artist'] ?? '');
             $songTitle = strtolower($song['title'] ?? '');
-            if ($songArtist === '' && $songTitle === '') continue;
-            if (strpos($songArtist, $target) !== false || strpos($songTitle, $target) !== false) {
+            
+            if (empty($songArtist) && empty($songTitle)) continue;
+            
+            // Check for matches with better logic
+            $matchFound = false;
+            
+            // 1. Direct artist name match
+            if (strpos($songArtist, $target) !== false || strpos($target, $songArtist) !== false) {
+                $matchFound = true;
+            }
+            
+            // 2. Word-based matching for artist name
+            if (!$matchFound && !empty($targetWords)) {
+                $wordMatchCount = 0;
+                foreach ($targetWords as $word) {
+                    if (strlen($word) > 2 && strpos($songArtist, $word) !== false) {
+                        $wordMatchCount++;
+                    }
+                }
+                // If at least one significant word matches, consider it a match
+                if ($wordMatchCount > 0) {
+                    $matchFound = true;
+                }
+            }
+            
+            // 3. Check if artist appears in title (for featured tracks)
+            if (!$matchFound && strpos($songTitle, $target) !== false) {
+                $matchFound = true;
+            }
+            
+            if ($matchFound) {
                 $filtered[] = $song;
+            }
+        }
+        
+        // Remove duplicates by videoId
+        $uniqueTracks = [];
+        $seenIds = [];
+        foreach ($filtered as $track) {
+            $videoId = $track['videoId'] ?? $track['video_id'] ?? $track['id'] ?? '';
+            if ($videoId && !in_array($videoId, $seenIds)) {
+                $seenIds[] = $videoId;
+                $uniqueTracks[] = $track;
             }
         }
         
         // Paginate
         $offset = ($page - 1) * $limit;
-        $pageTracks = array_slice($filtered, $offset, $limit);
-        $hasMore = ($offset + $limit) < count($filtered);
+        $pageTracks = array_slice($uniqueTracks, $offset, $limit);
+        $hasMore = ($offset + $limit) < count($uniqueTracks);
         
         sendJson([
             'tracks'   => $pageTracks,
             'results'  => $pageTracks,
             'has_more' => $hasMore,
             'artist'   => $artist,
-            'total'    => count($filtered),
+            'total'    => count($uniqueTracks),
         ]);
     }
     

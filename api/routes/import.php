@@ -92,11 +92,29 @@ class ImportRoutes {
             $titles = $titleMatches[1] ?? [];
             $count = min(count($vids), count($titles));
             for ($i = 0; $i < $count; $i++) {
-                $tracks[] = [
-                    'title' => html_entity_decode($titles[$i], ENT_QUOTES, 'UTF-8'),
-                    'artist' => '',
-                    'videoId' => $vids[$i],
-                ];
+                $title = html_entity_decode($titles[$i], ENT_QUOTES, 'UTF-8');
+                $videoId = $vids[$i];
+                
+                // Skip common non-song titles
+                $lowerTitle = strtolower($title);
+                $skipKeywords = ['description', 'keyboard shortcuts', 'playback', 'general', 
+                                'subtitles and closed captions', 'spherical videos', 'shortcuts'];
+                
+                $shouldSkip = false;
+                foreach ($skipKeywords as $keyword) {
+                    if (strpos($lowerTitle, $keyword) !== false) {
+                        $shouldSkip = true;
+                        break;
+                    }
+                }
+                
+                if (!$shouldSkip && !empty($title) && !empty($videoId)) {
+                    $tracks[] = [
+                        'title' => $title,
+                        'artist' => '',
+                        'videoId' => $videoId,
+                    ];
+                }
             }
         }
 
@@ -118,34 +136,118 @@ class ImportRoutes {
     private static function parseYtInitialData($data) {
         $tracks = [];
 
-        // Navigate: contents.twoColumnBrowseResultsRenderer.tabs[0].tabRenderer.content.sectionListRenderer.contents[0].itemSectionRenderer.contents[0].playlistVideoListRenderer.contents
+        // Try multiple possible data structures for YouTube playlist data
+        
+        // Method 1: Try the standard path
+        // contents.twoColumnBrowseResultsRenderer.tabs[0].tabRenderer.content.sectionListRenderer.contents[0].itemSectionRenderer.contents[0].playlistVideoListRenderer.contents
         $tabs = $data['contents']['twoColumnBrowseResultsRenderer']['tabs'] ?? [];
-        if (empty($tabs)) return [];
+        if (!empty($tabs)) {
+            $tabContent = $tabs[0]['tabRenderer']['content'] ?? null;
+            if ($tabContent) {
+                $sections = $tabContent['sectionListRenderer']['contents'] ?? [];
+                if (!empty($sections)) {
+                    // Try itemSectionRenderer first
+                    $items = $sections[0]['itemSectionRenderer']['contents'] ?? [];
+                    if (!empty($items)) {
+                        $playlistRenderer = $items[0]['playlistVideoListRenderer']['contents'] ?? [];
+                    }
 
-        $tabContent = $tabs[0]['tabRenderer']['content'] ?? null;
-        if (!$tabContent) return [];
+                    // Try playlistVideoListRenderer directly
+                    if (empty($playlistRenderer)) {
+                        $playlistRenderer = $sections[0]['playlistVideoListRenderer']['contents'] ?? [];
+                    }
 
-        $sections = $tabContent['sectionListRenderer']['contents'] ?? [];
-        if (empty($sections)) return [];
-
-        // Try itemSectionRenderer first
-        $items = $sections[0]['itemSectionRenderer']['contents'] ?? [];
-        if (!empty($items)) {
-            $playlistRenderer = $items[0]['playlistVideoListRenderer']['contents'] ?? [];
+                    $tracks = self::extractVideosFromPlaylistRenderer($playlistRenderer);
+                }
+            }
         }
 
-        // Try playlistVideoListRenderer directly
-        if (empty($playlistRenderer)) {
-            $playlistRenderer = $sections[0]['playlistVideoListRenderer']['contents'] ?? [];
+        // Method 2: Try alternate paths if Method 1 didn't work
+        if (empty($tracks)) {
+            // Try to find playlistVideoListRenderer anywhere in the data
+            $playlistRenderer = self::findPlaylistVideoListRenderer($data);
+            if (!empty($playlistRenderer)) {
+                $tracks = self::extractVideosFromPlaylistRenderer($playlistRenderer);
+            }
         }
 
+        // Method 3: Try to extract from videoRenderer objects
+        if (empty($tracks)) {
+            $tracks = self::findVideoRenderers($data);
+        }
+
+        return $tracks;
+    }
+
+    private static function findPlaylistVideoListRenderer($data, $maxDepth = 5) {
+        return self::searchForKey($data, 'playlistVideoListRenderer', $maxDepth);
+    }
+
+    private static function findVideoRenderers($data, $maxDepth = 5) {
+        $videoRenderers = self::searchForKey($data, 'videoRenderer', $maxDepth);
+        $tracks = [];
+        
+        foreach ($videoRenderers as $video) {
+            if (!is_array($video)) continue;
+            
+            $title = $video['title']['runs'][0]['text'] ?? $video['title']['simpleText'] ?? '';
+            $videoId = $video['videoId'] ?? '';
+            $shortBylineText = $video['shortBylineText']['runs'][0]['text'] ?? $video['shortBylineText']['simpleText'] ?? '';
+            
+            if ($title && $videoId && !in_array(strtolower($title), ['description', 'keyboard shortcuts', 'playback', 'general'])) {
+                $tracks[] = [
+                    'title' => html_entity_decode($title, ENT_QUOTES, 'UTF-8'),
+                    'artist' => html_entity_decode($shortBylineText, ENT_QUOTES, 'UTF-8'),
+                    'videoId' => $videoId,
+                ];
+            }
+        }
+        
+        return $tracks;
+    }
+
+    private static function searchForKey($data, $key, $maxDepth, $currentDepth = 0) {
+        if ($currentDepth >= $maxDepth) return [];
+        
+        $results = [];
+        
+        if (is_array($data)) {
+            foreach ($data as $k => $value) {
+                if ($k === $key) {
+                    if (is_array($value) && isset($value['contents'])) {
+                        $results = array_merge($results, $value['contents']);
+                    } else {
+                        $results[] = $value;
+                    }
+                } else {
+                    $results = array_merge($results, self::searchForKey($value, $key, $maxDepth, $currentDepth + 1));
+                }
+            }
+        }
+        
+        return $results;
+    }
+
+    private static function extractVideosFromPlaylistRenderer($playlistRenderer) {
+        $tracks = [];
+        
+        if (!is_array($playlistRenderer)) return $tracks;
+        
         foreach ($playlistRenderer as $item) {
             $video = $item['playlistVideoRenderer'] ?? null;
             if (!$video) continue;
 
-            $title = $video['title']['runs'][0]['text'] ?? '';
+            $title = $video['title']['runs'][0]['text'] ?? $video['title']['simpleText'] ?? '';
             $videoId = $video['videoId'] ?? '';
-            $shortBylineText = $video['shortBylineText']['runs'][0]['text'] ?? '';
+            $shortBylineText = $video['shortBylineText']['runs'][0]['text'] ?? $video['shortBylineText']['simpleText'] ?? '';
+            
+            // Skip common non-song titles
+            $lowerTitle = strtolower($title);
+            if (empty($title) || empty($videoId) || 
+                in_array($lowerTitle, ['description', 'keyboard shortcuts', 'playback', 'general', 
+                                       'subtitles and closed captions', 'spherical videos'])) {
+                continue;
+            }
 
             if ($title && $videoId) {
                 $tracks[] = [
@@ -155,7 +257,7 @@ class ImportRoutes {
                 ];
             }
         }
-
+        
         return $tracks;
     }
 

@@ -499,54 +499,61 @@ export const api = {
     }
   },
 
-  // ─── Artist songs (via /search?q=artistName+songs) ────────────────────────
+  // ─── Artist songs (via /artist/{id}/songs endpoint) ────────────────────────
   getArtistSongs: async (artistIdOrName, page = 1, limit = 20) => {
     if (!artistIdOrName) return { tracks: [], results: [], has_more: false };
 
     try {
-      // Fetch up to 100 results from the search endpoint
-      const data = await backendFetch(`search`, {
-        q: `${artistIdOrName} songs`,
-        offset: 0,
-        limit: 100,
+      // Use the artist songs endpoint which now uses improved search logic
+      const data = await backendFetch(`artist/${encodeURIComponent(artistIdOrName)}/songs`, {
+        page,
+        limit,
       });
-      const allResults = (data.results || []).map(decodeTrackEntities);
-
-      // Split artist name into words for flexible matching
-      const nameWords = (artistIdOrName || "")
-        .toLowerCase()
-        .split(/\s+/)
-        .filter((w) => w.length > 2);
-
-      // Filter: at least one name word must appear in artist or title
-      const filtered = allResults.filter((song) => {
-        const artist = (song.artist || "").toLowerCase();
-        const title = (song.title || "").toLowerCase();
-        const combined = artist + " " + title;
-        return nameWords.some((w) => combined.includes(w));
-      });
-
-      // Paginate through filtered results
-      const offset = (page - 1) * limit;
-      const pageTracks = filtered.slice(offset, offset + limit);
-      const hasMore = (offset + limit) < filtered.length;
-
+      
+      // Ensure we have artist data
+      const artistData = data.artist || {};
+      
       return {
-        tracks: pageTracks,
-        results: pageTracks,
-        has_more: hasMore,
-        artist: {},
-        total: filtered.length,
+        tracks: data.tracks || data.results || [],
+        results: data.tracks || data.results || [],
+        has_more: data.has_more || false,
+        artist: artistData,
+        total: data.total || 0,
       };
     } catch (err) {
-      console.warn("[API] Artist songs error:", err.message);
-    }
-
-    // Fallback: generic search
-    try {
-      return await api.search(`${artistIdOrName} songs`, (page - 1) * limit, limit);
-    } catch (_) {
-      return { tracks: [], results: [], has_more: false };
+      console.warn("[API] Artist songs endpoint failed, trying direct search:", err.message);
+      
+      // Fallback: direct search
+      try {
+        const searchData = await backendFetch(`search`, {
+          q: `${artistIdOrName} songs`,
+          offset: (page - 1) * limit,
+          limit: limit * 2, // Get more to filter
+        });
+        
+        const allResults = (searchData.results || []).map(decodeTrackEntities);
+        
+        // Simple filtering for fallback
+        const target = artistIdOrName.toLowerCase();
+        const filtered = allResults.filter((song) => {
+          const artist = (song.artist || "").toLowerCase();
+          const title = (song.title || "").toLowerCase();
+          return artist.includes(target) || title.includes(target);
+        }).slice(0, limit); // Take only needed amount
+        
+        const hasMore = allResults.length >= limit * 2;
+        
+        return {
+          tracks: filtered,
+          results: filtered,
+          has_more: hasMore,
+          artist: {},
+          total: filtered.length,
+        };
+      } catch (searchErr) {
+        console.warn("[API] Artist songs fallback also failed:", searchErr.message);
+        return { tracks: [], results: [], has_more: false };
+      }
     }
   },
 
