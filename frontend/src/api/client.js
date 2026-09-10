@@ -325,11 +325,11 @@ export const api = {
   },
 
   // ─── Artist songs (from artist page topSongs + search fallback) ───────────
-  getArtistSongs: async (artistIdOrName, page = 0, limit = 20) => {
+  getArtistSongs: async (artistIdOrName, page = 1, limit = 20) => {
     if (!artistIdOrName) return { tracks: [], results: [], has_more: false };
     try {
       const data = await backendFetch(`artist/${artistIdOrName}/songs`, {
-        page: page + 1,
+        page,
         limit,
       });
       const tracks = data.tracks || [];
@@ -356,7 +356,7 @@ export const api = {
 
     // Fallback: search for artist songs
     try {
-      return await api.search(`${artistIdOrName} songs`, page * limit, limit);
+      return await api.search(`${artistIdOrName} songs`, (page - 1) * limit, limit);
     } catch (_) {
       return { tracks: [], results: [], has_more: false };
     }

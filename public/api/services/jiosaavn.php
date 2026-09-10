@@ -240,11 +240,11 @@ class JioSaavnService {
         $page = max(1, (int)$page);
         $limit = max(1, min(50, (int)$limit));
         
-        // Step 1: Get artist page details for top songs and artist info
+        // Get artist info from page details
         $data = self::callApi('artist.getArtistPageDetails', [
             'artistId' => $artistId,
             'p'        => 1,
-            'n'        => $limit,
+            'n'        => 1,
         ]);
         
         $artist = null;
@@ -252,62 +252,27 @@ class JioSaavnService {
             $artist = self::normalizeArtist($data['artist']);
         }
         
-        // Step 2: Get top songs from artist page
-        $topSongs = [];
-        foreach ($data['topSongs'] ?? [] as $song) {
-            $topSongs[] = self::normalizeTrack($song);
-        }
-        
-        $topSongsCount = (int)($data['topSongsCount'] ?? count($topSongs));
         $artistName = $artistName ?? $artist['name'] ?? $artistId;
         
-        // Step 3: For page 1, return top songs. For subsequent pages, use search API.
-        if ($page === 1) {
-            // Return top songs for first page
-            $allTracks = $topSongs;
-            
-            // If we have fewer top songs than limit, try search for more
-            if (count($allTracks) < $limit) {
-                $searchData = self::callApi('search.getResults', [
-                    'q' => $artistName . ' songs',
-                    'p' => 1,
-                    'n' => 50,
-                ]);
-                
-                if (!empty($searchData['results'])) {
-                    $searchTracks = self::filterSearchByArtist($searchData['results'], $artistName, $topSongs);
-                    $remaining = $limit - count($allTracks);
-                    $allTracks = array_merge($allTracks, array_slice($searchTracks, 0, $remaining));
-                }
-            }
-            
-            $hasMore = ($topSongsCount > count($allTracks)) || count($allTracks) >= $limit;
-        } else {
-            // For pages beyond the first, search for artist songs
-            $searchData = self::searchSongs($artistName, 1, 100);
-            $searchResults = $searchData['results'] ?? [];
-            
-            $allTracks = self::filterSearchByArtist($searchResults, $artistName);
-            $offset = ($page - 2) * $limit;
-            $allTracks = array_slice($allTracks, $offset, $limit);
-            
-            $hasMore = count($allTracks) >= $limit;
-        }
+        // Fetch a large batch from search (up to 100 results at once)
+        $searchData = self::searchSongs($artistName, 1, 100);
+        $allSearchResults = $searchData['results'] ?? [];
         
-        // Ensure we don't exceed limit
-        if (count($allTracks) > $limit) {
-            $allTracks = array_slice($allTracks, 0, $limit);
-        }
+        // Filter to only this artist's songs
+        $filtered = self::filterSearchByArtist($allSearchResults, $artistName);
         
-        // Determine has_more: if we got a full page, there might be more
-        $hasMore = count($allTracks) >= $limit;
+        // Paginate through filtered results
+        $offset = ($page - 1) * $limit;
+        $pageTracks = array_slice($filtered, $offset, $limit);
+        
+        $hasMore = ($offset + $limit) < count($filtered);
         
         return [
-            'tracks'   => $allTracks,
-            'results'  => $allTracks,
+            'tracks'   => $pageTracks,
+            'results'  => $pageTracks,
             'has_more' => $hasMore,
             'artist'   => $artist,
-            'total'    => max($topSongsCount, count($allTracks)),
+            'total'    => count($filtered),
         ];
     }
     
@@ -320,23 +285,20 @@ class JioSaavnService {
         $targetArtist = strtolower($artistName);
         
         foreach ($results as $song) {
-            if (($song['type'] ?? '') !== 'song') continue;
+            $tid = $song['videoId'] ?? $song['video_id'] ?? $song['id'] ?? '';
+            if (!$tid) continue;
             
-            $normalized = self::normalizeTrack($song);
-            $tid = $normalized['videoId'] ?? '';
+            if (in_array($tid, $excludeIds)) continue;
             
-            // Skip if already in exclude list
-            if ($tid && in_array($tid, $excludeIds)) continue;
+            $songArtist = strtolower($song['artist'] ?? '');
+            $songTitle = strtolower($song['title'] ?? '');
             
-            // Check if song artist matches target artist
-            $songArtist = strtolower($normalized['artist'] ?? '');
-            $songTitle = strtolower($normalized['title'] ?? '');
+            if (empty($songArtist) && empty($songTitle)) continue;
             
-            // Match if artist name appears in the song's artist field or title
             if (strpos($songArtist, $targetArtist) !== false || 
                 strpos($targetArtist, $songArtist) !== false ||
                 strpos($songTitle, $targetArtist) !== false) {
-                $filtered[] = $normalized;
+                $filtered[] = $song;
             }
         }
         
