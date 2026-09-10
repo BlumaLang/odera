@@ -283,43 +283,15 @@ class JioSaavnService {
             
             $hasMore = ($topSongsCount > count($allTracks)) || count($allTracks) >= $limit;
         } else {
-            // For pages beyond the first, use search API to get more songs
-            // Fetch a larger batch and paginate through it
-            $searchPage = 1;
-            $searchLimit = 100; // Fetch 100 results at a time from search
+            // For pages beyond the first, search for artist songs
+            $searchData = self::searchSongs($artistName, 1, 100);
+            $searchResults = $searchData['results'] ?? [];
             
-            $searchData = self::callApi('search.getResults', [
-                'q' => $artistName . ' songs',
-                'p' => $searchPage,
-                'n' => $searchLimit,
-            ]);
-            
-            $allTracks = [];
-            $totalSearchTracks = 0;
+            $allTracks = self::filterSearchByArtist($searchResults, $artistName);
             $offset = ($page - 2) * $limit;
-            if (!empty($searchData['results'])) {
-                $searchTracks = self::filterSearchByArtist($searchData['results'], $artistName, []);
-                $totalSearchTracks = count($searchTracks);
-                $allTracks = array_slice($searchTracks, $offset, $limit);
-            }
+            $allTracks = array_slice($allTracks, $offset, $limit);
             
-            $hasMore = count($allTracks) >= $limit && $totalSearchTracks > $offset + $limit;
-            
-            // Debug: include search info in response for troubleshooting
-            return [
-                'tracks'   => $allTracks,
-                'results'  => $allTracks,
-                'has_more' => $hasMore,
-                'artist'   => $artist,
-                'total'    => max($topSongsCount, count($allTracks)),
-                '_debug'   => [
-                    'artistName' => $artistName,
-                    'rawResultsCount' => count($searchData['results'] ?? []),
-                    'filteredCount' => $totalSearchTracks,
-                    'offset' => $offset,
-                    'page' => $page,
-                ],
-            ];
+            $hasMore = count($allTracks) >= $limit;
         }
         
         // Ensure we don't exceed limit
