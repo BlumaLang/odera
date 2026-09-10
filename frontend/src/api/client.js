@@ -489,7 +489,18 @@ export const api = {
   savePremiumSubscription: () => Promise.resolve({}),
 
   // ─── YouTube Playlist Import (stub) ──────────────────────────────────────
-  importYouTubePlaylist: () => Promise.resolve({ error: "Not available" }),
+  importYouTubePlaylist: async (url) => {
+    try {
+      const data = await backendFetch("import", {}, {
+        method: "POST",
+        body: { url },
+      });
+      return data;
+    } catch (err) {
+      console.warn("[API] YouTube/Spotify import error:", err.message);
+      throw err;
+    }
+  },
 
   // ─── QR Login stubs ──────────────────────────────────────────────────────
   createQRSession: () => Promise.resolve({ error: "Not available" }),

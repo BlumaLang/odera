@@ -300,9 +300,12 @@ try {
             sendError('Song recognition requires additional integration', 501);
             break;
         
-        // ==================== YOUTUBE ====================
+        // ==================== YOUTUBE / SPOTIFY IMPORT ====================
         case 'youtube':
-            sendError('YouTube import requires additional integration', 501);
+        case 'spotify':
+        case 'import':
+            require_once __DIR__ . '/routes/import.php';
+            ImportRoutes::handle($resource, $method);
             break;
         
         // ==================== DEFAULT ====================
