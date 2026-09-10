@@ -304,6 +304,22 @@ class JioSaavnService {
             }
             
             $hasMore = count($allTracks) >= $limit && $totalSearchTracks > $offset + $limit;
+            
+            // Debug: include search info in response for troubleshooting
+            return [
+                'tracks'   => $allTracks,
+                'results'  => $allTracks,
+                'has_more' => $hasMore,
+                'artist'   => $artist,
+                'total'    => max($topSongsCount, count($allTracks)),
+                '_debug'   => [
+                    'artistName' => $artistName,
+                    'rawResultsCount' => count($searchData['results'] ?? []),
+                    'filteredCount' => $totalSearchTracks,
+                    'offset' => $offset,
+                    'page' => $page,
+                ],
+            ];
         }
         
         // Ensure we don't exceed limit
