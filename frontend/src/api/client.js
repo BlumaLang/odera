@@ -152,6 +152,26 @@ export const setApiBaseUrl = () => {};
 export const getApiBaseUrl = () => API_BASE;
 export const warmupBackend = () => backendFetch("health").catch(() => {});
 
+// ─── HTML entity decoder for track metadata ───────────────────────────────────
+const HTML_ENTITIES = { quot: '"', amp: "&", lt: "<", gt: ">", apos: "'", nbsp: " " };
+function decodeHTMLEntities(str) {
+  if (!str || typeof str !== "string") return str;
+  return str.replace(/&(#x?[\da-f]+|[a-z]+);/gi, (match, entity) => {
+    if (entity.startsWith("#x")) return String.fromCharCode(parseInt(entity.slice(2), 16));
+    if (entity.startsWith("#")) return String.fromCharCode(parseInt(entity.slice(1), 10));
+    return HTML_ENTITIES[entity.toLowerCase()] || match;
+  });
+}
+function decodeTrackEntities(track) {
+  if (!track || typeof track !== "object") return track;
+  return {
+    ...track,
+    title: decodeHTMLEntities(track.title),
+    artist: decodeHTMLEntities(track.artist),
+    album: decodeHTMLEntities(track.album),
+  };
+}
+
 // ─── Client-side YouTube/Spotify playlist scrapers ────────────────────────────
 function extractYouTubePlaylistId(url) {
   const m = url.match(/[?&]list=([a-zA-Z0-9_-]+)/);
@@ -330,11 +350,12 @@ export const api = {
         offset,
         limit,
       });
+      const results = (data.results || []).map(decodeTrackEntities);
       return {
         query: query.trim(),
         count: data.count || 0,
-        results: data.results || [],
-        tracks: data.tracks || [],
+        results,
+        tracks: results,
         has_more: data.has_more || false,
       };
     } catch (err) {
@@ -489,18 +510,20 @@ export const api = {
         offset: 0,
         limit: 100,
       });
-      const allResults = data.results || [];
+      const allResults = (data.results || []).map(decodeTrackEntities);
 
-      // Filter to only songs by this artist
-      const target = (artistIdOrName || "").toLowerCase();
+      // Split artist name into words for flexible matching
+      const nameWords = (artistIdOrName || "")
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length > 2);
+
+      // Filter: at least one name word must appear in artist or title
       const filtered = allResults.filter((song) => {
         const artist = (song.artist || "").toLowerCase();
         const title = (song.title || "").toLowerCase();
-        return (
-          artist.includes(target) ||
-          target.includes(artist) ||
-          title.includes(target)
-        );
+        const combined = artist + " " + title;
+        return nameWords.some((w) => combined.includes(w));
       });
 
       // Paginate through filtered results
