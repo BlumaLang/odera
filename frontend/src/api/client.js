@@ -478,37 +478,48 @@ export const api = {
     }
   },
 
-  // ─── Artist songs (from artist page topSongs + search fallback) ───────────
+  // ─── Artist songs (via /search?q=artistName+songs) ────────────────────────
   getArtistSongs: async (artistIdOrName, page = 1, limit = 20) => {
     if (!artistIdOrName) return { tracks: [], results: [], has_more: false };
+
     try {
-      const data = await backendFetch(`artist/${artistIdOrName}/songs`, {
-        page,
-        limit,
+      // Fetch up to 100 results from the search endpoint
+      const data = await backendFetch(`search`, {
+        q: `${artistIdOrName} songs`,
+        offset: 0,
+        limit: 100,
       });
-      const tracks = data.tracks || [];
-      const results = data.results || tracks;
-      
-      // Use backend's has_more if provided, otherwise infer from page size
-      let hasMore;
-      if (typeof data.has_more === "boolean") {
-        hasMore = data.has_more;
-      } else {
-        hasMore = tracks.length >= limit;
-      }
-      
+      const allResults = data.results || [];
+
+      // Filter to only songs by this artist
+      const target = (artistIdOrName || "").toLowerCase();
+      const filtered = allResults.filter((song) => {
+        const artist = (song.artist || "").toLowerCase();
+        const title = (song.title || "").toLowerCase();
+        return (
+          artist.includes(target) ||
+          target.includes(artist) ||
+          title.includes(target)
+        );
+      });
+
+      // Paginate through filtered results
+      const offset = (page - 1) * limit;
+      const pageTracks = filtered.slice(offset, offset + limit);
+      const hasMore = (offset + limit) < filtered.length;
+
       return {
-        tracks,
-        results,
+        tracks: pageTracks,
+        results: pageTracks,
         has_more: hasMore,
-        artist: data.artist || {},
-        total: data.total || tracks.length,
+        artist: {},
+        total: filtered.length,
       };
     } catch (err) {
       console.warn("[API] Artist songs error:", err.message);
     }
 
-    // Fallback: search for artist songs
+    // Fallback: generic search
     try {
       return await api.search(`${artistIdOrName} songs`, (page - 1) * limit, limit);
     } catch (_) {
