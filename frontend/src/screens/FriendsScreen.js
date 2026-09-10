@@ -1517,11 +1517,6 @@ export default function FriendsScreen({ onNavigate }) {
                                   <Ionicons name="hourglass" size={12} color="#AAAAAA" style={{ marginRight: 3 }} />
                                   <Text style={[styles.blendMatchScoreBadgeText, { color: "#AAAAAA" }]}>Sent</Text>
                                 </View>
-                              ) : savedScore ? (
-                                <View style={styles.blendMatchScoreBadge}>
-                                  <Ionicons name="flash" size={13} color="#1DB954" style={{ marginRight: 2 }} />
-                                  <Text style={styles.blendMatchScoreBadgeText}>{savedScore}%</Text>
-                                </View>
                               ) : (
                                 <View style={styles.blendOpenPillBtn}>
                                   <Text style={styles.blendOpenPillText}>Blend</Text>
