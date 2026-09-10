@@ -7,11 +7,12 @@ import {
   Modal,
   StyleSheet,
   ActivityIndicator,
+  Animated,
+  Easing,
   Dimensions,
   Platform,
   FlatList,
   StatusBar,
-  ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
@@ -25,7 +26,7 @@ import AddToPlaylistModal from "./AddToPlaylistModal";
 import { registerBackAction } from "../services/navigation";
 
 const { width, height } = Dimensions.get("window");
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 30;
 
 // In-memory module cache for artist info and songs to prevent re-fetching and flicker
 const artistDataCache = new Map();
@@ -60,6 +61,48 @@ function dedupeArtistSongs(existing, incoming) {
     deduped.push(item);
   }
   return deduped;
+}
+
+// Skeleton pulse component
+function ArtistSongSkeleton() {
+  const pulseAnim = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 0.65,
+          duration: 700,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0.3,
+          duration: 700,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  return (
+    <View style={styles.skeletonContainer}>
+      {[1, 2, 3, 4, 5, 6].map((k) => (
+        <View key={k} style={styles.skeletonRow}>
+          <Animated.View style={[styles.skeletonRank, { opacity: pulseAnim }]} />
+          <Animated.View style={[styles.skeletonSquare, { opacity: pulseAnim }]} />
+          <View style={styles.skeletonTextCol}>
+            <Animated.View style={[styles.skeletonLine, { width: 160 + (k % 3) * 35, height: 14, opacity: pulseAnim }]} />
+            <Animated.View style={[styles.skeletonLine, { width: 110 + (k % 2) * 20, height: 11, marginTop: 6, opacity: pulseAnim }]} />
+          </View>
+          <Animated.View style={[styles.skeletonIcon, { opacity: pulseAnim }]} />
+        </View>
+      ))}
+    </View>
+  );
 }
 
 // Memoized row component so song items do not re-render on audio playback ticks
@@ -131,6 +174,26 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     }
   }, [initialPhoto]);
 
+  // Fix stale songs: immediately clear songs when artist changes
+  useEffect(() => {
+    if (!visible || !cleanName) return;
+    const cached = artistDataCache.get(cleanName);
+    if (cached && cached.songs?.length > 0) {
+      // Has cache – show cached data instantly
+      setSongs(cached.songs);
+      setHasMore(cached.hasMore);
+      setIsLoading(false);
+      if (cached.image) setArtistImage(cached.image);
+      else if (initialPhoto) setArtistImage(initialPhoto);
+    } else {
+      // No cache – clear everything so previous artist's songs disappear
+      setSongs([]);
+      setIsLoading(true);
+      setHasMore(true);
+    }
+    pageRef.current = cached?.page || 0;
+  }, [cleanName, visible]);
+
   // Fetch artist photo and official songs
   useEffect(() => {
     if (!visible || !cleanName) return;
@@ -142,24 +205,8 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       recordArtistMovement(cleanName);
     }
 
-    const cached = artistDataCache.get(cleanName);
-    if (cached) {
-      if (cached.image) setArtistImage(cached.image);
-      else if (initialPhoto) setArtistImage(initialPhoto);
-      if (cached.songs && cached.songs.length > 0) {
-        setSongs(cached.songs);
-        setHasMore(cached.hasMore);
-        setIsLoading(false);
-        if (cached.image) return;
-      }
-    }
-
-    setIsLoading(true);
-    setIsLoadingMore(false);
-    setHasMore(true);
-    pageRef.current = 0;
-
     // 1. Resolve photo from local cache, props, or API
+    const cached = artistDataCache.get(cleanName);
     const initialBest =
       initialPhoto ||
       cached?.image ||
@@ -192,8 +239,18 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
       })
       .catch(() => {});
 
+    // 2. If no cache, fetch first page of songs
+    if (cached?.songs?.length > 0) {
+      // Already populated from the cache-clearing effect
+      if (isMounted) setIsLoading(false);
+      return () => { isMounted = false; };
+    }
 
-    // 2. Fetch top songs using official artist endpoint with deduplication
+    setIsLoading(true);
+    setIsLoadingMore(false);
+    setHasMore(true);
+    pageRef.current = 0;
+
     api
       .getArtistSongs(cleanName, 0, PAGE_SIZE)
       .then((data) => {
@@ -375,15 +432,10 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
     );
   }, [isLoadingMore, hasMore, songs.length]);
 
-  // Memoized Empty
+  // Memoized Empty – skeleton while loading, empty state when no songs
   const emptyComponent = useMemo(() => {
     if (isLoading) {
-      return (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Loading tracks for {cleanName}...</Text>
-        </View>
-      );
+      return <ArtistSongSkeleton />;
     }
     return (
       <View style={styles.emptyContainer}>
@@ -392,7 +444,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
         <Text style={styles.emptySub}>Could not load songs for this artist right now.</Text>
       </View>
     );
-  }, [isLoading, cleanName]);
+  }, [isLoading]);
 
   const renderItem = useCallback(
     ({ item, index }) => (
@@ -448,7 +500,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
           ListEmptyComponent={emptyComponent}
           renderItem={renderItem}
           onEndReached={handleLoadMore}
-          onEndReachedThreshold={0.5}
+          onEndReachedThreshold={0.8}
           style={styles.scrollView}
           contentContainerStyle={[styles.scrollContent, (isDesktop || isTablet) && styles.desktopContent]}
           showsVerticalScrollIndicator={false}
@@ -629,17 +681,6 @@ const styles = StyleSheet.create({
     width: "100%",
     paddingHorizontal: 12,
   },
-  loadingContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 48,
-    gap: 12,
-  },
-  loadingText: {
-    fontFamily: fonts.medium,
-    fontSize: 13,
-    color: colors.textSecondary,
-  },
   emptyContainer: {
     alignItems: "center",
     justifyContent: "center",
@@ -681,5 +722,43 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 12,
     color: "rgba(255, 255, 255, 0.4)",
+  },
+  skeletonContainer: {
+    paddingHorizontal: 4,
+    marginTop: 8,
+  },
+  skeletonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 4,
+  },
+  skeletonRank: {
+    width: 20,
+    height: 14,
+    borderRadius: 4,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    marginRight: 10,
+  },
+  skeletonSquare: {
+    width: 48,
+    height: 48,
+    borderRadius: 6,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    marginRight: 12,
+  },
+  skeletonTextCol: {
+    flex: 1,
+  },
+  skeletonLine: {
+    borderRadius: 4,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  skeletonIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.06)",
   },
 });

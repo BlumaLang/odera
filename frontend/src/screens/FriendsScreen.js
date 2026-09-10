@@ -10,6 +10,8 @@ import {
   Platform,
   ActivityIndicator,
   Modal,
+  Animated,
+  Easing,
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
@@ -26,8 +28,119 @@ import PlaylistModal from "../components/PlaylistModal";
 import CreatePlaylistModal from "../components/CreatePlaylistModal";
 import { registerBackAction } from "../services/navigation";
 
+function FriendsSkeleton({ type }) {
+  const pulseAnim = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 0.6,
+          duration: 750,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0.3,
+          duration: 750,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  if (type === "blend") {
+    return (
+      <View style={styles.skeletonWrap}>
+        {[1, 2, 3].map((i) => (
+          <View key={i} style={styles.skeletonBlendCard}>
+            <View style={styles.skeletonBlendAvatars}>
+              <Animated.View style={[styles.skeletonCircle, { width: 44, height: 44, opacity: pulseAnim }]} />
+              <Animated.View style={[styles.skeletonCircle, { width: 44, height: 44, marginLeft: -14, opacity: pulseAnim }]} />
+            </View>
+            <View style={styles.skeletonBlendInfo}>
+              <Animated.View style={[styles.skeletonLine, { width: 130 + (i % 2) * 30, height: 14, opacity: pulseAnim }]} />
+              <Animated.View style={[styles.skeletonLine, { width: 100 + (i % 3) * 20, height: 11, marginTop: 6, opacity: pulseAnim }]} />
+            </View>
+            <Animated.View style={[styles.skeletonPill, { width: 60, height: 28, opacity: pulseAnim }]} />
+          </View>
+        ))}
+      </View>
+    );
+  }
+
+  if (type === "requests") {
+    return (
+      <View style={styles.skeletonWrap}>
+        <Animated.View style={[styles.skeletonLine, { width: 160, height: 14, marginBottom: 14, opacity: pulseAnim }]} />
+        {[1, 2, 3].map((i) => (
+          <View key={i} style={styles.skeletonUserRow}>
+            <Animated.View style={[styles.skeletonCircle, { width: 46, height: 46, opacity: pulseAnim }]} />
+            <View style={styles.skeletonUserInfo}>
+              <Animated.View style={[styles.skeletonLine, { width: 120 + (i % 2) * 30, height: 14, opacity: pulseAnim }]} />
+              <Animated.View style={[styles.skeletonLine, { width: 80 + (i % 3) * 15, height: 10, marginTop: 5, opacity: pulseAnim }]} />
+            </View>
+            <View style={styles.skeletonRequestBtns}>
+              <Animated.View style={[styles.skeletonPill, { width: 70, height: 32, opacity: pulseAnim }]} />
+              <Animated.View style={[styles.skeletonCircle, { width: 32, height: 32, opacity: pulseAnim }]} />
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  }
+
+  if (type === "collab") {
+    return (
+      <View style={styles.skeletonWrap}>
+        {[1, 2, 3].map((i) => (
+          <View key={i} style={styles.skeletonCollabCard}>
+            <Animated.View style={[styles.skeletonSquare, { width: 80, height: 80, opacity: pulseAnim }]} />
+            <View style={styles.skeletonCollabInfo}>
+              <Animated.View style={[styles.skeletonLine, { width: 140 + (i % 2) * 30, height: 14, opacity: pulseAnim }]} />
+              <Animated.View style={[styles.skeletonLine, { width: 100 + (i % 3) * 20, height: 10, marginTop: 6, opacity: pulseAnim }]} />
+              <View style={styles.skeletonCollabBadges}>
+                <Animated.View style={[styles.skeletonPill, { width: 50, height: 20, opacity: pulseAnim }]} />
+                <Animated.View style={[styles.skeletonPill, { width: 40, height: 20, opacity: pulseAnim }]} />
+              </View>
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  }
+
+  // friends or search
+  return (
+    <View style={styles.skeletonWrap}>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <View key={i} style={styles.skeletonUserRow}>
+          <View style={styles.skeletonAvatarWrap}>
+            <Animated.View style={[styles.skeletonCircle, { width: 46, height: 46, opacity: pulseAnim }]} />
+            <Animated.View style={[styles.skeletonDot, { opacity: pulseAnim }]} />
+          </View>
+          <View style={styles.skeletonUserInfo}>
+            <Animated.View style={[styles.skeletonLine, { width: 120 + (i % 3) * 25, height: 14, opacity: pulseAnim }]} />
+            <Animated.View style={[styles.skeletonLine, { width: 90 + (i % 2) * 20, height: 10, marginTop: 5, opacity: pulseAnim }]} />
+          </View>
+          <View style={styles.skeletonActionBtns}>
+            {i % 3 === 0 ? (
+              <Animated.View style={[styles.skeletonPill, { width: 70, height: 30, opacity: pulseAnim }]} />
+            ) : (
+              <Animated.View style={[styles.skeletonPill, { width: 70, height: 30, opacity: pulseAnim }]} />
+            )}
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 /**
- * Robust UserAvatar component using user avatar photo, Toon Head, or vibrant colored monogram
+ * Robust UserAvatar component using memoji, photo, or vibrant colored monogram
  */
 function UserAvatar({ user, size = 44, fontSize = 15, style }) {
   const [imgError, setImgError] = useState(false);
@@ -37,17 +150,7 @@ function UserAvatar({ user, size = 44, fontSize = 15, style }) {
   }, [user?.avatar, user?.photoURL, user?.avatarUrl]);
 
   const username = user?.username || user?.displayName || user?.name || "Friend";
-
-  const candidateUri =
-    (user?.avatar && typeof user.avatar === "string" && user.avatar.startsWith("http") && !user.avatar.includes("googleusercontent.com"))
-      ? user.avatar
-      : (user?.avatarUrl && typeof user.avatarUrl === "string" && user.avatarUrl.startsWith("http") && !user.avatarUrl.includes("googleusercontent.com"))
-      ? user.avatarUrl
-      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http") && !user.photoURL.includes("googleusercontent.com"))
-      ? user.photoURL
-      : null;
-
-  const isInitial = user?.avatar === "initial" || (!candidateUri && !user?.avatar);
+  const avatar = user?.avatar;
   const initial = (username[0] || "U").toUpperCase();
 
   const bgColor =
@@ -55,37 +158,55 @@ function UserAvatar({ user, size = 44, fontSize = 15, style }) {
       ? user.avatarColor
       : getDeterministicAvatarColor(user?.uid || username);
 
+  // Memoji local asset
+  if (avatar && avatar.startsWith("memoji_")) {
+    const memojiMap = {
+      memoji_0: require("../../assets/memoji/pastel_0.jpg"),
+      memoji_1: require("../../assets/memoji/pastel_1.jpg"),
+      memoji_2: require("../../assets/memoji/pastel_2.jpg"),
+      memoji_3: require("../../assets/memoji/pastel_3.jpg"),
+      memoji_4: require("../../assets/memoji/pastel_4.jpg"),
+      memoji_5: require("../../assets/memoji/pastel_5.jpg"),
+      memoji_6: require("../../assets/memoji/pastel_6.jpg"),
+      memoji_7: require("../../assets/memoji/pastel_7.jpg"),
+      memoji_8: require("../../assets/memoji/pastel_8.jpg"),
+      memoji_9: require("../../assets/memoji/pastel_9.jpg"),
+    };
+    const src = memojiMap[avatar];
+    if (src) {
+      return (
+        <View style={[{ width: size, height: size, borderRadius: size / 2, overflow: "hidden" }, style]}>
+          <Image source={src} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+        </View>
+      );
+    }
+  }
+
+  // HTTP URL (not google)
+  const candidateUri =
+    (avatar && typeof avatar === "string" && avatar.startsWith("http") && !avatar.includes("googleusercontent.com"))
+      ? avatar
+      : (user?.avatarUrl && typeof user.avatarUrl === "string" && user.avatarUrl.startsWith("http") && !user.avatarUrl.includes("googleusercontent.com"))
+      ? user.avatarUrl
+      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http") && !user.photoURL.includes("googleusercontent.com"))
+      ? user.photoURL
+      : null;
+
+  const showImage = !imgError && Boolean(candidateUri);
   const isLightBg = bgColor === "#FFFFFF" || bgColor === "#FFA500";
   const textColor = isLightBg ? "#000000" : "#FFFFFF";
-  const showImage = !imgError && Boolean(candidateUri);
+
+  if (showImage) {
+    return (
+      <View style={[{ width: size, height: size, borderRadius: size / 2, backgroundColor: bgColor, overflow: "hidden" }, style]}>
+        <Image source={{ uri: candidateUri }} style={{ width: "100%", height: "100%" }} resizeMode="cover" onError={() => setImgError(true)} />
+      </View>
+    );
+  }
 
   return (
-    <View
-      style={[
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: bgColor,
-          alignItems: "center",
-          justifyContent: "center",
-          overflow: "hidden",
-        },
-        style,
-      ]}
-    >
-      {showImage ? (
-        <Image
-          source={{ uri: candidateUri }}
-          style={{ width: "100%", height: "100%" }}
-          resizeMode="cover"
-          onError={() => setImgError(true)}
-        />
-      ) : (
-        <Text style={{ fontFamily: fonts.bold, fontSize, color: textColor }}>
-          {initial}
-        </Text>
-      )}
+    <View style={[{ width: size, height: size, borderRadius: size / 2, backgroundColor: bgColor, alignItems: "center", justifyContent: "center" }, style]}>
+      <Text style={{ fontFamily: fonts.bold, fontSize, color: textColor }}>{initial}</Text>
     </View>
   );
 }
@@ -134,6 +255,7 @@ export default function FriendsScreen({ onNavigate }) {
   const [copiedBlendShare, setCopiedBlendShare] = useState(false);
   const [isCreatingBlend, setIsCreatingBlend] = useState(false);
   const [blendSuccessMsg, setBlendSuccessMsg] = useState("");
+  const [blendRequestSent, setBlendRequestSent] = useState(false);
   const searchInputRef = useRef(null);
 
   // Collab Playlist states
@@ -149,6 +271,21 @@ export default function FriendsScreen({ onNavigate }) {
   const [isLoadingDiscover, setIsLoadingDiscover] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
   const [isSearchingUsers, setIsSearchingUsers] = useState(false);
+  const [contextLoaded, setContextLoaded] = useState(false);
+  const [tabLoading, setTabLoading] = useState(true);
+
+  useEffect(() => {
+    if (friends !== undefined || friendRequests !== undefined) {
+      setContextLoaded(true);
+    }
+  }, [friends, friendRequests]);
+
+  useEffect(() => {
+    if (!contextLoaded) return;
+    setTabLoading(true);
+    const timer = setTimeout(() => setTabLoading(false), 300);
+    return () => clearTimeout(timer);
+  }, [activeTab, contextLoaded]);
 
   // Live activities mapped by friend UID: { [uid]: { track, isPlaying, updatedAt } }
   const [friendsActivity, setFriendsActivity] = useState({});
@@ -162,6 +299,7 @@ export default function FriendsScreen({ onNavigate }) {
     likedSongsCount: 0,
     isLoading: false,
   });
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   // Fetch full stats (streamCount, listening hours, premium plan, liked songs) for selectedUserProfile
   useEffect(() => {
@@ -272,6 +410,19 @@ export default function FriendsScreen({ onNavigate }) {
   const incomingRequests = friendRequests?.incoming || [];
   const outgoingRequests = friendRequests?.outgoing || [];
   const friendsList = friends || [];
+
+  // Keep selectedUserProfile fresh when friends list updates (avatar, name changes)
+  useEffect(() => {
+    if (!selectedUserProfile?.uid || !friendsList.length) return;
+    const fresh = friendsList.find((f) => f.uid === selectedUserProfile.uid);
+    if (fresh && (
+      fresh.avatar !== selectedUserProfile.avatar ||
+      fresh.avatarColor !== selectedUserProfile.avatarColor ||
+      fresh.username !== selectedUserProfile.username
+    )) {
+      setSelectedUserProfile((prev) => ({ ...prev, ...fresh }));
+    }
+  }, [friendsList]);
 
   // Read URL query parameter ?search= or /friend/{username} on web
   useEffect(() => {
@@ -588,17 +739,71 @@ export default function FriendsScreen({ onNavigate }) {
     });
   };
 
+  // Find existing blend playlist for a friend pair
+  const findExistingBlend = useCallback((friendUid) => {
+    const myUid = currentUser?.uid || userProfile?.uid;
+    if (!collabPlaylists || !myUid || !friendUid) return null;
+    const pairKey = [myUid, friendUid].sort().join("_");
+    return collabPlaylists.find((pl) => {
+      // New Blend records use a stable pair key. Keep the collaborator/name
+      // checks for records created before that key existed.
+      const isBlend = pl?.isBlend || pl?.type === "blend" || String(pl?.name || "").startsWith("Blend:");
+      if (!isBlend) return false;
+      if (pl.blendKey === pairKey) return true;
+      const collabs = pl.collaborators || {};
+      const collabKeys = Object.keys(collabs);
+      // Check if both users are collaborators
+      const hasMe = collabKeys.some((k) => {
+        const c = collabs[k];
+        return (c?.uid || k) === myUid;
+      });
+      const hasFriend = collabKeys.some((k) => {
+        const c = collabs[k];
+        return (c?.uid || k) === friendUid;
+      });
+      return hasMe && hasFriend;
+    });
+  }, [collabPlaylists, currentUser?.uid, userProfile?.uid]);
+
+  const activeBlend = selectedBlendFriend ? findExistingBlend(selectedBlendFriend.uid) : null;
+
   const handleOpenBlend = async (friend) => {
     if (!friend?.uid || !getFriendBlend) return;
     setSelectedBlendFriend(friend);
     setIsLoadingBlend(true);
     setShowBlendModal(true);
     setCopiedBlendShare(false);
+    setBlendRequestSent(false);
+
+    // Check if a blend playlist already exists for this friend pair
+    const existingBlend = findExistingBlend(friend.uid);
+    if (existingBlend) {
+      const matchPct = existingBlend.matchPercentage || 85;
+      setBlendFriendsMap((prev) => ({ ...prev, [friend.uid]: matchPct }));
+      // Check if friend has joined (has role in collaborators)
+      const friendJoined = Boolean(existingBlend.collaborators?.[friend.uid]?.role);
+      if (!friendJoined) {
+        setBlendRequestSent(true);
+      }
+      // Use existing playlist tracks if available
+      const existingTracks = existingBlend.tracks || [];
+      if (existingTracks.length > 0) {
+        setBlendResult({
+          matchPercentage: matchPct,
+          sharedSongsCount: existingTracks.filter((t) => t.blendSource === "both").length,
+          topVibe: "music styles",
+          tracks: existingTracks,
+          friend,
+          updatedAt: existingBlend.updatedAt,
+        });
+        setIsLoadingBlend(false);
+        return;
+      }
+    }
+
     try {
       const res = await getFriendBlend(friend.uid, friend);
       setBlendResult(res);
-      // NOTE: Do not auto-create or save blend here!
-      // The user must explicitly tap "Create Blend Playlist" inside the modal.
     } catch (err) {
       console.warn("Failed to calculate blend:", err);
     } finally {
@@ -618,37 +823,72 @@ export default function FriendsScreen({ onNavigate }) {
         videoId: t.videoId || t.video_id,
       }));
 
-      let created = null;
-      if (createCollabPlaylist) {
-        created = await createCollabPlaylist({
-          name: `Blend: ${myName} + ${friendName}`,
-          description: `${matchPct}% Music Match • Auto-curated daily shared blend`,
-          tracks: formattedTracks,
-          cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
-          collaborators: {
-            [currentUser?.uid]: true,
-            [selectedBlendFriend.uid]: true,
-          },
-          isBlend: true,
-        });
-      }
+      // Check if a blend already exists for this friend pair
+      const existingBlend = findExistingBlend(selectedBlendFriend.uid);
+      let activeCollabId;
 
-      if (sendCollabInvite && selectedBlendFriend.uid) {
-        await sendCollabInvite(selectedBlendFriend.uid, {
-          playlistId: created?.id || `blend_${Date.now()}`,
-          playlistName: `Blend: ${myName} + ${friendName}`,
-          tracksCount: formattedTracks.length,
-          cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
-          type: "blend",
-          matchPercentage: matchPct,
-        });
+      if (existingBlend) {
+        // Update existing blend playlist with new tracks
+        activeCollabId = existingBlend.collabId || existingBlend.id;
+        if (addTracksToCollab && formattedTracks.length > 0) {
+          const existingTrackIds = new Set((existingBlend.tracks || []).map((t) => t.videoId || t.id));
+          const newTracks = formattedTracks.filter((t) => !existingTrackIds.has(t.videoId));
+          if (newTracks.length > 0) {
+            await addTracksToCollab(activeCollabId, newTracks);
+          }
+        }
+        setBlendSuccessMsg("Blend playlist updated!");
+      } else {
+        // Create new blend playlist and send invite
+        let created = null;
+        if (createCollabPlaylist) {
+          created = await createCollabPlaylist({
+            name: `Blend: ${myName} + ${friendName}`,
+            description: `${matchPct}% Music Match • Auto-curated daily shared blend`,
+            tracks: formattedTracks,
+            cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
+            collaborators: {
+              [currentUser?.uid]: true,
+              [selectedBlendFriend.uid]: true,
+            },
+            isBlend: true,
+            matchPercentage: matchPct,
+          });
+        }
+        activeCollabId = created?.collabId || created?.playlist?.id || created?.id;
+
+        if (sendCollabInvite && selectedBlendFriend.uid) {
+          await sendCollabInvite(selectedBlendFriend.uid, {
+            collabId: activeCollabId,
+            playlistId: activeCollabId,
+            id: activeCollabId,
+            name: `Blend: ${myName} + ${friendName}`,
+            playlistName: `Blend: ${myName} + ${friendName}`,
+            tracks: formattedTracks,
+            tracksCount: formattedTracks.length,
+            cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
+            type: "blend",
+            matchPercentage: matchPct,
+            playlist: created?.playlist,
+          });
+        }
       }
 
       setBlendFriendsMap((prev) => ({
         ...prev,
         [selectedBlendFriend.uid]: matchPct,
       }));
-      setBlendSuccessMsg("Collab Blend request sent!");
+
+      // Only mark as request sent if friend hasn't joined yet
+      const friendUid = selectedBlendFriend.uid;
+      const updatedBlend = findExistingBlend(friendUid);
+      const friendJoinedNow = Boolean(updatedBlend?.collaborators?.[friendUid]?.role);
+      if (!friendJoinedNow) {
+        setBlendRequestSent(true);
+        setBlendSuccessMsg("Blend request sent!");
+      } else {
+        setBlendSuccessMsg("Blend updated!");
+      }
       setTimeout(() => setBlendSuccessMsg(""), 4000);
     } catch (err) {
       console.warn("Failed to create blend playlist:", err);
@@ -735,23 +975,29 @@ export default function FriendsScreen({ onNavigate }) {
                 activeOpacity={0.75}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                {userProfile?.avatar === "initial" ? (
-                  <Text style={styles.avatarText}>
-                    {(userProfile?.username?.[0] || "U").toUpperCase()}
-                  </Text>
-                ) : avatarIcon && avatarIcon.startsWith("http") && !avatarIcon.includes("googleusercontent.com") ? (
-                  <Image
-                    source={{ uri: avatarIcon }}
-                    style={styles.avatarImage}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <Image
-                    source={{ uri: `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(userProfile?.username || userInitial || "Felix")}` }}
-                    style={styles.avatarImage}
-                    resizeMode="cover"
-                  />
-                )}
+                {(() => {
+                  const av = userProfile?.avatar;
+                  if (av && av.startsWith("memoji_")) {
+                    const memojiMap = {
+                      memoji_0: require("../../assets/memoji/pastel_0.jpg"),
+                      memoji_1: require("../../assets/memoji/pastel_1.jpg"),
+                      memoji_2: require("../../assets/memoji/pastel_2.jpg"),
+                      memoji_3: require("../../assets/memoji/pastel_3.jpg"),
+                      memoji_4: require("../../assets/memoji/pastel_4.jpg"),
+                      memoji_5: require("../../assets/memoji/pastel_5.jpg"),
+                      memoji_6: require("../../assets/memoji/pastel_6.jpg"),
+                      memoji_7: require("../../assets/memoji/pastel_7.jpg"),
+                      memoji_8: require("../../assets/memoji/pastel_8.jpg"),
+                      memoji_9: require("../../assets/memoji/pastel_9.jpg"),
+                    };
+                    const src = memojiMap[av];
+                    if (src) return <Image source={src} style={styles.avatarImage} resizeMode="cover" />;
+                  }
+                  if (av && av.startsWith("http") && !av.includes("googleusercontent.com")) {
+                    return <Image source={{ uri: av }} style={styles.avatarImage} resizeMode="cover" />;
+                  }
+                  return <Text style={styles.avatarText}>{(userProfile?.username?.[0] || "U").toUpperCase()}</Text>;
+                })()}
               </TouchableOpacity>
             </View>
           </View>
@@ -929,7 +1175,9 @@ export default function FriendsScreen({ onNavigate }) {
                 </Text>
               </View>
 
-              {combinedSearchResults.length > 0 ? (
+              {isSearchingUsers ? (
+                <FriendsSkeleton type="search" />
+              ) : combinedSearchResults.length > 0 ? (
                 <View style={styles.unifiedUserList}>
                   {combinedSearchResults.map((u) => {
                     const activity = friendsActivity[u.uid];
@@ -1062,7 +1310,9 @@ export default function FriendsScreen({ onNavigate }) {
           ) : (
             /* ═══════════ TABBED VIEW: Friends | Requests ═══════════ */
             <>
-              {activeTab === "friends" ? (
+              {tabLoading ? (
+                <FriendsSkeleton type={activeTab} />
+              ) : activeTab === "friends" ? (
                 /* ── FRIENDS TAB ── */
                 <View style={styles.sectionBlock}>
                   {sortedFriends.length > 0 ? (
@@ -1197,6 +1447,9 @@ export default function FriendsScreen({ onNavigate }) {
                     <View style={styles.blendFriendsList}>
                       {friendsList.map((friend) => {
                         const savedScore = blendFriendsMap[friend.uid];
+                        const existingBlend = findExistingBlend(friend.uid);
+                        const friendJoined = Boolean(existingBlend?.collaborators?.[friend.uid]?.role);
+                        const requestPending = existingBlend && !friendJoined;
                         return (
                           <TouchableOpacity
                             key={`blend_${friend.uid}`}
@@ -1226,14 +1479,21 @@ export default function FriendsScreen({ onNavigate }) {
                                 You & {friend.username}
                               </Text>
                               <Text style={styles.blendCardSubtitle} numberOfLines={1}>
-                                {savedScore
-                                  ? `${savedScore}% Music Compatibility`
-                                  : "Tap to calculate vibe match & playlist"}
+                                {requestPending
+                                  ? "Waiting for friend to join"
+                                  : savedScore
+                                    ? `${savedScore}% Music Compatibility`
+                                    : "Tap to calculate vibe match & playlist"}
                               </Text>
                             </View>
 
                             <View style={styles.blendCardActionWrap}>
-                              {savedScore ? (
+                              {requestPending ? (
+                                <View style={[styles.blendMatchScoreBadge, { backgroundColor: "rgba(255, 255, 255, 0.08)", borderColor: "rgba(255, 255, 255, 0.15)" }]}>
+                                  <Ionicons name="hourglass" size={12} color="#AAAAAA" style={{ marginRight: 3 }} />
+                                  <Text style={[styles.blendMatchScoreBadgeText, { color: "#AAAAAA" }]}>Sent</Text>
+                                </View>
+                              ) : savedScore ? (
                                 <View style={styles.blendMatchScoreBadge}>
                                   <Ionicons name="flash" size={13} color="#1DB954" style={{ marginRight: 2 }} />
                                   <Text style={styles.blendMatchScoreBadgeText}>{savedScore}%</Text>
@@ -1283,7 +1543,7 @@ export default function FriendsScreen({ onNavigate }) {
                             <View style={styles.requestActionsRow}>
                               <TouchableOpacity
                                 style={styles.acceptBtn}
-                                onPress={() => acceptCollabInvite && acceptCollabInvite(inv.inviteId || inv.id, inv.playlistId)}
+                                onPress={() => acceptCollabInvite && acceptCollabInvite(inv.collabId || inv.playlistId || inv.id)}
                                 activeOpacity={0.8}
                               >
                                 <Ionicons name="checkmark" size={14} color="#000000" style={{ marginRight: 4 }} />
@@ -1291,7 +1551,7 @@ export default function FriendsScreen({ onNavigate }) {
                               </TouchableOpacity>
                               <TouchableOpacity
                                 style={styles.declineCloseBtn}
-                                onPress={() => declineCollabInvite && declineCollabInvite(inv.inviteId || inv.id)}
+                                onPress={() => declineCollabInvite && declineCollabInvite(inv.collabId || inv.playlistId || inv.id)}
                                 activeOpacity={0.8}
                                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                               >
@@ -1416,10 +1676,17 @@ export default function FriendsScreen({ onNavigate }) {
                                 <Text style={styles.collabCardTitle} numberOfLines={1}>
                                   {pl.name}
                                 </Text>
-                                <View style={styles.collabGreenBadge}>
-                                  <Ionicons name="people" size={10} color="#1DB954" style={{ marginRight: 3 }} />
-                                  <Text style={styles.collabGreenBadgeText}>Collab</Text>
-                                </View>
+                                {pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend:") ? (
+                                  <View style={[styles.collabGreenBadge, { borderColor: "rgba(139, 92, 246, 0.4)", backgroundColor: "rgba(139, 92, 246, 0.12)" }]}>
+                                    <Ionicons name="flash" size={10} color="#8B5CF6" style={{ marginRight: 3 }} />
+                                    <Text style={[styles.collabGreenBadgeText, { color: "#8B5CF6" }]}>Blend</Text>
+                                  </View>
+                                ) : (
+                                  <View style={styles.collabGreenBadge}>
+                                    <Ionicons name="people" size={10} color="#1DB954" style={{ marginRight: 3 }} />
+                                    <Text style={styles.collabGreenBadgeText}>Collab</Text>
+                                  </View>
+                                )}
                               </View>
 
                               {/* Collaborator Avatars */}
@@ -1494,77 +1761,100 @@ export default function FriendsScreen({ onNavigate }) {
       </ScrollView>
       </View>
 
-      {/* ═══════════ FRIEND PROFILE MODAL (BOTTOM SHEET) ═══════════ */}
+      {/* ═══════════ FRIEND PROFILE MODAL (COMPACT BOTTOM SHEET) ═══════════ */}
       <Modal
         visible={!!selectedUserProfile}
         transparent={true}
         animationType="slide"
-        onRequestClose={() => setSelectedUserProfile(null)}
+        onRequestClose={() => { setSelectedUserProfile(null); setShowProfileMenu(false); }}
       >
         <View style={styles.modalOverlay}>
           <TouchableOpacity
             style={StyleSheet.absoluteFillObject}
             activeOpacity={1}
-            onPress={() => setSelectedUserProfile(null)}
+            onPress={() => { setSelectedUserProfile(null); setShowProfileMenu(false); }}
           />
           <View
             style={styles.profileModalCard}
             onStartShouldSetResponder={() => true}
           >
-            {/* Modal Top Bar with Drag Handle */}
+            {/* Drag Handle */}
             <View style={styles.profileModalTopBar}>
               <View style={styles.profileModalDragHandle} />
             </View>
 
-            {/* User Profile Header: Avatar on Left, Info on Right (Matching Profile layout) */}
-            <View style={styles.profileModalHeaderRow}>
-              <View style={styles.profileModalAvatarWrap}>
-                <UserAvatar user={selectedUserProfile} size={72} fontSize={26} />
+            {/* Compact Header: Avatar + Name + Online + Menu */}
+            <View style={styles.pmHeaderRow}>
+              <View style={styles.pmAvatarWrap}>
+                <UserAvatar user={selectedUserProfile} size={56} fontSize={20} />
                 {isUserFriend(selectedUserProfile) && friendsActivity[selectedUserProfile?.uid]?.isPlaying && (
-                  <View style={styles.profileModalDotLive} />
+                  <View style={styles.pmOnlineDot} />
                 )}
               </View>
-
-              <View style={styles.profileModalHeaderInfo}>
-                <Text style={styles.profileModalName} numberOfLines={1}>
+              <View style={styles.pmHeaderInfo}>
+                <Text style={styles.pmName} numberOfLines={1}>
                   {formatPersonName(selectedUserProfile?.displayName || selectedUserProfile?.name || selectedUserProfile?.username || "")}
                 </Text>
-
-                {/* Badges: PREMIUM / FREE + Listened Hours */}
-                <View style={styles.profileModalBadgeRow}>
-                  {selectedUserStats.isPremium ? (
-                    <View style={styles.profileModalPremiumPill}>
-                      <Ionicons name="diamond" size={11} color="#000000" style={{ marginRight: 4 }} />
-                      <Text style={styles.profileModalPremiumPillText}>PREMIUM</Text>
-                    </View>
-                  ) : (
-                    <View style={styles.profileModalFreePill}>
-                      <Text style={styles.profileModalFreePillText}>FREE</Text>
-                    </View>
-                  )}
-
-                  <View style={styles.profileModalHoursPill}>
-                    <Ionicons name="time" size={12} color="rgba(255,255,255,0.6)" style={{ marginRight: 4 }} />
-                    <Text style={styles.profileModalHoursText}>
-                      {selectedUserStats.listeningHours}h Listened
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Metrics: Streams & Liked Songs */}
-                <View style={styles.profileModalMetricsRow}>
-                  <Text style={styles.profileModalMetricsText}>
-                    <Text style={styles.profileModalMetricsBold}>{selectedUserStats.streamCount}</Text> Streams
-                  </Text>
-                  <Text style={styles.profileModalMetricsDot}>•</Text>
-                  <Text style={styles.profileModalMetricsText}>
-                    <Text style={styles.profileModalMetricsBold}>{selectedUserStats.likedSongsCount}</Text> Liked Songs
-                  </Text>
-                </View>
+                <Text style={styles.pmStatus} numberOfLines={1}>
+                  {isUserFriend(selectedUserProfile) && friendsActivity[selectedUserProfile?.uid]?.isPlaying
+                    ? "Listening now"
+                    : isUserFriend(selectedUserProfile)
+                    ? "Friend"
+                    : isUserIncoming(selectedUserProfile)
+                    ? "Wants to be your friend"
+                    : isUserOutgoing(selectedUserProfile)
+                    ? "Request sent"
+                    : "Listener"}
+                </Text>
               </View>
+              {/* ••• Menu */}
+              <TouchableOpacity
+                style={styles.pmMenuBtn}
+                onPress={() => setShowProfileMenu(!showProfileMenu)}
+                activeOpacity={0.7}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="ellipsis-horizontal" size={18} color="#FFFFFF" />
+              </TouchableOpacity>
             </View>
 
-            {/* Live Playing Music Activity Card */}
+            {/* Dropdown Menu */}
+            {showProfileMenu && isUserFriend(selectedUserProfile) && (
+              <View style={styles.pmDropdown}>
+                <TouchableOpacity
+                  style={styles.pmDropdownItem}
+                  onPress={() => {
+                    setShowProfileMenu(false);
+                    setSelectedUserProfile(null);
+                    setFriendToDelete(selectedUserProfile);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="person-remove-outline" size={15} color="#FF5252" style={{ marginRight: 10 }} />
+                  <Text style={[styles.pmDropdownText, { color: "#FF5252" }]}>Remove Friend</Text>
+                </TouchableOpacity>
+                <View style={styles.pmDropdownDivider} />
+                <TouchableOpacity
+                  style={styles.pmDropdownItem}
+                  onPress={() => setShowProfileMenu(false)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="volume-mute-outline" size={15} color="#FFFFFF" style={{ marginRight: 10 }} />
+                  <Text style={styles.pmDropdownText}>Mute Activity</Text>
+                </TouchableOpacity>
+                <View style={styles.pmDropdownDivider} />
+                <TouchableOpacity
+                  style={styles.pmDropdownItem}
+                  onPress={() => setShowProfileMenu(false)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="share-outline" size={15} color="#FFFFFF" style={{ marginRight: 10 }} />
+                  <Text style={styles.pmDropdownText}>Share Profile</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Current Listening Card */}
             {friendsActivity[selectedUserProfile?.uid]?.track ? (() => {
               const friendTrack = friendsActivity[selectedUserProfile?.uid]?.track;
               const isFriendPlaying = Boolean(friendsActivity[selectedUserProfile?.uid]?.isPlaying);
@@ -1582,28 +1872,18 @@ export default function FriendsScreen({ onNavigate }) {
                 null;
 
               return (
-                <View style={styles.profileMusicSection}>
-                  {/* Activity Status Header */}
-                  <View style={styles.profileMusicHeader}>
-                    <Text
-                      style={[
-                        styles.profileMusicHeaderText,
-                        !isFriendPlaying && { color: "#888888" },
-                      ]}
-                    >
-                      {isFriendPlaying ? "Listening Now" : "Last Listened"}
-                    </Text>
+                <View style={styles.pmNowPlaying}>
+                  <View style={styles.pmNowPlayingHeader}>
+                    <Text style={styles.pmNowPlayingLabel}>NOW PLAYING</Text>
                     {isFriendPlaying && (
-                      <View style={styles.livePulsePill}>
-                        <View style={styles.liveDot} />
-                        <Text style={styles.livePulsePillText}>LIVE</Text>
+                      <View style={styles.pmLivePill}>
+                        <View style={styles.pmLiveDot} />
+                        <Text style={styles.pmLiveText}>LIVE</Text>
                       </View>
                     )}
                   </View>
-
-                  {/* Modern Track Row - Seamless list item */}
                   <TouchableOpacity
-                    style={styles.profileTrackRow}
+                    style={styles.pmTrackRow}
                     onPress={() => {
                       if (isThisPlaying) {
                         if (typeof togglePlayPause === "function") togglePlayPause();
@@ -1613,42 +1893,26 @@ export default function FriendsScreen({ onNavigate }) {
                     }}
                     activeOpacity={0.8}
                   >
-                    {/* Track Artwork */}
-                    <View style={styles.profileTrackArtworkWrap}>
+                    <View style={styles.pmTrackArtwork}>
                       {artworkUrl ? (
-                        <Image
-                          source={{ uri: artworkUrl }}
-                          style={styles.profileTrackArtwork}
-                          resizeMode="cover"
-                        />
+                        <Image source={{ uri: artworkUrl }} style={styles.pmTrackArtworkImg} resizeMode="cover" />
                       ) : (
-                        <View style={styles.profileTrackArtworkFallback}>
-                          <Ionicons name="musical-notes" size={24} color="#555555" />
+                        <View style={styles.pmTrackArtworkFallback}>
+                          <Ionicons name="musical-notes" size={18} color="#555555" />
                         </View>
                       )}
                       {isThisPlayingNow && (
-                        <View style={styles.artworkPlayingScrim}>
-                          <MaterialCommunityIcons name="waveform" size={16} color="#1DB954" />
+                        <View style={styles.pmArtworkScrim}>
+                          <MaterialCommunityIcons name="waveform" size={14} color="#1DB954" />
                         </View>
                       )}
                     </View>
-
-                    {/* Track Info */}
-                    <View style={styles.profileTrackInfo}>
-                      <Text style={styles.profileTrackTitle} numberOfLines={1}>
-                        {friendTrack.title}
-                      </Text>
-                      <Text style={styles.profileTrackArtist} numberOfLines={1}>
-                        {friendTrack.artist || "Unknown Artist"}
-                      </Text>
+                    <View style={styles.pmTrackInfo}>
+                      <Text style={styles.pmTrackTitle} numberOfLines={1}>{friendTrack.title}</Text>
+                      <Text style={styles.pmTrackArtist} numberOfLines={1}>{friendTrack.artist || "Unknown Artist"}</Text>
                     </View>
-
-                    {/* Circular Play / Pause Button */}
                     <TouchableOpacity
-                      style={[
-                        styles.profilePlayCircleBtn,
-                        isThisPlayingNow && styles.profilePlayCircleBtnActive,
-                      ]}
+                      style={[styles.pmPlayBtn, isThisPlayingNow && styles.pmPlayBtnActive]}
                       onPress={() => {
                         if (isThisPlaying) {
                           if (typeof togglePlayPause === "function") togglePlayPause();
@@ -1660,7 +1924,7 @@ export default function FriendsScreen({ onNavigate }) {
                     >
                       <Ionicons
                         name={isThisPlayingNow ? "pause" : "play"}
-                        size={18}
+                        size={16}
                         color="#000000"
                         style={!isThisPlayingNow ? { marginLeft: 2 } : {}}
                       />
@@ -1670,77 +1934,84 @@ export default function FriendsScreen({ onNavigate }) {
               );
             })() : null}
 
-            {/* Friendship Actions */}
-            <View style={styles.profileModalActions}>
-              {isUserFriend(selectedUserProfile) ? (
-                <View style={styles.friendsCardSection}>
-                  <TouchableOpacity
-                    style={styles.profileCloseBtn}
-                    onPress={() => setSelectedUserProfile(null)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.profileCloseBtnText}>Close</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.removeFriendBtn}
-                    onPress={() => {
-                      const u = selectedUserProfile;
-                      setSelectedUserProfile(null);
-                      setFriendToDelete(u);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="person-remove-outline" size={14} color="#FF5252" style={{ marginRight: 5 }} />
-                    <Text style={styles.removeFriendBtnText}>Remove Friend</Text>
-                  </TouchableOpacity>
+            {/* Music Connection Stats */}
+            {isUserFriend(selectedUserProfile) && (
+              <View style={styles.pmConnectionSection}>
+                <Text style={styles.pmConnectionTitle}>YOUR MUSIC CONNECTION</Text>
+                <View style={styles.pmStatsRow}>
+                  <View style={styles.pmStatItem}>
+                    <Text style={styles.pmStatValue}>76%</Text>
+                    <Text style={styles.pmStatLabel}>Taste Match</Text>
+                  </View>
+                  <View style={styles.pmStatDivider} />
+                  <View style={styles.pmStatItem}>
+                    <Text style={styles.pmStatValue}>42</Text>
+                    <Text style={styles.pmStatLabel}>Shared Songs</Text>
+                  </View>
+                  <View style={styles.pmStatDivider} />
+                  <View style={styles.pmStatItem}>
+                    <Text style={styles.pmStatValue}>18</Text>
+                    <Text style={styles.pmStatLabel}>Shared Artists</Text>
+                  </View>
                 </View>
+              </View>
+            )}
+
+            {/* Bottom Actions */}
+            <View style={styles.pmActions}>
+              {isUserFriend(selectedUserProfile) ? (
+                <TouchableOpacity
+                  style={styles.pmCloseBtn}
+                  onPress={() => { setSelectedUserProfile(null); setShowProfileMenu(false); }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.pmCloseBtnText}>Close</Text>
+                </TouchableOpacity>
               ) : isUserIncoming(selectedUserProfile) ? (
-                <View style={{ width: "100%", gap: 10 }}>
+                <View style={{ width: "100%", gap: 8 }}>
                   <TouchableOpacity
-                    style={styles.profileMainBtn}
+                    style={styles.pmAcceptBtn}
                     onPress={() => {
                       handleAcceptRequest(selectedUserProfile);
                       setSelectedUserProfile(null);
                     }}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name="checkmark" size={16} color="#000000" style={{ marginRight: 6 }} />
-                    <Text style={styles.profileMainBtnText}>Accept Friend Request</Text>
+                    <Ionicons name="checkmark" size={15} color="#000000" style={{ marginRight: 5 }} />
+                    <Text style={styles.pmAcceptBtnText}>Accept</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={styles.profileCloseBtn}
+                    style={styles.pmCloseBtn}
                     onPress={() => setSelectedUserProfile(null)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.profileCloseBtnText}>Close</Text>
+                    <Text style={styles.pmCloseBtnText}>Close</Text>
                   </TouchableOpacity>
                 </View>
               ) : isUserOutgoing(selectedUserProfile) ? (
-                <View style={{ width: "100%", gap: 10, alignItems: "center" }}>
-                  <View style={styles.pendingBadgeRow}>
-                    <Ionicons name="time-outline" size={16} color="#888888" style={{ marginRight: 6 }} />
-                    <Text style={styles.pendingBadgeText}>Friend Request Pending</Text>
+                <View style={{ width: "100%", gap: 8, alignItems: "center" }}>
+                  <View style={styles.pmPendingBadge}>
+                    <Text style={styles.pmPendingText}>Request Pending</Text>
                   </View>
                   <TouchableOpacity
-                    style={[styles.profileCloseBtn, { width: "100%" }]}
+                    style={[styles.pmCloseBtn, { width: "100%" }]}
                     onPress={() => setSelectedUserProfile(null)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.profileCloseBtnText}>Close</Text>
+                    <Text style={styles.pmCloseBtnText}>Close</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
-                <View style={{ width: "100%", gap: 10, flexDirection: "row" }}>
+                <View style={{ width: "100%", gap: 8, flexDirection: "row" }}>
                   <TouchableOpacity
-                    style={styles.profileCloseBtn}
+                    style={styles.pmCloseBtn}
                     onPress={() => setSelectedUserProfile(null)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.profileCloseBtnText}>Close</Text>
+                    <Text style={styles.pmCloseBtnText}>Close</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.profileMainBtn, { flex: 1 }]}
+                    style={[styles.pmAcceptBtn, { flex: 1 }]}
                     onPress={() => {
                       handleSendFriendDirect(selectedUserProfile);
                       setSelectedUserProfile(null);
@@ -1748,8 +2019,8 @@ export default function FriendsScreen({ onNavigate }) {
                     disabled={isSending}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name="person-add" size={16} color="#000000" style={{ marginRight: 6 }} />
-                    <Text style={styles.profileMainBtnText}>Add Friend</Text>
+                    <Ionicons name="person-add" size={15} color="#000000" style={{ marginRight: 5 }} />
+                    <Text style={styles.pmAcceptBtnText}>Add Friend</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -1858,6 +2129,7 @@ export default function FriendsScreen({ onNavigate }) {
           setShowBlendModal(false);
           setSelectedBlendFriend(null);
           setBlendResult(null);
+          setBlendRequestSent(false);
         }}
       >
         <View style={styles.blendModalOverlay}>
@@ -1868,6 +2140,7 @@ export default function FriendsScreen({ onNavigate }) {
               setShowBlendModal(false);
               setSelectedBlendFriend(null);
               setBlendResult(null);
+              setBlendRequestSent(false);
             }}
           />
           <View style={styles.blendModalSheet} onStartShouldSetResponder={() => true}>
@@ -1880,6 +2153,7 @@ export default function FriendsScreen({ onNavigate }) {
                   setShowBlendModal(false);
                   setSelectedBlendFriend(null);
                   setBlendResult(null);
+                  setBlendRequestSent(false);
                 }}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
@@ -1934,66 +2208,97 @@ export default function FriendsScreen({ onNavigate }) {
                   </Text>
 
                   {blendSuccessMsg ? (
-                    <View style={{ backgroundColor: "#1DB95420", borderColor: "#1DB954", borderWidth: 1, paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, marginBottom: 16, alignSelf: "center" }}>
-                      <Text style={{ color: "#1DB954", fontFamily: fonts.medium, fontSize: 13 }}>{blendSuccessMsg}</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 16, paddingVertical: 8, paddingHorizontal: 14, backgroundColor: "rgba(29, 185, 84, 0.12)", borderRadius: 20, alignSelf: "center" }}>
+                      <Ionicons name="checkmark-circle" size={15} color="#1DB954" style={{ marginRight: 6 }} />
+                      <Text style={{ color: "#1DB954", fontFamily: fonts.medium, fontSize: 13 }}>
+                        {blendSuccessMsg}
+                      </Text>
                     </View>
                   ) : null}
 
-                  {/* Actions Row: Play Blend + Share OR Create Blend Playlist */}
-                  {selectedBlendFriend && blendFriendsMap[selectedBlendFriend.uid] ? (
-                    <View style={styles.blendActionButtonsRow}>
-                      {blendResult.tracks?.length > 0 && (
+                  {/* Actions Row */}
+                  {(() => {
+                    const friendUid = selectedBlendFriend?.uid;
+                    const friendJoined = Boolean(activeBlend?.collaborators?.[friendUid]?.role);
+                    const requestPending = blendRequestSent || (activeBlend && !friendJoined);
+
+                    if (friendJoined) {
+                      // Active blend - both users joined
+                      return (
+                        <View style={styles.blendActionButtonsRow}>
+                          {blendResult.tracks?.length > 0 && (
+                            <TouchableOpacity
+                              style={styles.blendPlayAllBtn}
+                              onPress={() => {
+                                const formatted = blendResult.tracks.map((t) => ({
+                                  ...t,
+                                  videoId: t.videoId || t.video_id,
+                                }));
+                                playTrack(formatted[0], formatted, 0);
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="play" size={18} color="#000000" style={{ marginRight: 6 }} />
+                              <Text style={styles.blendPlayAllBtnText}>Play Blend</Text>
+                            </TouchableOpacity>
+                          )}
+
+                          <TouchableOpacity
+                            style={styles.blendShareBtn}
+                            onPress={handleShareBlend}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons
+                              name={copiedBlendShare ? "checkmark" : "share-social"}
+                              size={16}
+                              color="#FFFFFF"
+                              style={{ marginRight: 6 }}
+                            />
+                            <Text style={styles.blendShareBtnText}>
+                              {copiedBlendShare ? "Copied!" : "Share Match"}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    }
+
+                    if (requestPending) {
+                      // Request sent, waiting for friend to join
+                      return (
+                        <View style={styles.blendActionButtonsRow}>
+                          <TouchableOpacity
+                            style={[styles.blendCreatePlaylistBtn, { opacity: 0.6 }]}
+                            disabled={true}
+                            activeOpacity={1}
+                          >
+                            <Ionicons name="hourglass" size={18} color="#000000" style={{ marginRight: 8 }} />
+                            <Text style={styles.blendCreatePlaylistBtnText}>Request Sent</Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    }
+
+                    // No request yet - show send button
+                    return (
+                      <View style={styles.blendActionButtonsRow}>
                         <TouchableOpacity
-                          style={styles.blendPlayAllBtn}
-                          onPress={() => {
-                            const formatted = blendResult.tracks.map((t) => ({
-                              ...t,
-                              videoId: t.videoId || t.video_id,
-                            }));
-                            playTrack(formatted[0], formatted, 0);
-                          }}
+                          style={styles.blendCreatePlaylistBtn}
+                          onPress={handleCreateBlend}
+                          disabled={isCreatingBlend}
                           activeOpacity={0.8}
                         >
-                          <Ionicons name="play" size={18} color="#000000" style={{ marginRight: 6 }} />
-                          <Text style={styles.blendPlayAllBtnText}>Play Blend</Text>
+                          {isCreatingBlend ? (
+                            <ActivityIndicator size="small" color="#000000" />
+                          ) : (
+                            <>
+                              <Ionicons name="send" size={17} color="#000000" style={{ marginRight: 8 }} />
+                              <Text style={styles.blendCreatePlaylistBtnText}>Send Blend Request</Text>
+                            </>
+                          )}
                         </TouchableOpacity>
-                      )}
-
-                      <TouchableOpacity
-                        style={styles.blendShareBtn}
-                        onPress={handleShareBlend}
-                        activeOpacity={0.8}
-                      >
-                        <Ionicons
-                          name={copiedBlendShare ? "checkmark" : "share-social"}
-                          size={16}
-                          color="#FFFFFF"
-                          style={{ marginRight: 6 }}
-                        />
-                        <Text style={styles.blendShareBtnText}>
-                          {copiedBlendShare ? "Copied!" : "Share Match"}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={styles.blendActionButtonsRow}>
-                      <TouchableOpacity
-                        style={styles.blendCreatePlaylistBtn}
-                        onPress={handleCreateBlend}
-                        disabled={isCreatingBlend}
-                        activeOpacity={0.8}
-                      >
-                        {isCreatingBlend ? (
-                          <ActivityIndicator size="small" color="#000000" />
-                        ) : (
-                          <>
-                            <Ionicons name="infinite" size={19} color="#000000" style={{ marginRight: 8 }} />
-                            <Text style={styles.blendCreatePlaylistBtnText}>Create Blend Playlist</Text>
-                          </>
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  )}
+                      </View>
+                    );
+                  })()}
                 </View>
 
                 {/* Shared Blend Playlist Tracks */}
@@ -2615,7 +2920,7 @@ const styles = StyleSheet.create({
     maxWidth: 320,
   },
 
-  // ═══════════ FRIEND PROFILE MODAL STYLES (BOTTOM SHEET) ═══════════
+  // ═══════════ FRIEND PROFILE MODAL STYLES (COMPACT) ═══════════
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.75)",
@@ -2624,339 +2929,305 @@ const styles = StyleSheet.create({
   },
   profileModalCard: {
     width: "100%",
-    maxWidth: 480,
+    maxWidth: 400,
     backgroundColor: "#161616",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     borderTopWidth: 1,
     borderLeftWidth: Platform.OS === "web" ? 1 : 0,
     borderRightWidth: Platform.OS === "web" ? 1 : 0,
-    borderColor: "rgba(255,255,255,0.12)",
-    paddingHorizontal: 24,
-    paddingTop: 12,
-    paddingBottom: Platform.OS === "web" ? 32 : 44,
+    borderColor: "rgba(255,255,255,0.1)",
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === "web" ? 24 : 36,
     alignItems: "center",
-    position: "relative",
     ...(Platform.OS === "web"
-      ? {
-          boxShadow: "0 -8px 32px rgba(0, 0, 0, 0.6)",
-        }
+      ? { boxShadow: "0 -8px 32px rgba(0, 0, 0, 0.6)" }
       : {}),
   },
   profileModalTopBar: {
     width: "100%",
+    alignItems: "center",
+    height: 24,
+    justifyContent: "center",
+  },
+  profileModalDragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255,255,255,0.2)",
+  },
+
+  // Compact Header
+  pmHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-    height: 32,
-    marginBottom: 10,
+    width: "100%",
+    paddingVertical: 10,
+    gap: 12,
   },
-  modalCloseBtn: {
+  pmAvatarWrap: {
+    position: "relative",
+    flexShrink: 0,
+  },
+  pmOnlineDot: {
     position: "absolute",
-    right: 0,
-    top: 0,
+    bottom: 1,
+    right: 1,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#1DB954",
+    borderWidth: 2.5,
+    borderColor: "#161616",
+  },
+  pmHeaderInfo: {
+    flex: 1,
+  },
+  pmName: {
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: "#FFFFFF",
+    letterSpacing: -0.3,
+  },
+  pmStatus: {
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    color: "#1DB954",
+    marginTop: 1,
+  },
+  pmMenuBtn: {
     width: 32,
     height: 32,
     borderRadius: 16,
     backgroundColor: "rgba(255,255,255,0.08)",
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 2,
+    flexShrink: 0,
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  profileModalDragHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "rgba(255,255,255,0.22)",
-  },
-  profileModalHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
+
+  // Dropdown Menu
+  pmDropdown: {
     width: "100%",
-    paddingTop: 8,
-    paddingBottom: 20,
-    gap: 16,
-  },
-  profileModalAvatarWrap: {
-    position: "relative",
-    flexShrink: 0,
-  },
-  profileModalHeaderInfo: {
-    flex: 1,
-    justifyContent: "center",
-  },
-  profileModalDotLive: {
-    position: "absolute",
-    bottom: 2,
-    right: 2,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: "#1DB954",
-    borderWidth: 3,
-    borderColor: "#161616",
-  },
-  profileModalName: {
-    fontFamily: fonts.bold,
-    fontSize: 24,
-    color: "#FFFFFF",
-    letterSpacing: -0.3,
-  },
-  profileModalHandle: {
-    fontFamily: fonts.medium,
-    fontSize: 13,
-    color: "#888888",
-    marginTop: 2,
-  },
-  profileModalBadgeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 6,
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  profileModalPremiumPill: {
-    height: 24,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.primary,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-  },
-  profileModalPremiumPillText: {
-    fontFamily: fonts.bold,
-    fontSize: 10.5,
-    color: "#000000",
-    letterSpacing: 0.4,
-  },
-  profileModalFreePill: {
-    height: 24,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    paddingHorizontal: 10,
-    borderRadius: 12,
-  },
-  profileModalFreePillText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 10.5,
-    color: "#AAAAAA",
-    letterSpacing: 0.3,
-  },
-  profileModalHoursPill: {
-    height: 24,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.06)",
-    paddingHorizontal: 10,
+    backgroundColor: "#1E1E1E",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.08)",
+    borderColor: "rgba(255,255,255,0.08)",
+    marginBottom: 10,
+    overflow: "hidden",
   },
-  profileModalHoursText: {
-    fontFamily: fonts.medium,
-    fontSize: 11,
-    color: "rgba(255, 255, 255, 0.85)",
-  },
-  profileModalMetricsRow: {
+  pmDropdownItem: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 6,
-    gap: 6,
-    flexWrap: "wrap",
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  profileModalMetricsText: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: colors.textSecondary,
-  },
-  profileModalMetricsBold: {
-    fontFamily: fonts.bold,
+  pmDropdownText: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
     color: "#FFFFFF",
   },
-  profileModalMetricsDot: {
-    color: "rgba(255, 255, 255, 0.3)",
-    fontSize: 11,
+  pmDropdownDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    marginLeft: 14,
   },
-  profileMusicSection: {
+
+  // Now Playing Card
+  pmNowPlaying: {
     width: "100%",
-    marginBottom: 20,
-    paddingTop: 12,
+    marginBottom: 12,
   },
-  profileMusicHeader: {
+  pmNowPlayingHeader: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 8,
     paddingHorizontal: 2,
   },
-  profileMusicHeaderText: {
+  pmNowPlayingLabel: {
     fontFamily: fonts.bold,
-    fontSize: 11,
+    fontSize: 10,
     color: "#1DB954",
-    textTransform: "uppercase",
     letterSpacing: 0.8,
   },
-  livePulsePill: {
+  pmLivePill: {
     marginLeft: "auto",
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "rgba(29, 185, 84, 0.15)",
-    paddingHorizontal: 7,
+    paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 8,
-    gap: 4,
+    borderRadius: 6,
+    gap: 3,
   },
-  liveDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+  pmLiveDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: "#1DB954",
   },
-  livePulsePillText: {
+  pmLiveText: {
     fontFamily: fonts.bold,
-    fontSize: 9,
+    fontSize: 8,
     color: "#1DB954",
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
   },
-  profileTrackRow: {
+  pmTrackRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "transparent",
-    paddingVertical: 4,
-    paddingHorizontal: 2,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderRadius: 10,
+    padding: 8,
+    gap: 10,
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  profileTrackArtworkWrap: {
-    width: 50,
-    height: 50,
-    borderRadius: 8,
+  pmTrackArtwork: {
+    width: 48,
+    height: 48,
+    borderRadius: 6,
     overflow: "hidden",
     position: "relative",
     backgroundColor: "#202020",
     flexShrink: 0,
   },
-  profileTrackArtwork: {
+  pmTrackArtworkImg: {
     width: "100%",
     height: "100%",
   },
-  profileTrackArtworkFallback: {
+  pmTrackArtworkFallback: {
     width: "100%",
     height: "100%",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#202020",
   },
-  artworkPlayingScrim: {
+  pmArtworkScrim: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    backgroundColor: "rgba(0,0,0,0.5)",
     alignItems: "center",
     justifyContent: "center",
   },
-  profileTrackInfo: {
+  pmTrackInfo: {
     flex: 1,
-    marginLeft: 12,
-    marginRight: 10,
   },
-  profileTrackTitle: {
+  pmTrackTitle: {
     fontFamily: fonts.bold,
-    fontSize: 15,
+    fontSize: 14,
     color: "#FFFFFF",
   },
-  profileTrackArtist: {
+  pmTrackArtist: {
     fontFamily: fonts.regular,
-    fontSize: 13,
+    fontSize: 12,
     color: "#999999",
-    marginTop: 2,
+    marginTop: 1,
   },
-  profilePlayCircleBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.primary,
+  pmPlayBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#1DB954",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-    ...(Platform.OS === "web" ? { cursor: "pointer", transition: "transform 0.15s ease" } : {}),
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  profilePlayCircleBtnActive: {
+  pmPlayBtnActive: {
     backgroundColor: "#FFFFFF",
   },
-  profileModalActions: {
+
+  // Music Connection
+  pmConnectionSection: {
     width: "100%",
-    alignItems: "center",
+    marginBottom: 14,
   },
-  friendsCardSection: {
-    width: "100%",
+  pmConnectionTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 10,
+    color: "rgba(255,255,255,0.4)",
+    letterSpacing: 0.8,
+    marginBottom: 10,
+    textAlign: "center",
+  },
+  pmStatsRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  profileCloseBtn: {
-    flex: 1,
-    height: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    borderRadius: 22,
+    justifyContent: "space-around",
+    backgroundColor: "rgba(255,255,255,0.03)",
+    borderRadius: 12,
+    paddingVertical: 12,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.12)",
-    ...(Platform.OS === "web" ? { cursor: "pointer", transition: "all 0.15s ease" } : {}),
+    borderColor: "rgba(255,255,255,0.05)",
   },
-  profileCloseBtnText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 14,
+  pmStatItem: {
+    alignItems: "center",
+    flex: 1,
+  },
+  pmStatValue: {
+    fontFamily: fonts.bold,
+    fontSize: 18,
     color: "#FFFFFF",
   },
-  removeFriendBtn: {
-    flex: 1,
-    height: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255, 82, 82, 0.08)",
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: "rgba(255, 82, 82, 0.25)",
-    ...(Platform.OS === "web" ? { cursor: "pointer", transition: "all 0.15s ease" } : {}),
-  },
-  removeFriendBtnText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 14,
-    color: "#FF5252",
-  },
-  pendingBadgeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.06)",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 18,
-  },
-  pendingBadgeText: {
+  pmStatLabel: {
     fontFamily: fonts.medium,
-    fontSize: 13,
-    color: "#888888",
+    fontSize: 10,
+    color: "rgba(255,255,255,0.45)",
+    marginTop: 2,
   },
-  profileMainBtn: {
+  pmStatDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+
+  // Bottom Actions
+  pmActions: {
+    width: "100%",
+    alignItems: "center",
+  },
+  pmCloseBtn: {
+    width: "100%",
+    height: 40,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.primary,
-    height: 44,
-    borderRadius: 22,
-    width: "100%",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  profileMainBtnText: {
+  pmCloseBtnText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: "#FFFFFF",
+  },
+  pmAcceptBtn: {
+    height: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#1DB954",
+    borderRadius: 20,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  pmAcceptBtnText: {
     fontFamily: fonts.bold,
-    fontSize: 14,
+    fontSize: 13,
     color: "#000000",
+  },
+  pmPendingBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 16,
+  },
+  pmPendingText: {
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    color: "#888888",
   },
 
   // ═══════════ DELETE FRIEND CONFIRMATION MODAL ═══════════
@@ -3629,5 +3900,95 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textMuted,
     textAlign: "center",
+  },
+
+  // Skeleton Styles
+  skeletonWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  skeletonLine: {
+    height: 13,
+    borderRadius: 4,
+    backgroundColor: "#1A1A1A",
+  },
+  skeletonCircle: {
+    borderRadius: 23,
+    backgroundColor: "#1A1A1A",
+  },
+  skeletonPill: {
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#1A1A1A",
+  },
+  skeletonSquare: {
+    borderRadius: 8,
+    backgroundColor: "#1A1A1A",
+  },
+  skeletonDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#1A1A1A",
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+  },
+  skeletonUserRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    gap: 12,
+  },
+  skeletonAvatarWrap: {
+    position: "relative",
+  },
+  skeletonUserInfo: {
+    flex: 1,
+  },
+  skeletonActionBtns: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  skeletonRequestBtns: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  skeletonBlendCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#181818",
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.06)",
+  },
+  skeletonBlendAvatars: {
+    flexDirection: "row",
+    marginRight: 12,
+  },
+  skeletonBlendInfo: {
+    flex: 1,
+  },
+  skeletonCollabCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#181818",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.06)",
+  },
+  skeletonCollabInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  skeletonCollabBadges: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 6,
   },
 });

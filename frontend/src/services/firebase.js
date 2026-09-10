@@ -22,6 +22,7 @@ import {
   update,
   onValue,
   off,
+  runTransaction,
   goOnline,
   goOffline,
 } from "firebase/database";
@@ -541,7 +542,7 @@ export async function saveUserProfile(uid, profileData) {
       uid,
       username: cleanUsername,
       displayName: cleanDisplayName || cleanUsername,
-      avatar: profileData.avatar || "initial",
+      avatar: profileData.avatar || "memoji_0",
       avatarColor: profileData.avatarColor || "#8C52FF",
       friendCode,
       updatedAt: Date.now(),
@@ -839,6 +840,7 @@ export function subscribePlaybackSession(uid, callback) {
 // Local cache and listener set for immediate zero-latency updates
 const localRecentsCache = new Map();
 const localRecentsListeners = new Set();
+const localHiddenTracks = new Map();
 
 function getLocalRecents(uid) {
   const safeUid = uid || "guest";
@@ -1049,8 +1051,14 @@ export function subscribeRecentlyPlayed(uid, callback) {
 
 export async function removeRecentlyPlayed(uid, videoId) {
   const safeUid = uid || "guest";
-  const vid = videoId;
+  const vid = String(videoId || "").replace(/^saavn_/, "");
   if (!vid) return;
+
+  // Removing from history is also an explicit "don't recommend/autoplay this"
+  // preference. A manual play clears this preference again.
+  const hidden = localHiddenTracks.get(safeUid) || new Set();
+  hidden.add(vid);
+  localHiddenTracks.set(safeUid, hidden);
 
   // Update local cache immediately
   const currentLocal = getLocalRecents(safeUid);
@@ -1066,9 +1074,39 @@ export async function removeRecentlyPlayed(uid, videoId) {
     }
     list = list.filter((t) => (t.videoId || t.video_id) !== vid);
     await set(recentRef, list);
+    await set(ref(db, `users/${safeUid}/hiddenTracks/${vid}`), true);
   } catch (error) {
     console.warn("Failed to remove recently played track:", error.message);
   }
+}
+
+export async function loadHiddenTracks(uid) {
+  const safeUid = uid || "guest";
+  try {
+    const snapshot = await get(ref(db, `users/${safeUid}/hiddenTracks`));
+    const hidden = new Set(Object.keys(snapshot.val() || {}));
+    localHiddenTracks.set(safeUid, hidden);
+    return hidden;
+  } catch (_) {
+    return localHiddenTracks.get(safeUid) || new Set();
+  }
+}
+
+export function isTrackHidden(uid, videoId) {
+  const id = String(videoId || "").replace(/^saavn_/, "");
+  return Boolean(id && (localHiddenTracks.get(uid || "guest") || new Set()).has(id));
+}
+
+export async function restoreHiddenTrack(uid, videoId) {
+  const safeUid = uid || "guest";
+  const id = String(videoId || "").replace(/^saavn_/, "");
+  if (!id) return;
+  const hidden = localHiddenTracks.get(safeUid) || new Set();
+  hidden.delete(id);
+  localHiddenTracks.set(safeUid, hidden);
+  try {
+    await set(ref(db, `users/${safeUid}/hiddenTracks/${id}`), null);
+  } catch (_) {}
 }
 
 // ----------------------------------------------------
@@ -1487,6 +1525,145 @@ export async function deletePlaylistRTDB(uid, playlistId) {
 }
 
 // ----------------------------------------------------
+// Automatic Playlist Generation
+// ----------------------------------------------------
+
+/**
+ * Generate an auto playlist based on user's listening context.
+ * Creates a playlist with tracks from liked songs, recently played, and trending.
+ * @param {string} uid - User ID
+ * @param {object} options - { type: "daily_mix"|"discover"|"favorites_mix", name?: string }
+ * @returns {object|null} - Created playlist or null
+ */
+export async function generateAutoPlaylist(uid, options = {}) {
+  if (!uid) return null;
+  const { type = "daily_mix", name: customName } = options;
+
+  try {
+    // Gather user data in parallel
+    const [likedSnap, recentSnap, trendingSnap] = await Promise.all([
+      get(ref(db, `users/${uid}/likedSongs`)).catch(() => null),
+      get(ref(db, `users/${uid}/recentlyPlayed`)).catch(() => null),
+      get(ref(db, `appSongPlays`)).catch(() => null),
+    ]);
+
+    const likedSongs = likedSnap?.exists() ? Object.values(likedSnap.val() || {}) : [];
+    const recentPlayed = recentSnap?.exists() ? Object.values(recentSnap.val() || {}) : [];
+
+    // Get top trending tracks
+    let trendingTracks = [];
+    if (trendingSnap?.exists()) {
+      const plays = trendingSnap.val() || {};
+      trendingTracks = Object.entries(plays)
+        .sort(([, a], [, b]) => (b.playCount || 0) - (a.playCount || 0))
+        .slice(0, 50)
+        .map(([videoId, data]) => ({ videoId, ...data }));
+    }
+
+    // Collect artist frequency from liked + recent
+    const artistCount = {};
+    const allUserTracks = [...likedSongs, ...recentPlayed];
+    for (const t of allUserTracks) {
+      const artist = (t.artist || t.primaryArtists || "").split(/[,&•]/)[0]?.trim();
+      if (artist && artist.length > 1) {
+        artistCount[artist] = (artistCount[artist] || 0) + 1;
+      }
+    }
+
+    // Top artists by frequency
+    const topArtists = Object.entries(artistCount)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 10)
+      .map(([name]) => name);
+
+    // Build track set with deduplication
+    const seenIds = new Set();
+    const selectedTracks = [];
+
+    const addTrack = (track, maxCount = 25) => {
+      if (selectedTracks.length >= maxCount) return;
+      const id = track.videoId || track.video_id || track.id;
+      if (!id || seenIds.has(id)) return;
+      seenIds.add(id);
+      selectedTracks.push({
+        videoId: id,
+        video_id: id,
+        title: track.title || "",
+        artist: track.artist || track.primaryArtists || "Unknown Artist",
+        artwork_url: track.artwork_url || track.thumbnail || "",
+        thumbnail: track.thumbnail || track.artwork_url || "",
+        duration: track.duration || "",
+        duration_seconds: track.duration_seconds || 0,
+      });
+    };
+
+    // Priority 1: Liked songs (user's favorites)
+    for (const t of likedSongs) addTrack(t, 25);
+
+    // Priority 2: Recently played
+    for (const t of recentPlayed) addTrack(t, 25);
+
+    // Priority 3: Trending tracks
+    for (const t of trendingTracks) addTrack(t, 25);
+
+    if (selectedTracks.length === 0) return null;
+
+    // Generate playlist name
+    const now = new Date();
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+    let playlistName = customName;
+    if (!playlistName) {
+      switch (type) {
+        case "daily_mix":
+          playlistName = `Daily Mix — ${dayNames[now.getDay()]}`;
+          break;
+        case "discover":
+          playlistName = `Discover — ${monthNames[now.getMonth()]}`;
+          break;
+        case "favorites_mix":
+          playlistName = `Your Favorites`;
+          break;
+        default:
+          playlistName = `Auto Mix — ${monthNames[now.getMonth()]}`;
+      }
+    }
+
+    // Check if auto playlist with same name already exists
+    const existingPlaylistsSnap = await get(ref(db, `users/${uid}/playlists`)).catch(() => null);
+    const existingPlaylists = existingPlaylistsSnap?.exists()
+      ? (Array.isArray(existingPlaylistsSnap.val()) ? existingPlaylistsSnap.val() : Object.values(existingPlaylistsSnap.val() || {}))
+      : [];
+    const existingAuto = existingPlaylists.find(
+      (p) => p?.name === playlistName || (p?.name || "").startsWith("Daily Mix") || (p?.name || "").startsWith("Discover")
+    );
+
+    if (existingAuto) {
+      // Update existing auto playlist with fresh tracks
+      const updatedPlaylist = {
+        ...existingAuto,
+        tracks: selectedTracks,
+        track_count: selectedTracks.length,
+        cover_url: selectedTracks[0]?.artwork_url || selectedTracks[0]?.thumbnail || "",
+        preview_artwork: selectedTracks[0]?.artwork_url || selectedTracks[0]?.thumbnail || "",
+        updated_at: new Date().toISOString(),
+      };
+      const playlistsRef = ref(db, `users/${uid}/playlists`);
+      const updatedList = existingPlaylists.map((p) => p.id === existingAuto.id ? updatedPlaylist : p);
+      await set(playlistsRef, updatedList);
+      return updatedPlaylist;
+    }
+
+    // Create new auto playlist
+    return await createPlaylistRTDB(uid, playlistName, `Auto-generated based on your listening`, selectedTracks);
+  } catch (err) {
+    console.warn("Failed to generate auto playlist:", err.message);
+    return null;
+  }
+}
+
+// ----------------------------------------------------
 // Global 1-Month Trending Music Feed in RTDB
 // ----------------------------------------------------
 
@@ -1504,14 +1681,30 @@ export async function getTrendingFeedRTDB() {
   }
 }
 
+function stripUndefined(obj) {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) return obj.map(stripUndefined).filter((v) => v !== undefined);
+  if (typeof obj === "object") {
+    const clean = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v === undefined) continue;
+      const cleaned = stripUndefined(v);
+      if (cleaned !== undefined) clean[k] = cleaned;
+    }
+    return clean;
+  }
+  return obj;
+}
+
 export async function saveTrendingFeedRTDB(feedData) {
   if (!feedData || !Array.isArray(feedData.sections)) return;
   try {
     const feedRef = ref(db, "trendingFeed");
-    await set(feedRef, {
+    const payload = stripUndefined({
       ...feedData,
       lastUpdated: new Date().toISOString(),
     });
+    await set(feedRef, payload);
   } catch (e) {
     console.warn("Failed to save trending feed to RTDB:", e.message);
   }
@@ -1739,7 +1932,7 @@ export async function sendFriendRequestRTDB(senderUser, recipientUid, recipientU
     const senderData = {
       uid: senderUser.uid,
       username: senderUser.username || senderUser.displayName || "Staytup Listener",
-      avatar: senderUser.avatar || senderUser.photoURL || "initial",
+      avatar: senderUser.avatar || senderUser.photoURL || "memoji_0",
       avatarColor: senderUser.avatarColor || "#1DB954",
       sentAt: Date.now(),
     };
@@ -1747,7 +1940,7 @@ export async function sendFriendRequestRTDB(senderUser, recipientUid, recipientU
     const recipientData = {
       uid: recipientUid,
       username: recipientUser?.username || "Staytup Friend",
-      avatar: recipientUser?.avatar || "initial",
+      avatar: recipientUser?.avatar || "memoji_0",
       avatarColor: recipientUser?.avatarColor || "#1DB954",
       sentAt: Date.now(),
     };
@@ -1778,7 +1971,7 @@ export async function acceptFriendRequestRTDB(currentUser, requestUser) {
     const myFriendData = {
       uid: reqUid,
       username: requestUser.username || "Friend",
-      avatar: requestUser.avatar || "initial",
+      avatar: requestUser.avatar || "memoji_0",
       avatarColor: requestUser.avatarColor || "#1DB954",
       addedAt: Date.now(),
     };
@@ -1786,7 +1979,7 @@ export async function acceptFriendRequestRTDB(currentUser, requestUser) {
     const theirFriendData = {
       uid: curUid,
       username: currentUser.username || currentUser.displayName || "Friend",
-      avatar: currentUser.avatar || currentUser.photoURL || "initial",
+      avatar: currentUser.avatar || currentUser.photoURL || "memoji_0",
       avatarColor: currentUser.avatarColor || "#1DB954",
       addedAt: Date.now(),
     };
@@ -1855,6 +2048,26 @@ export async function removeFriendRTDB(currentUid, friendUid) {
   }
 }
 
+/**
+ * Sync avatar changes to all friends' stored copies
+ */
+export async function syncAvatarToFriends(uid, avatar, avatarColor) {
+  if (!uid) return;
+  try {
+    const snap = await get(ref(db, `users/${uid}/friends`));
+    if (!snap.exists()) return;
+    const friends = snap.val();
+    const updates = {};
+    for (const [friendUid, _data] of Object.entries(friends)) {
+      updates[`users/${friendUid}/friends/${uid}/avatar`] = avatar || "memoji_0";
+      updates[`users/${friendUid}/friends/${uid}/avatarColor`] = avatarColor || "#1DB954";
+    }
+    await import("firebase/database").then(({ update }) => update(ref(db), updates));
+  } catch (err) {
+    console.warn("Failed to sync avatar to friends:", err.message);
+  }
+}
+
 const SEARCH_AVATAR_BG_COLORS = [
   "#8C52FF", // Amethyst
   "#2EBDD7", // Cyan
@@ -1900,7 +2113,7 @@ export async function searchUsersRTDB(query, currentUid) {
         const uname = prof.username || uData?.username || `listener_${uid.slice(0, 5)}`;
         const dName = prof.displayName || prof.name || uData?.displayName || uname;
         const col = prof.avatarColor || uData?.avatarColor;
-        const av = prof.avatar || uData?.avatar || "initial";
+        const av = prof.avatar || uData?.avatar || "memoji_0";
         usersMap.set(uid, {
           uid,
           username: uname,
@@ -1921,7 +2134,7 @@ export async function searchUsersRTDB(query, currentUid) {
         const existing = usersMap.get(pUser.uid);
         const uname = pUser.username || existing?.username || "user";
         const col = pUser.avatarColor || existing?.avatarColor;
-        const av = pUser.avatar || existing?.avatar || "initial";
+        const av = pUser.avatar || existing?.avatar || "memoji_0";
         usersMap.set(pUser.uid, {
           ...existing,
           ...pUser,
@@ -2181,10 +2394,19 @@ export async function createCollabPlaylist(ownerUid, ownerProfile = {}, playlist
 
   try {
     const existingId = playlistData.existingId || playlistData.id;
+    const isBlend = Boolean(playlistData.isBlend);
+    // A Blend belongs to a pair, not to the person who opened the modal. A
+    // stable pair key prevents either side from creating a second Blend.
+    const blendMembers = isBlend
+      ? Array.from(new Set([ownerUid, ...Object.keys(playlistData.collaborators || {})])).sort()
+      : [];
+    const blendKey = isBlend && blendMembers.length === 2 ? blendMembers.join("_") : null;
     // If it is already a collab playlist, preserve id, otherwise use existingId if valid or generate collabId
-    const collabId = playlistData.collabId || (existingId ? `collab_${existingId.replace(/^pl_/, '')}` : `collab_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`);
+    const collabId = playlistData.collabId || (blendKey
+      ? `blend_${blendKey}`
+      : (existingId ? `collab_${existingId.replace(/^pl_/, '')}` : `collab_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`));
     const ownerName = ownerProfile?.username || ownerProfile?.displayName || "Staytup Listener";
-    const ownerAvatar = ownerProfile?.avatar || "initial";
+    const ownerAvatar = ownerProfile?.avatar || "memoji_0";
     const ownerAvatarColor = ownerProfile?.avatarColor || "#1DB954";
 
     const initialTracks = Array.isArray(playlistData.tracks) ? playlistData.tracks : [];
@@ -2217,10 +2439,19 @@ export async function createCollabPlaylist(ownerUid, ownerProfile = {}, playlist
       track_count: initialTracks.length,
       createdAt: playlistData.createdAt || Date.now(),
       updatedAt: Date.now(),
+      isBlend,
+      blendKey,
     };
 
-    // Store in global collab_playlists
-    await set(ref(db, `collab_playlists/${collabId}`), collabRecord);
+    // Do not overwrite an existing pair Blend if both people create/open it at
+    // nearly the same time. Firebase applies this transaction atomically.
+    let savedRecord = collabRecord;
+    if (isBlend) {
+      const result = await runTransaction(ref(db, `collab_playlists/${collabId}`), (current) => current || collabRecord);
+      savedRecord = result.snapshot.val() || collabRecord;
+    } else {
+      await set(ref(db, `collab_playlists/${collabId}`), collabRecord);
+    }
 
     // Register on owner's collabPlaylists index
     await set(ref(db, `users/${ownerUid}/collab_playlists/${collabId}`), {
@@ -2234,7 +2465,7 @@ export async function createCollabPlaylist(ownerUid, ownerProfile = {}, playlist
       await deletePlaylistRTDB(ownerUid, existingId).catch(() => {});
     }
 
-    return { success: true, collabId, playlist: collabRecord };
+    return { success: true, collabId, playlist: savedRecord, alreadyExists: savedRecord.createdAt !== collabRecord.createdAt };
   } catch (err) {
     console.warn("createCollabPlaylist error:", err);
     return { success: false, error: err.message };
@@ -2256,7 +2487,7 @@ export async function joinCollabPlaylist(uid, userProfile = {}, collabId) {
 
     const playlist = snap.val();
     const userName = userProfile?.username || userProfile?.displayName || "Staytup Listener";
-    const userAvatar = userProfile?.avatar || "initial";
+    const userAvatar = userProfile?.avatar || "memoji_0";
     const userAvatarColor = userProfile?.avatarColor || "#1DB954";
 
     const collaboratorInfo = {
@@ -2598,29 +2829,56 @@ export function subscribeCollabPlaylists(uid, callback) {
 export async function sendCollabInvite(senderUid, senderProfile = {}, targetUid, playlistData = {}) {
   if (!senderUid || !targetUid) return { success: false, error: "Missing sender or target" };
   try {
-    const res = await createCollabPlaylist(senderUid, senderProfile, playlistData);
-    if (!res.success) return res;
+    let collabId = playlistData.collabId || playlistData.playlistId || playlistData.id;
+    let playlist = playlistData.playlist || null;
 
-    const collabId = res.collabId;
+    // Check if collab playlist already exists
+    if (collabId) {
+      try {
+        const snap = await get(ref(db, `collab_playlists/${collabId}`));
+        if (snap.exists()) {
+          playlist = snap.val();
+        }
+      } catch (_) {}
+    }
+
+    // If not found, create new collab playlist
+    if (!playlist) {
+      const createData = {
+        ...playlistData,
+        name: playlistData.name || playlistData.playlistName || "Collaborative Blend",
+        tracks: playlistData.tracks || [],
+      };
+      const res = await createCollabPlaylist(senderUid, senderProfile, createData);
+      if (!res.success) return res;
+      collabId = res.collabId;
+      playlist = res.playlist;
+    }
+
     const inviteId = `invite_${collabId}`;
+    const pName = playlist?.name || playlistData.name || playlistData.playlistName || "Collaborative Blend";
+    const pDesc = playlist?.description || playlistData.description || "";
+    const pCover = playlist?.cover_url || playlistData.cover_url || playlistData.preview_artwork || "";
 
     const inviteRecord = {
       id: inviteId,
+      inviteId,
       collabId,
-      playlistName: playlistData.name || "Collaborative Blend",
-      description: playlistData.description || "",
-      coverUrl: playlistData.cover_url || playlistData.preview_artwork || "",
+      playlistId: collabId,
+      playlistName: pName,
+      description: pDesc,
+      coverUrl: pCover,
       matchPercentage: playlistData.matchPercentage || null,
-      type: playlistData.type || (playlistData.name?.startsWith("Blend:") ? "blend" : "collab"),
+      type: playlistData.type || (pName.startsWith("Blend:") ? "blend" : "collab"),
       senderUid,
       senderName: senderProfile?.username || senderProfile?.displayName || "Friend",
-      senderAvatar: senderProfile?.avatar || "initial",
+      senderAvatar: senderProfile?.avatar || "memoji_0",
       senderAvatarColor: senderProfile?.avatarColor || "#1DB954",
       createdAt: Date.now(),
     };
 
     await set(ref(db, `users/${targetUid}/collab_invites/${collabId}`), inviteRecord);
-    return { success: true, collabId, playlist: res.playlist };
+    return { success: true, collabId, playlist };
   } catch (err) {
     console.warn("sendCollabInvite error:", err);
     return { success: false, error: err.message };
@@ -2652,11 +2910,24 @@ export function subscribeCollabInvites(uid, callback) {
 /**
  * Accept a collaborative playlist invitation
  */
-export async function acceptCollabInvite(uid, userProfile = {}, collabId) {
-  if (!uid || !collabId) return { success: false };
+export async function acceptCollabInvite(uid, userProfile = {}, collabIdOrInvite) {
+  if (!uid || !collabIdOrInvite) return { success: false, error: "Missing parameters" };
   try {
+    const rawId = typeof collabIdOrInvite === "string"
+      ? collabIdOrInvite
+      : (collabIdOrInvite.collabId || collabIdOrInvite.playlistId || collabIdOrInvite.id || "");
+    const collabId = rawId.replace(/^invite_/, "").trim();
+    if (!collabId) return { success: false, error: "Invalid collab ID" };
+
     const res = await joinCollabPlaylist(uid, userProfile, collabId);
-    await set(ref(db, `users/${uid}/collab_invites/${collabId}`), null);
+
+    // Clean up invite under all possible keys
+    await set(ref(db, `users/${uid}/collab_invites/${collabId}`), null).catch(() => {});
+    await set(ref(db, `users/${uid}/collab_invites/invite_${collabId}`), null).catch(() => {});
+    if (rawId && rawId !== collabId) {
+      await set(ref(db, `users/${uid}/collab_invites/${rawId}`), null).catch(() => {});
+    }
+
     return res;
   } catch (err) {
     console.warn("acceptCollabInvite error:", err);
@@ -2667,10 +2938,20 @@ export async function acceptCollabInvite(uid, userProfile = {}, collabId) {
 /**
  * Decline a collaborative playlist invitation
  */
-export async function declineCollabInvite(uid, collabId) {
-  if (!uid || !collabId) return { success: false };
+export async function declineCollabInvite(uid, collabIdOrInvite) {
+  if (!uid || !collabIdOrInvite) return { success: false };
   try {
-    await set(ref(db, `users/${uid}/collab_invites/${collabId}`), null);
+    const rawId = typeof collabIdOrInvite === "string"
+      ? collabIdOrInvite
+      : (collabIdOrInvite.collabId || collabIdOrInvite.playlistId || collabIdOrInvite.id || "");
+    const collabId = rawId.replace(/^invite_/, "").trim();
+    if (!collabId) return { success: false };
+
+    await set(ref(db, `users/${uid}/collab_invites/${collabId}`), null).catch(() => {});
+    await set(ref(db, `users/${uid}/collab_invites/invite_${collabId}`), null).catch(() => {});
+    if (rawId && rawId !== collabId) {
+      await set(ref(db, `users/${uid}/collab_invites/${rawId}`), null).catch(() => {});
+    }
     return { success: true };
   } catch (err) {
     console.warn("declineCollabInvite error:", err);
@@ -2851,3 +3132,42 @@ export async function getCachedTrackImage(videoId) {
   return null;
 }
 
+/**
+ * Save followed artists list to a dedicated path for fast reads
+ */
+export async function saveFollowedArtists(uid, artists) {
+  if (!uid) return;
+  try {
+    const list = Array.isArray(artists) ? artists : [];
+    const artistsRef = ref(db, `users/${uid}/followedArtists`);
+    await set(artistsRef, list);
+    // Also mirror into profile for backward compatibility
+    const profileRef = ref(db, `users/${uid}/profile`);
+    await update(profileRef, {
+      favoriteArtists: list,
+      favorite_artists: list,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.warn("Failed to save followed artists:", error.message);
+    throw error;
+  }
+}
+
+/**
+ * Subscribe to followed artists real-time changes
+ */
+export function subscribeFollowedArtists(uid, callback) {
+  if (!uid || !callback) return () => {};
+  const artistsRef = ref(db, `users/${uid}/followedArtists`);
+  const listener = onValue(artistsRef, (snapshot) => {
+    try {
+      const data = snapshot.val();
+      callback(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.warn("subscribeFollowedArtists error:", err.message);
+      callback([]);
+    }
+  });
+  return () => off(artistsRef, "value", listener);
+}

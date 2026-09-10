@@ -9,6 +9,8 @@ import {
   TouchableOpacity,
   Image,
   Platform,
+  Animated,
+  Easing,
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import Header from "../components/Header";
@@ -32,22 +34,14 @@ import {
   subscribeAppTrendingRTDB,
   subscribeFriendActivity,
 } from "../services/firebase";
+import { getHighResArtwork } from "../utils/imageUtils";
 
-function getHighResArtwork(url) {
-  if (!url) return null;
-  let clean = url;
-  if (clean.includes("yt3.googleusercontent.com") || clean.includes("yt3.ggpht.com")) {
-    clean = clean.replace(/=s\d+[^?&]*/, "=s512").replace(/=w\d+-h\d+[^?&]*/, "=s512");
-    if (!clean.includes("=")) clean = `${clean}=s512`;
-    return clean;
-  }
-  clean = clean.replace(/=w\d+-h\d+[^?&]*/, "=w800-h800-l90-rj");
-  clean = clean.replace(/=s\d+[^?&]*/, "=s800");
-  clean = clean.replace(/\/default\.jpg/, "/mqdefault.jpg");
-  clean = clean.replace(/\/mqdefault\.jpg/, "/mqdefault.jpg");
-  clean = clean.replace(/\/sddefault\.jpg/, "/mqdefault.jpg");
-  clean = clean.replace(/\/maxresdefault\.jpg/, "/mqdefault.jpg");
-  return clean;
+function withTimeout(promise, timeoutMs, message) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
 }
 
 function cleanTitle(title) {
@@ -103,51 +97,105 @@ function UserAvatar({ user, size = 44, fontSize = 15, style }) {
   }, [user?.avatar, user?.photoURL, user?.avatarUrl]);
 
   const username = user?.username || user?.displayName || user?.name || "Friend";
-  const dicebearUrl = `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(username.trim())}`;
+  const initial = (username[0] || "U").toUpperCase();
+  const bgColor = user?.avatarColor || colors.primary;
+  const avatar = user?.avatar;
 
+  // Memoji local asset
+  if (avatar && avatar.startsWith("memoji_")) {
+    const memojiMap = {
+      memoji_0: require("../../assets/memoji/pastel_0.jpg"),
+      memoji_1: require("../../assets/memoji/pastel_1.jpg"),
+      memoji_2: require("../../assets/memoji/pastel_2.jpg"),
+      memoji_3: require("../../assets/memoji/pastel_3.jpg"),
+      memoji_4: require("../../assets/memoji/pastel_4.jpg"),
+      memoji_5: require("../../assets/memoji/pastel_5.jpg"),
+      memoji_6: require("../../assets/memoji/pastel_6.jpg"),
+      memoji_7: require("../../assets/memoji/pastel_7.jpg"),
+      memoji_8: require("../../assets/memoji/pastel_8.jpg"),
+      memoji_9: require("../../assets/memoji/pastel_9.jpg"),
+    };
+    const src = memojiMap[avatar];
+    if (src) {
+      return (
+        <View style={[{ width: size, height: size, borderRadius: size / 2, overflow: "hidden" }, style]}>
+          <Image source={src} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+        </View>
+      );
+    }
+  }
+
+  // HTTP URL (not google)
   const candidateUri =
-    (user?.avatar && typeof user.avatar === "string" && user.avatar.startsWith("http"))
-      ? user.avatar
+    (avatar && typeof avatar === "string" && avatar.startsWith("http") && !avatar.includes("googleusercontent.com"))
+      ? avatar
       : (user?.avatarUrl && typeof user.avatarUrl === "string" && user.avatarUrl.startsWith("http"))
       ? user.avatarUrl
-      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http"))
+      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http") && !user.photoURL.includes("googleusercontent.com"))
       ? user.photoURL
       : null;
 
-  // Never use Google account photo; always display crisp Dicebear Toon Head
-  const isGoogle = candidateUri && candidateUri.includes("googleusercontent.com");
-  const isInitial = user?.avatar === "initial";
-  const initial = (username[0] || "U").toUpperCase();
-  const avatarUri = (!imgError && candidateUri && !isGoogle) ? candidateUri : dicebearUrl;
-  const bgColor = user?.avatarColor || colors.primary;
+  if (candidateUri && !imgError) {
+    return (
+      <View style={[{ width: size, height: size, borderRadius: size / 2, backgroundColor: bgColor, overflow: "hidden" }, style]}>
+        <Image source={{ uri: candidateUri }} style={{ width: "100%", height: "100%" }} resizeMode="cover" onError={() => setImgError(true)} />
+      </View>
+    );
+  }
+
+  // Monogram initial
+  return (
+    <View style={[{ width: size, height: size, borderRadius: size / 2, backgroundColor: bgColor, alignItems: "center", justifyContent: "center" }, style]}>
+      <Text style={{ fontFamily: fonts.bold, fontSize, color: "#000000" }}>{initial}</Text>
+    </View>
+  );
+}
+
+function HomeSkeleton() {
+  const pulseAnim = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 0.6,
+          duration: 750,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0.3,
+          duration: 750,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
 
   return (
-    <View
-      style={[
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: bgColor,
-          alignItems: "center",
-          justifyContent: "center",
-          overflow: "hidden",
-        },
-        style,
-      ]}
-    >
-      {isInitial ? (
-        <Text style={{ fontFamily: fonts.bold, fontSize, color: "#000000" }}>
-          {initial}
-        </Text>
-      ) : (
-        <Image
-          source={{ uri: avatarUri }}
-          style={{ width: "100%", height: "100%" }}
-          resizeMode="cover"
-          onError={() => setImgError(true)}
-        />
-      )}
+    <View style={styles.skeletonWrap}>
+      <View style={styles.skeletonHeader}>
+        <Animated.View style={[styles.skeletonPill, { opacity: pulseAnim, width: 100 }]} />
+        <Animated.View style={[styles.skeletonPill, { opacity: pulseAnim, width: 80 }]} />
+        <Animated.View style={[styles.skeletonPill, { opacity: pulseAnim, width: 90 }]} />
+      </View>
+      {[1, 2, 3].map((s) => (
+        <View key={s} style={styles.skeletonSection}>
+          <Animated.View style={[styles.skeletonSectionTitle, { opacity: pulseAnim }]} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {[1, 2, 3, 4].map((c) => (
+              <View key={c} style={styles.skeletonCardCol}>
+                <Animated.View style={[styles.skeletonCardImg, { opacity: pulseAnim }]} />
+                <Animated.View style={[styles.skeletonCardLine1, { opacity: pulseAnim }]} />
+                <Animated.View style={[styles.skeletonCardLine2, { opacity: pulseAnim }]} />
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      ))}
     </View>
   );
 }
@@ -182,7 +230,11 @@ export default function HomeScreen({ onNavigate } = {}) {
 
       // 1. Try immediate load from Firebase Realtime Database (only if purely Indian content)
       if (!forceRefresh) {
-        const rtdbFeed = await getTrendingFeedRTDB();
+        const rtdbFeed = await withTimeout(
+          getTrendingFeedRTDB(),
+          3500,
+          "Cached feed request timed out"
+        );
         const hasInvalidSection = rtdbFeed?.sections?.some(
           (s) => s.id === "trending_global" ||
                  s.id === "trending_india" ||
@@ -211,7 +263,11 @@ export default function HomeScreen({ onNavigate } = {}) {
       if (!forceRefresh && !feedRef.current) setIsLoading(true);
 
       // 2. Fetch fresh 3-month trending Indian feed from backend (zero seed data)
-      const data = await api.getHomeFeed(undefined, forceRefresh);
+      const data = await withTimeout(
+        api.getHomeFeed(undefined, forceRefresh),
+        7500,
+        "Latest feed request timed out"
+      );
       if (data && Array.isArray(data.sections) && data.sections.length > 0) {
         // Ensure only clean Indian sections within 3-month fresh range, removing global, trending_india, and mood sections
         const cleanIndianData = {
@@ -236,7 +292,11 @@ export default function HomeScreen({ onNavigate } = {}) {
     } catch (err) {
       console.warn("Error fetching feed:", err);
       if (!feedRef.current) {
-        const rtdbFeed = await getTrendingFeedRTDB();
+        const rtdbFeed = await withTimeout(
+          getTrendingFeedRTDB(),
+          2000,
+          "Cached feed request timed out"
+        ).catch(() => null);
         if (rtdbFeed && Array.isArray(rtdbFeed.sections) && rtdbFeed.sections.length > 0) {
           feedRef.current = rtdbFeed;
           setFeed(rtdbFeed);
@@ -1094,10 +1154,7 @@ export default function HomeScreen({ onNavigate } = {}) {
       />
 
       {isLoading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Fetching top charts...</Text>
-        </View>
+        <HomeSkeleton />
       ) : error ? (
         <View style={styles.centerContainer}>
           <Ionicons name="cloud-offline-outline" size={54} color={colors.error} />
@@ -1291,7 +1348,7 @@ export default function HomeScreen({ onNavigate } = {}) {
                     </ScrollView>
 
                     {followingSections.map((section, idx) => (
-                      <SectionList key={section.id} section={section} sectionIndex={idx + 1} />
+                      <SectionList key={section.id || `following_${idx}`} section={section} sectionIndex={idx + 1} />
                     ))}
                   </View>
                 )}
@@ -1299,7 +1356,7 @@ export default function HomeScreen({ onNavigate } = {}) {
             ) : (
               /* Home / All Feed: Fresh New Releases -> Daily Mix -> Trending Now -> Friends Are Listening To -> Jump Back In */
               allDisplayedSections?.map((section, idx) => (
-                <SectionList key={section.id} section={section} sectionIndex={idx} />
+                <SectionList key={section.id || `section_${idx}`} section={section} sectionIndex={idx} />
               ))
             )}
 
@@ -1857,5 +1914,56 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
     paddingHorizontal: 16,
     marginBottom: 12,
+  },
+
+  skeletonWrap: {
+    flex: 1,
+    paddingTop: 10,
+  },
+  skeletonHeader: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 16,
+    marginBottom: 28,
+  },
+  skeletonPill: {
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#1A1A1A",
+  },
+  skeletonSection: {
+    marginBottom: 28,
+  },
+  skeletonSectionTitle: {
+    height: 18,
+    width: 160,
+    borderRadius: 6,
+    backgroundColor: "#1A1A1A",
+    marginLeft: 16,
+    marginBottom: 14,
+  },
+  skeletonCardCol: {
+    marginLeft: 16,
+    width: 150,
+  },
+  skeletonCardImg: {
+    width: 150,
+    height: 150,
+    borderRadius: 8,
+    backgroundColor: "#1A1A1A",
+    marginBottom: 8,
+  },
+  skeletonCardLine1: {
+    height: 13,
+    width: 120,
+    borderRadius: 4,
+    backgroundColor: "#1A1A1A",
+    marginBottom: 6,
+  },
+  skeletonCardLine2: {
+    height: 11,
+    width: 80,
+    borderRadius: 4,
+    backgroundColor: "#1A1A1A",
   },
 });

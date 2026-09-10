@@ -550,19 +550,32 @@ export default function OnboardingScreen() {
           {/* User Name Input Card */}
           <View style={styles.inputCard}>
             <View style={[styles.avatarPreview, { overflow: "hidden" }]}>
-              {userProfile?.avatar && userProfile.avatar.startsWith("http") ? (
-                <Image
-                  source={{ uri: userProfile.avatar }}
-                  style={{ width: "100%", height: "100%" }}
-                  resizeMode="cover"
-                />
-              ) : username.trim() ? (
-                <Text style={styles.avatarLetter}>
-                  {username.trim().charAt(0).toUpperCase()}
-                </Text>
-              ) : (
-                <Ionicons name="person" size={18} color="#000000" />
-              )}
+              {(() => {
+                const av = userProfile?.avatar;
+                if (av && av.startsWith("memoji_")) {
+                  const memojiMap = {
+                    memoji_0: require("../../assets/memoji/pastel_0.jpg"),
+                    memoji_1: require("../../assets/memoji/pastel_1.jpg"),
+                    memoji_2: require("../../assets/memoji/pastel_2.jpg"),
+                    memoji_3: require("../../assets/memoji/pastel_3.jpg"),
+                    memoji_4: require("../../assets/memoji/pastel_4.jpg"),
+                    memoji_5: require("../../assets/memoji/pastel_5.jpg"),
+                    memoji_6: require("../../assets/memoji/pastel_6.jpg"),
+                    memoji_7: require("../../assets/memoji/pastel_7.jpg"),
+                    memoji_8: require("../../assets/memoji/pastel_8.jpg"),
+                    memoji_9: require("../../assets/memoji/pastel_9.jpg"),
+                  };
+                  const src = memojiMap[av];
+                  if (src) return <Image source={src} style={{ width: "100%", height: "100%" }} resizeMode="cover" />;
+                }
+                if (av && av.startsWith("http")) {
+                  return <Image source={{ uri: av }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />;
+                }
+                if (username.trim()) {
+                  return <Text style={styles.avatarLetter}>{username.trim().charAt(0).toUpperCase()}</Text>;
+                }
+                return <Ionicons name="person" size={18} color="#000000" />;
+              })()}
             </View>
             <TextInput
               style={styles.textInput}

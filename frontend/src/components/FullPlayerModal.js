@@ -25,6 +25,7 @@ import LikeConfetti from "./LikeConfetti";
 import { resolveLocalArtistImage } from "../theme/artistImages";
 import { useResponsive } from "../context/ResponsiveContext";
 import { registerBackAction } from "../services/navigation";
+import { getHighResArtwork } from "../utils/imageUtils";
 
 const { width, height } = Dimensions.get("window");
 // Larger artwork size for better visual impact
@@ -622,22 +623,6 @@ export default function FullPlayerModal() {
       .replace(/\s*[\(\[]\s*\d{4}\s*[\)\]]/g, "")
       .replace(/\s{2,}/g, " ")
       .trim();
-  };
-
-  const getHighResArtwork = (url) => {
-    if (!url) return null;
-    let clean = url;
-    if (clean.includes("yt3.googleusercontent.com") || clean.includes("yt3.ggpht.com")) {
-      clean = clean.replace(/=s\d+[^?&]*/, "=s512").replace(/=w\d+-h\d+[^?&]*/, "=s512");
-      if (!clean.includes("=")) clean = `${clean}=s512`;
-      return clean;
-    }
-    clean = clean.replace(/=w\d+-h\d+[^?&]*/, "=w800-h800-l90-rj");
-    clean = clean.replace(/=s\d+[^?&]*/, "=s800");
-    clean = clean.replace(/\/default\.jpg/, "/mqdefault.jpg");
-    clean = clean.replace(/\/sddefault\.jpg/, "/mqdefault.jpg");
-    clean = clean.replace(/\/maxresdefault\.jpg/, "/mqdefault.jpg");
-    return clean;
   };
 
   const rawArtwork = currentTrack.artwork_url || currentTrack.thumbnail;
@@ -1762,15 +1747,14 @@ export default function FullPlayerModal() {
           visible={showSleepModal}
           onRequestClose={() => setShowSleepModal(false)}
         >
-          <TouchableOpacity
-            style={styles.sleepModalOverlay}
-            activeOpacity={1}
-            onPress={() => setShowSleepModal(false)}
-          >
-            <View
-              style={styles.sleepModalContent}
-              onStartShouldSetResponder={() => true}
-            >
+          <View style={styles.sleepModalOverlay}>
+            <TouchableOpacity
+              style={StyleSheet.absoluteFill}
+              activeOpacity={1}
+              onPress={() => setShowSleepModal(false)}
+              accessibilityLabel="Close sleep timer"
+            />
+            <View style={styles.sleepModalContent}>
               {/* Drag handle */}
               <View style={styles.sleepDragHandle} />
 
@@ -1933,7 +1917,7 @@ export default function FullPlayerModal() {
                 )}
               </TouchableOpacity>
             </View>
-          </TouchableOpacity>
+          </View>
         </Modal>
 
         {/* Add to Playlist Modal */}

@@ -233,6 +233,59 @@ function SearchSkeleton() {
   );
 }
 
+/**
+ * Initial page skeleton - shows when SearchScreen first opens
+ */
+function SearchPageSkeleton() {
+  const pulseAnim = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 0.6,
+          duration: 750,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0.3,
+          duration: 750,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  return (
+    <View style={styles.skeletonPageWrap}>
+      {/* Recent Searches Skeleton */}
+      <View style={styles.skeletonPageSection}>
+        <Animated.View style={[styles.skeletonLine, { width: 130, height: 14, opacity: pulseAnim, marginBottom: 14 }]} />
+        {[1, 2, 3].map((i) => (
+          <View key={i} style={styles.skeletonRecentRow}>
+            <Animated.View style={[styles.skeletonCircleSmall, { opacity: pulseAnim }]} />
+            <Animated.View style={[styles.skeletonLine, { width: 140 + (i % 2) * 40, height: 13, opacity: pulseAnim }]} />
+          </View>
+        ))}
+      </View>
+
+      {/* Browse Categories Skeleton */}
+      <View style={styles.skeletonPageSection}>
+        <Animated.View style={[styles.skeletonLine, { width: 100, height: 14, opacity: pulseAnim, marginBottom: 14 }]} />
+        <View style={styles.skeletonCategoryGrid}>
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <Animated.View key={i} style={[styles.skeletonCategoryCard, { opacity: pulseAnim }]} />
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export default function SearchScreen() {
   const { isDesktop, isTablet, width } = useResponsive();
   const {
@@ -260,6 +313,12 @@ export default function SearchScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [totalLoaded, setTotalLoaded] = useState(0);
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
+  const [pageLoading, setPageLoading] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setPageLoading(false), 600);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Recent items (Tracks + Queries)
   const [recentItems, setRecentItems] = useState([]);
@@ -273,7 +332,7 @@ export default function SearchScreen() {
       ? contextRecents
       : [];
 
-  const { currentTrack, playTrack, isPlaying } = useAudioPlayback();
+  const { currentTrack, playTrack, isPlaying, setFullPlayerVisible } = useAudioPlayback();
 
   // Race condition guard & Debouncing
   const requestVersionRef = useRef(0);
@@ -660,25 +719,29 @@ export default function SearchScreen() {
                 activeOpacity={0.75}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                {userProfile?.avatar === "initial" ? (
-                  <Text style={styles.profileAvatarText}>{userInitial}</Text>
-                ) : avatarIcon && avatarIcon.startsWith("http") && !avatarIcon.includes("googleusercontent.com") ? (
-                  <Image
-                    source={{ uri: avatarIcon }}
-                    style={styles.profileAvatarImage}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <Image
-                    source={{
-                      uri: `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(
-                        userProfile?.username || "Felix"
-                      )}`,
-                    }}
-                    style={styles.profileAvatarImage}
-                    resizeMode="cover"
-                  />
-                )}
+                {(() => {
+                  const av = userProfile?.avatar;
+                  if (av && av.startsWith("memoji_")) {
+                    const memojiMap = {
+                      memoji_0: require("../../assets/memoji/pastel_0.jpg"),
+                      memoji_1: require("../../assets/memoji/pastel_1.jpg"),
+                      memoji_2: require("../../assets/memoji/pastel_2.jpg"),
+                      memoji_3: require("../../assets/memoji/pastel_3.jpg"),
+                      memoji_4: require("../../assets/memoji/pastel_4.jpg"),
+                      memoji_5: require("../../assets/memoji/pastel_5.jpg"),
+                      memoji_6: require("../../assets/memoji/pastel_6.jpg"),
+                      memoji_7: require("../../assets/memoji/pastel_7.jpg"),
+                      memoji_8: require("../../assets/memoji/pastel_8.jpg"),
+                      memoji_9: require("../../assets/memoji/pastel_9.jpg"),
+                    };
+                    const src = memojiMap[av];
+                    if (src) return <Image source={src} style={styles.profileAvatarImage} resizeMode="cover" />;
+                  }
+                  if (av && av.startsWith("http") && !av.includes("googleusercontent.com")) {
+                    return <Image source={{ uri: av }} style={styles.profileAvatarImage} resizeMode="cover" />;
+                  }
+                  return <Text style={styles.profileAvatarText}>{userInitial}</Text>;
+                })()}
               </TouchableOpacity>
             </View>
           </View>
@@ -785,7 +848,7 @@ export default function SearchScreen() {
               )}
 
               {/* Skeleton loading placeholders when starting a new search */}
-              {isSearching && results.length === 0 && <SearchSkeleton />}
+              {isSearching && <SearchSkeleton />}
 
               {/* Top Matching Artist Spotlight (Screenshot 1) */}
               {topArtist && (() => {
@@ -939,8 +1002,15 @@ export default function SearchScreen() {
             <View style={styles.footerContainer}>
               {isLoadingMore ? (
                 <View style={styles.loadingMoreBox}>
-                  <ActivityIndicator size="small" color={colors.primary} />
-                  <Text style={styles.loadingMoreText}>Loading more songs...</Text>
+                  {[1, 2].map((k) => (
+                    <View key={k} style={styles.skeletonSongRow}>
+                      <Animated.View style={[styles.skeletonSquare, { opacity: 0.4 }]} />
+                      <View style={styles.skeletonTextCol}>
+                        <Animated.View style={[styles.skeletonLine, { width: 160 + (k % 3) * 30, height: 14, opacity: 0.4 }]} />
+                        <Animated.View style={[styles.skeletonLine, { width: 100 + (k % 2) * 20, height: 11, marginTop: 6, opacity: 0.4 }]} />
+                      </View>
+                    </View>
+                  ))}
                 </View>
               ) : null}
               <View style={{ height: isDesktop || isTablet ? 30 : 130 }} />
@@ -949,6 +1019,9 @@ export default function SearchScreen() {
         />
       ) : (
         /* EMPTY SEARCH INPUT STATE: RECENT SEARCHES (Screenshot 2) & BROWSE CATEGORIES */
+        pageLoading ? (
+          <SearchPageSkeleton />
+        ) : (
         <ScrollView
           style={styles.mainScrollView}
           showsVerticalScrollIndicator={false}
@@ -990,32 +1063,58 @@ export default function SearchScreen() {
                       </TouchableOpacity>
                     ) : (
                       /* Track Row (Screenshot 2) */
-                      <TouchableOpacity
-                        style={styles.recentTrackTouch}
-                        onPress={() => handlePlaySong(item)}
-                        activeOpacity={0.7}
-                      >
-                        <View style={styles.spotifyArtworkWrap}>
-                          {item.artwork_url || item.thumbnail || item.image ? (
-                            <Image
-                              source={{ uri: item.artwork_url || item.thumbnail || item.image }}
-                              style={styles.spotifyArtwork}
-                            />
-                          ) : (
-                            <View style={[styles.spotifyArtwork, styles.artworkFallback]}>
-                              <Ionicons name="musical-note" size={20} color={colors.primary} />
+                      (() => {
+                        const trackId = item.videoId || item.video_id || item.id;
+                        const isCurrentTrack = currentTrack && (
+                          currentTrack.videoId === trackId ||
+                          currentTrack.id === trackId ||
+                          currentTrack.video_id === trackId
+                        );
+                        const isCurrentlyPlaying = isCurrentTrack && isPlaying;
+
+                        return (
+                          <TouchableOpacity
+                            style={styles.recentTrackTouch}
+                            onPress={() => {
+                              if (isCurrentTrack) {
+                                setFullPlayerVisible(true);
+                              } else {
+                                handlePlaySong(item);
+                              }
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <View style={styles.spotifyArtworkWrap}>
+                              {item.artwork_url || item.thumbnail || item.image ? (
+                                <Image
+                                  source={{ uri: item.artwork_url || item.thumbnail || item.image }}
+                                  style={styles.spotifyArtwork}
+                                />
+                              ) : (
+                                <View style={[styles.spotifyArtwork, styles.artworkFallback]}>
+                                  <Ionicons name="musical-note" size={20} color={colors.primary} />
+                                </View>
+                              )}
+                              {isCurrentlyPlaying && (
+                                <View style={styles.playingIndicatorOverlay}>
+                                  <Ionicons name="volume-high" size={14} color="#FFFFFF" />
+                                </View>
+                              )}
                             </View>
-                          )}
-                        </View>
-                        <View style={styles.spotifySongTextCol}>
-                          <Text style={styles.spotifySongTitle} numberOfLines={1}>
-                            {item.title}
-                          </Text>
-                          <Text style={styles.spotifySongSubtitle} numberOfLines={1}>
-                            {`Song • ${item.artist || "Staytup"}`}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
+                            <View style={styles.spotifySongTextCol}>
+                              <Text
+                                style={[styles.spotifySongTitle, isCurrentlyPlaying && styles.activeSongTitle]}
+                                numberOfLines={1}
+                              >
+                                {item.title}
+                              </Text>
+                              <Text style={styles.spotifySongSubtitle} numberOfLines={1}>
+                                {`Song • ${item.artist || "Staytup"}`}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })()
                     )}
 
                     {/* Right actions: Circular plus (for track) + Remove 'x' button */}
@@ -1127,6 +1226,7 @@ export default function SearchScreen() {
             <View style={{ height: isDesktop || isTablet ? 30 : 130 }} />
           </View>
         </ScrollView>
+        )
       )}
 
       {/* Add To Playlist Modal */}
@@ -1473,6 +1573,19 @@ const styles = StyleSheet.create({
   activeSongTitle: {
     color: "#1DB954",
   },
+  playingIndicatorOverlay: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "#1DB954",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#000000",
+  },
   spotifySongSubtitle: {
     fontFamily: fonts.regular,
     fontSize: 13,
@@ -1744,5 +1857,37 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: 13,
     color: "#A7A7A7",
+  },
+
+  // Page Skeleton Styles
+  skeletonPageWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  skeletonPageSection: {
+    marginBottom: 28,
+  },
+  skeletonRecentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingVertical: 10,
+  },
+  skeletonCircleSmall: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#222222",
+  },
+  skeletonCategoryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  skeletonCategoryCard: {
+    width: "47%",
+    height: 90,
+    borderRadius: 12,
+    backgroundColor: "#222222",
   },
 });

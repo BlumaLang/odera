@@ -1,8 +1,5 @@
 <IfModule mod_headers.c>
-    Header always set Access-Control-Allow-Origin "*"
-    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE, PATCH"
-    Header always set Access-Control-Allow-Headers "Authorization, Content-Type, Range, X-User-Id, Accept, Origin, User-Agent"
-    Header always set Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges"
+    # Security headers (CORS handled by PHP backend)
     Header always set Cross-Origin-Opener-Policy "same-origin-allow-popups"
     Header always set X-Content-Type-Options "nosniff"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
@@ -12,13 +9,21 @@
     RewriteEngine On
     RewriteBase /
 
-    # If stream.php or existing file/dir, serve directly
+    # If existing file or directory, serve directly
     RewriteCond %{REQUEST_FILENAME} -f [OR]
     RewriteCond %{REQUEST_FILENAME} -d
     RewriteRule ^ - [L]
 
-    # Otherwise forward to index.html for SPA
-    RewriteRule ^ index.html [L]
+    # Route /api/* to the PHP API router
+    RewriteRule ^api/(.*)$ api/index.php [QSA,L]
+
+    # Route /api to the PHP API router
+    RewriteRule ^api$ api/index.php [L]
+
+    # Serve frontend from dist/ or root
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ dist/index.html [L]
 </IfModule>
 
 # PWA Cache Controls

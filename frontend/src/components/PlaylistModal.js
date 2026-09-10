@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -64,47 +64,60 @@ function UserAvatar({ user, size = 38, fontSize = 14, style }) {
     setImgError(false);
   }, [user?.avatar, user?.photoURL, user?.avatarUrl]);
 
-  const name = user?.username || user?.name || user?.displayName || "Felix";
-  const seed = encodeURIComponent(name.trim() || "Felix");
-  const dicebearDefault = `https://api.dicebear.com/10.x/toon-head/svg?seed=${seed}`;
-
-  const rawAvatar =
-    user?.avatar && typeof user.avatar === "string" && user.avatar.startsWith("http") && !user.avatar.includes("googleusercontent.com")
-      ? user.avatar
-      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http") && !user.photoURL.includes("googleusercontent.com"))
-      ? user.photoURL
-      : (user?.avatarUrl && typeof user.avatarUrl === "string" && user.avatarUrl.startsWith("http") && !user.avatarUrl.includes("googleusercontent.com"))
-      ? user.avatarUrl
-      : dicebearDefault;
-
-  const avatarUri = !imgError ? rawAvatar.replace(/\/9\.x\//, "/10.x/") : dicebearDefault;
+  const name = user?.username || user?.name || user?.displayName || "Friend";
+  const avatar = user?.avatar;
+  const initial = (name[0] || "F").toUpperCase();
 
   const bgColor =
     user?.avatarColor && user.avatarColor !== "#1DB954"
       ? user.avatarColor
       : getDeterministicAvatarColor(user?.uid || name);
 
+  // Memoji local asset
+  if (avatar && avatar.startsWith("memoji_")) {
+    const memojiMap = {
+      memoji_0: require("../../assets/memoji/pastel_0.jpg"),
+      memoji_1: require("../../assets/memoji/pastel_1.jpg"),
+      memoji_2: require("../../assets/memoji/pastel_2.jpg"),
+      memoji_3: require("../../assets/memoji/pastel_3.jpg"),
+      memoji_4: require("../../assets/memoji/pastel_4.jpg"),
+      memoji_5: require("../../assets/memoji/pastel_5.jpg"),
+      memoji_6: require("../../assets/memoji/pastel_6.jpg"),
+      memoji_7: require("../../assets/memoji/pastel_7.jpg"),
+      memoji_8: require("../../assets/memoji/pastel_8.jpg"),
+      memoji_9: require("../../assets/memoji/pastel_9.jpg"),
+    };
+    const src = memojiMap[avatar];
+    if (src) {
+      return (
+        <View style={[{ width: size, height: size, borderRadius: size / 2, overflow: "hidden" }, style]}>
+          <Image source={src} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+        </View>
+      );
+    }
+  }
+
+  // HTTP URL (not google)
+  const candidateUri =
+    (avatar && typeof avatar === "string" && avatar.startsWith("http") && !avatar.includes("googleusercontent.com"))
+      ? avatar
+      : (user?.photoURL && typeof user.photoURL === "string" && user.photoURL.startsWith("http") && !user.photoURL.includes("googleusercontent.com"))
+      ? user.photoURL
+      : (user?.avatarUrl && typeof user.avatarUrl === "string" && user.avatarUrl.startsWith("http") && !user.avatarUrl.includes("googleusercontent.com"))
+      ? user.avatarUrl
+      : null;
+
+  if (candidateUri && !imgError) {
+    return (
+      <View style={[{ width: size, height: size, borderRadius: size / 2, backgroundColor: bgColor, overflow: "hidden" }, style]}>
+        <Image source={{ uri: candidateUri }} style={{ width: "100%", height: "100%" }} resizeMode="cover" onError={() => setImgError(true)} />
+      </View>
+    );
+  }
+
   return (
-    <View
-      style={[
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: bgColor,
-          alignItems: "center",
-          justifyContent: "center",
-          overflow: "hidden",
-        },
-        style,
-      ]}
-    >
-      <Image
-        source={{ uri: avatarUri }}
-        style={{ width: "100%", height: "100%" }}
-        resizeMode="cover"
-        onError={() => setImgError(true)}
-      />
+    <View style={[{ width: size, height: size, borderRadius: size / 2, backgroundColor: bgColor, alignItems: "center", justifyContent: "center" }, style]}>
+      <Text style={{ fontFamily: fonts.bold, fontSize, color: "#FFFFFF" }}>{initial}</Text>
     </View>
   );
 }
@@ -131,6 +144,7 @@ export default function PlaylistModal({
     removeTrackFromCollabPlaylist,
     removeCollaboratorFromCollabPlaylist,
     deleteCollabPlaylist,
+    sendCollabInvite,
     renamePlaylist,
     setPlaylists,
   } = useUser() || {};
@@ -146,6 +160,24 @@ export default function PlaylistModal({
   const [copiedLink, setCopiedLink] = useState(false);
   const [invitingUids, setInvitingUids] = useState(new Set());
   const [enablingCollab, setEnablingCollab] = useState(false);
+  const playlistListRef = useRef(null);
+  const playlistScrollOffsetRef = useRef(0);
+
+  const openCollabModal = useCallback(() => {
+    setShowCollabModal(true);
+  }, []);
+
+  const closeCollabModal = useCallback(() => {
+    setShowCollabModal(false);
+    // The web modal can return FlatList to its measured end. Restore the
+    // listener's last position after the closing transition is complete.
+    setTimeout(() => {
+      playlistListRef.current?.scrollToOffset({
+        offset: playlistScrollOffsetRef.current,
+        animated: false,
+      });
+    }, 350);
+  }, []);
 
   // Android hardware back button handler stack
   useEffect(() => {
@@ -178,11 +210,11 @@ export default function PlaylistModal({
   useEffect(() => {
     if (showCollabModal) {
       return registerBackAction(() => {
-        setShowCollabModal(false);
+        closeCollabModal();
         return true;
       });
     }
-  }, [showCollabModal]);
+  }, [showCollabModal, closeCollabModal]);
 
   useEffect(() => {
     if (showImportModal) {
@@ -248,6 +280,7 @@ export default function PlaylistModal({
   }, [visible, playlist?.id]);
 
   const isCollab = Boolean(playlistData?.isCollab || playlistData?.collaborators);
+  const isBlend = Boolean(playlistData?.isBlend || playlistData?.type === "blend" || String(playlistData?.name || "").startsWith("Blend:"));
   const collaboratorsObj = playlistData?.collaborators || {};
   const collaboratorList = Object.values(collaboratorsObj);
   const tracks = playlistData?.tracks || [];
@@ -281,13 +314,11 @@ export default function PlaylistModal({
     (c) => {
       const match = c?.uid ? friendsMap[c.uid] : null;
       const uname = c?.name || c?.username || match?.username || match?.name || "Listener";
-      const seed = encodeURIComponent(uname.trim() || "Felix");
-      const defaultToon = `https://api.dicebear.com/10.x/toon-head/svg?seed=${seed}`;
-      const rawAvatar = c?.avatar || match?.avatar || match?.photoURL || match?.avatarUrl || defaultToon;
+      const rawAvatar = c?.avatar || match?.avatar || match?.photoURL || match?.avatarUrl || "memoji_0";
       const avatar =
         typeof rawAvatar === "string" && !rawAvatar.includes("googleusercontent.com")
-          ? rawAvatar.replace(/\/9\.x\//, "/10.x/")
-          : defaultToon;
+          ? rawAvatar
+          : "memoji_0";
 
       const rawColor = c?.avatarColor || match?.avatarColor;
       const color =
@@ -534,8 +565,15 @@ export default function PlaylistModal({
     setInvitingUids((prev) => new Set([...prev, friend.uid]));
     try {
       const targetId = playlistData?.collabId || playlistData?.id;
-      if (joinCollabPlaylist) {
-        await joinCollabPlaylist(targetId);
+      if (sendCollabInvite) {
+        await sendCollabInvite(friend.uid, {
+          collabId: targetId,
+          playlistId: targetId,
+          name: playlistData?.name || "Collab Playlist",
+          cover_url: playlistData?.cover_url || playlistData?.preview_artwork || "",
+          tracks: playlistData?.tracks || [],
+          playlist: playlistData,
+        });
       }
       // Optimistically add to collaborators
       const newCollabs = {
@@ -543,7 +581,7 @@ export default function PlaylistModal({
         [friend.uid]: {
           uid: friend.uid,
           name: friend.username || friend.displayName || "Friend",
-          avatar: friend.avatar || "initial",
+          avatar: friend.avatar || "memoji_0",
           avatarColor: friend.avatarColor || colors.primary,
           role: "Collaborator",
         },
@@ -659,10 +697,17 @@ export default function PlaylistModal({
         {/* Main Content Area */}
         <View style={[styles.contentWrap, (isDesktop || isTablet) && styles.desktopContentWrap]}>
           <FlatList
+            ref={playlistListRef}
             data={tracks}
             keyExtractor={(item, index) => `${item.video_id || item.videoId}_${index}`}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
+            onScroll={(event) => {
+              if (!showCollabModal) {
+                playlistScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+              }
+            }}
+            scrollEventThrottle={16}
             ListHeaderComponent={
               <View style={styles.headerContainer}>
                 {/* Hero Card Section */}
@@ -685,10 +730,16 @@ export default function PlaylistModal({
                       <View style={styles.playlistBadge}>
                         <Text style={styles.playlistBadgeText}>PLAYLIST</Text>
                       </View>
-                      {isCollab && (
+                      {isCollab && !isBlend && (
                         <View style={styles.collabBadge}>
                           <Ionicons name="people" size={11} color="#1DB954" style={{ marginRight: 4 }} />
                           <Text style={styles.collabBadgeText}>COLLABORATIVE</Text>
+                        </View>
+                      )}
+                      {isBlend && (
+                        <View style={[styles.collabBadge, { borderColor: "rgba(139, 92, 246, 0.4)", backgroundColor: "rgba(139, 92, 246, 0.12)" }]}>
+                          <Ionicons name="flash" size={11} color="#8B5CF6" style={{ marginRight: 4 }} />
+                          <Text style={[styles.collabBadgeText, { color: "#8B5CF6" }]}>BLEND</Text>
                         </View>
                       )}
                     </View>
@@ -721,7 +772,7 @@ export default function PlaylistModal({
                     {collaboratorList.length > 0 && (
                       <TouchableOpacity
                         style={styles.collabAvatarsRow}
-                        onPress={() => setShowCollabModal(true)}
+                        onPress={openCollabModal}
                         activeOpacity={0.8}
                       >
                         <View style={styles.overlappingAvatars}>
@@ -748,7 +799,9 @@ export default function PlaylistModal({
                         </View>
                         <Text style={styles.collabCountText}>
                           {collaboratorList.length}{" "}
-                          {collaboratorList.length === 1 ? "collaborator" : "collaborators"}
+                          {isBlend
+                            ? (collaboratorList.length === 1 ? "participant" : "participants")
+                            : (collaboratorList.length === 1 ? "collaborator" : "collaborators")}
                         </Text>
                       </TouchableOpacity>
                     )}
@@ -793,7 +846,7 @@ export default function PlaylistModal({
                       styles.collabActionButton,
                       isCollab && styles.collabActionButtonActive,
                     ]}
-                    onPress={() => setShowCollabModal(true)}
+                    onPress={openCollabModal}
                     activeOpacity={0.8}
                     accessibilityRole="button"
                     accessibilityLabel="Collaborate"
@@ -890,7 +943,16 @@ export default function PlaylistModal({
                 </View>
               )
             }
-            ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 40 : 130 }} />}
+            ListFooterComponent={
+              tracks.length > 0 ? (
+                <View style={styles.endOfPlaylistFooter}>
+                  <Text style={styles.endOfPlaylistText}>You've reached the end</Text>
+                  <View style={{ height: isDesktop || isTablet ? 40 : 130 }} />
+                </View>
+              ) : (
+                <View style={{ height: isDesktop || isTablet ? 40 : 130 }} />
+              )
+            }
           />
         </View>
 
@@ -965,12 +1027,12 @@ export default function PlaylistModal({
           </View>
         </Modal>
 
-        {/* ═══════════ COLLABORATION FULL SCREEN MODAL ═══════════ */}
+            {/* ═══════════ COLLABORATION FULL SCREEN MODAL ═══════════ */}
         <Modal
           visible={showCollabModal}
           transparent={false}
           animationType="slide"
-          onRequestClose={() => setShowCollabModal(false)}
+          onRequestClose={closeCollabModal}
           statusBarTranslucent={true}
         >
           <View style={styles.collabFullScreenContainer}>
@@ -979,7 +1041,7 @@ export default function PlaylistModal({
             <View style={[styles.collabHeaderBar, (isDesktop || isTablet) && styles.collabHeaderDesktop]}>
               <TouchableOpacity
                 style={styles.collabBackBtn}
-                onPress={() => setShowCollabModal(false)}
+                onPress={closeCollabModal}
                 hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                 activeOpacity={0.7}
                 accessibilityLabel="Back"
@@ -987,7 +1049,7 @@ export default function PlaylistModal({
                 <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
               </TouchableOpacity>
               <Text style={styles.collabHeaderTitle} numberOfLines={1}>
-                Collaborate
+                {isBlend ? "Blend Participants" : "Collaborate"}
               </Text>
               {isCollab ? (
                 <TouchableOpacity
@@ -1012,56 +1074,60 @@ export default function PlaylistModal({
                 (isDesktop || isTablet) && styles.collabContentDesktop,
               ]}
             >
-              {/* Status Card */}
-              <View style={styles.collabStatusCard}>
-                <Text style={styles.collabStatusTitle}>
-                  {isCollab ? "Collaborative Playlist Active" : "Private Playlist"}
-                </Text>
-                <Text style={styles.collabStatusSub}>
-                  {isCollab
-                    ? "Friends can add songs, remove songs, and sync changes in real time."
-                    : "Make this playlist collaborative so you and your friends can curate together."}
-                </Text>
+              {/* Status Card - hidden for Blends */}
+              {!isBlend && (
+                <View style={styles.collabStatusCard}>
+                  <Text style={styles.collabStatusTitle}>
+                    {isCollab ? "Collaborative Playlist Active" : "Private Playlist"}
+                  </Text>
+                  <Text style={styles.collabStatusSub}>
+                    {isCollab
+                      ? "Friends can add songs, remove songs, and sync changes in real time."
+                      : "Make this playlist collaborative so you and your friends can curate together."}
+                  </Text>
 
-                {!isCollab ? (
-                  <TouchableOpacity
-                    style={[styles.enableCollabBtn, enablingCollab && styles.disabledBtn]}
-                    onPress={handleEnableCollaboration}
-                    disabled={enablingCollab}
-                    activeOpacity={0.85}
-                  >
-                    {enablingCollab ? (
-                      <ActivityIndicator size="small" color="#000000" />
-                    ) : (
-                      <>
-                        <Ionicons name="people" size={16} color="#000000" style={{ marginRight: 6 }} />
-                        <Text style={styles.enableCollabBtnText}>Turn into Collaborative Playlist</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity
-                    style={styles.copyLinkBtn}
-                    onPress={handleCopyCollabLink}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons
-                      name={copiedLink ? "checkmark" : "link-outline"}
-                      size={16}
-                      color={copiedLink ? "#1DB954" : "#FFFFFF"}
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={[styles.copyLinkBtnText, copiedLink && { color: "#1DB954" }]}>
-                      {copiedLink ? "Invite Link Copied!" : "Copy Invite Link"}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+                  {!isCollab ? (
+                    <TouchableOpacity
+                      style={[styles.enableCollabBtn, enablingCollab && styles.disabledBtn]}
+                      onPress={handleEnableCollaboration}
+                      disabled={enablingCollab}
+                      activeOpacity={0.85}
+                    >
+                      {enablingCollab ? (
+                        <ActivityIndicator size="small" color="#000000" />
+                      ) : (
+                        <>
+                          <Ionicons name="people" size={16} color="#000000" style={{ marginRight: 6 }} />
+                          <Text style={styles.enableCollabBtnText}>Turn into Collaborative Playlist</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.copyLinkBtn}
+                      onPress={handleCopyCollabLink}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons
+                        name={copiedLink ? "checkmark" : "link-outline"}
+                        size={16}
+                        color={copiedLink ? "#1DB954" : "#FFFFFF"}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text style={[styles.copyLinkBtnText, copiedLink && { color: "#1DB954" }]}>
+                        {copiedLink ? "Invite Link Copied!" : "Copy Invite Link"}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
 
               {/* Existing Collaborators */}
               {collaboratorList.length > 0 && (
                 <View style={styles.collabSection}>
-                  <Text style={styles.collabSectionHeader}>CURRENT COLLABORATORS</Text>
+                  <Text style={styles.collabSectionHeader}>
+                    {isBlend ? "BLEND PARTICIPANTS" : "CURRENT COLLABORATORS"}
+                  </Text>
                   {collaboratorList.map((c, i) => {
                     const collabUser = getCollabUser(c);
                     return (
@@ -1094,9 +1160,10 @@ export default function PlaylistModal({
                 </View>
               )}
 
-              {/* Invite Friends */}
-              <View style={styles.collabSection}>
-                <Text style={styles.collabSectionHeader}>INVITE FRIENDS</Text>
+              {/* Invite Friends - hidden for Blends */}
+              {!isBlend && (
+                <View style={styles.collabSection}>
+                  <Text style={styles.collabSectionHeader}>INVITE FRIENDS</Text>
                 {Array.isArray(friends) && friends.length > 0 ? (
                   friends.map((friend) => {
                     const isAlreadyCollab = Boolean(collaboratorsObj[friend.uid]);
@@ -1144,7 +1211,8 @@ export default function PlaylistModal({
                     </Text>
                   </View>
                 )}
-              </View>
+                </View>
+              )}
             </ScrollView>
 
             {/* Confirmation Modal for Collab Playlist Delete */}
@@ -1269,8 +1337,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   listContent: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingTop: 16,
+  },
+  endOfPlaylistFooter: {
+    alignItems: "center",
+    paddingTop: 20,
+  },
+  endOfPlaylistText: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: "rgba(255, 255, 255, 0.4)",
   },
   headerContainer: {
     marginBottom: 16,
@@ -1490,6 +1567,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 10,
     marginBottom: 8,
+    paddingLeft: 12,
   },
   tracksHeaderText: {
     fontFamily: fonts.bold,
@@ -1663,7 +1741,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingTop: Platform.OS === "ios" ? 54 : (StatusBar.currentHeight || 24) + 12,
+    paddingTop:
+      Platform.OS === "web"
+        ? 14
+        : Platform.OS === "android"
+        ? (StatusBar.currentHeight || 24) + 8
+        : 46,
     paddingBottom: 14,
     paddingHorizontal: 16,
     backgroundColor: "#000000",

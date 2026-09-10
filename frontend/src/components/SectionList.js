@@ -147,7 +147,7 @@ export default function SectionList({ section, sectionIndex = 0 }) {
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.horizontalListContent}
-        keyExtractor={(item, index) => `${section.id}_${item.videoId || item.video_id}_${index}`}
+        keyExtractor={(item, index) => `${section.id}_${item.videoId || item.video_id || item.id || index}_${index}`}
         onScroll={handleScroll}
         scrollEventThrottle={16}
         renderItem={({ item, index }) => (

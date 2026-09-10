@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -12,6 +12,8 @@ import {
   Platform,
   Image,
   Modal,
+  Animated,
+  Easing,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
@@ -26,6 +28,101 @@ import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { auth, getRecentlyPlayed, subscribeRecentlyPlayed, removeRecentlyPlayed } from "../services/firebase";
+
+function LibrarySkeleton({ type }) {
+  const pulseAnim = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 0.6,
+          duration: 750,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0.3,
+          duration: 750,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  if (type === "playlists") {
+    return (
+      <View style={styles.skeletonWrap}>
+        {[1, 2, 3, 4, 5].map((i) => (
+          <View key={i} style={styles.skeletonPlaylistRow}>
+            <Animated.View style={[styles.skeletonPlaylistThumb, { opacity: pulseAnim }]} />
+            <View style={styles.skeletonPlaylistInfo}>
+              <Animated.View style={[styles.skeletonLine, { width: 140 + (i % 3) * 30, height: 14, opacity: pulseAnim }]} />
+              <Animated.View style={[styles.skeletonLine, { width: 90 + (i % 2) * 20, height: 11, marginTop: 6, opacity: pulseAnim }]} />
+            </View>
+            <Animated.View style={[styles.skeletonChevron, { opacity: pulseAnim }]} />
+          </View>
+        ))}
+      </View>
+    );
+  }
+
+  if (type === "history") {
+    return (
+      <View style={styles.skeletonWrap}>
+        <View style={styles.skeletonHistoryHeader}>
+          <View>
+            <Animated.View style={[styles.skeletonLine, { width: 140, height: 16, opacity: pulseAnim }]} />
+            <Animated.View style={[styles.skeletonLine, { width: 80, height: 11, marginTop: 4, opacity: pulseAnim }]} />
+          </View>
+          <View style={styles.skeletonHistoryButtons}>
+            <Animated.View style={[styles.skeletonPillBtn, { opacity: pulseAnim }]} />
+            <Animated.View style={[styles.skeletonCircleBtn, { opacity: pulseAnim }]} />
+          </View>
+        </View>
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <View key={i} style={styles.skeletonSongRow}>
+            <Animated.View style={[styles.skeletonSongThumb, { opacity: pulseAnim }]} />
+            <View style={styles.skeletonSongInfo}>
+              <Animated.View style={[styles.skeletonLine, { width: 160 + (i % 3) * 30, height: 13, opacity: pulseAnim }]} />
+              <Animated.View style={[styles.skeletonLine, { width: 110 + (i % 2) * 20, height: 10, marginTop: 5, opacity: pulseAnim }]} />
+            </View>
+            <Animated.View style={[styles.skeletonDots, { opacity: pulseAnim }]} />
+          </View>
+        ))}
+      </View>
+    );
+  }
+
+  // favorites
+  return (
+    <View style={styles.skeletonWrap}>
+      <View style={styles.skeletonHistoryHeader}>
+        <View>
+          <Animated.View style={[styles.skeletonLine, { width: 120, height: 16, opacity: pulseAnim }]} />
+          <Animated.View style={[styles.skeletonLine, { width: 60, height: 11, marginTop: 4, opacity: pulseAnim }]} />
+        </View>
+        <View style={styles.skeletonHistoryButtons}>
+          <Animated.View style={[styles.skeletonPillBtn, { opacity: pulseAnim }]} />
+          <Animated.View style={[styles.skeletonCircleBtn, { opacity: pulseAnim }]} />
+        </View>
+      </View>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <View key={i} style={styles.skeletonSongRow}>
+          <Animated.View style={[styles.skeletonSongThumb, { opacity: pulseAnim }]} />
+          <View style={styles.skeletonSongInfo}>
+            <Animated.View style={[styles.skeletonLine, { width: 150 + (i % 3) * 25, height: 13, opacity: pulseAnim }]} />
+            <Animated.View style={[styles.skeletonLine, { width: 100 + (i % 2) * 15, height: 10, marginTop: 5, opacity: pulseAnim }]} />
+          </View>
+          <Animated.View style={[styles.skeletonDots, { opacity: pulseAnim }]} />
+        </View>
+      ))}
+    </View>
+  );
+}
 
 export default function LibraryScreen() {
   const navigation = useNavigation();
@@ -51,6 +148,21 @@ export default function LibraryScreen() {
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
   const [localRecentlyPlayed, setLocalRecentlyPlayed] = useState([]);
+  const [contextLoaded, setContextLoaded] = useState(false);
+  const [tabLoading, setTabLoading] = useState(true);
+
+  useEffect(() => {
+    if (rtdbPlaylists !== undefined || likedSongs !== undefined) {
+      setContextLoaded(true);
+    }
+  }, [rtdbPlaylists, likedSongs]);
+
+  useEffect(() => {
+    if (!contextLoaded) return;
+    setTabLoading(true);
+    const timer = setTimeout(() => setTabLoading(false), 300);
+    return () => clearTimeout(timer);
+  }, [activeTab, contextLoaded]);
 
   // Subscribe to real-time listening history from Firebase Realtime Database
   useEffect(() => {
@@ -259,29 +371,29 @@ export default function LibraryScreen() {
                 activeOpacity={0.75}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                {userProfile?.avatar === "initial" ? (
-                  <Text style={styles.avatarText}>
-                    {(userProfile?.username?.[0] || "U").toUpperCase()}
-                  </Text>
-                ) : userProfile?.avatar &&
-                  userProfile.avatar.startsWith("http") &&
-                  !userProfile.avatar.includes("googleusercontent.com") ? (
-                  <Image
-                    source={{ uri: userProfile.avatar }}
-                    style={styles.avatarImage}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <Image
-                    source={{
-                      uri: `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(
-                        userProfile?.username || "Felix"
-                      )}`,
-                    }}
-                    style={styles.avatarImage}
-                    resizeMode="cover"
-                  />
-                )}
+                {(() => {
+                  const av = userProfile?.avatar;
+                  if (av && av.startsWith("memoji_")) {
+                    const memojiMap = {
+                      memoji_0: require("../../assets/memoji/pastel_0.jpg"),
+                      memoji_1: require("../../assets/memoji/pastel_1.jpg"),
+                      memoji_2: require("../../assets/memoji/pastel_2.jpg"),
+                      memoji_3: require("../../assets/memoji/pastel_3.jpg"),
+                      memoji_4: require("../../assets/memoji/pastel_4.jpg"),
+                      memoji_5: require("../../assets/memoji/pastel_5.jpg"),
+                      memoji_6: require("../../assets/memoji/pastel_6.jpg"),
+                      memoji_7: require("../../assets/memoji/pastel_7.jpg"),
+                      memoji_8: require("../../assets/memoji/pastel_8.jpg"),
+                      memoji_9: require("../../assets/memoji/pastel_9.jpg"),
+                    };
+                    const src = memojiMap[av];
+                    if (src) return <Image source={src} style={styles.avatarImage} resizeMode="cover" />;
+                  }
+                  if (av && av.startsWith("http") && !av.includes("googleusercontent.com")) {
+                    return <Image source={{ uri: av }} style={styles.avatarImage} resizeMode="cover" />;
+                  }
+                  return <Text style={styles.avatarText}>{(userProfile?.username?.[0] || "U").toUpperCase()}</Text>;
+                })()}
               </TouchableOpacity>
             </View>
           </View>
@@ -327,10 +439,8 @@ export default function LibraryScreen() {
 
       {/* Content */}
       <View style={{ flex: 1, justifyContent: "flex-start" }}>
-      {isLoading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="small" color={colors.primary} />
-        </View>
+      {tabLoading ? (
+        <LibrarySkeleton type={activeTab} />
       ) : activeTab === "playlists" ? (
         /* Playlists List View */
         <FlatList
@@ -1234,5 +1344,83 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     fontSize: 13,
     color: "#000000",
+  },
+
+  // Skeleton Styles
+  skeletonWrap: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  skeletonLine: {
+    height: 13,
+    borderRadius: 4,
+    backgroundColor: "#1A1A1A",
+  },
+  skeletonPlaylistRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    gap: 12,
+  },
+  skeletonPlaylistThumb: {
+    width: 52,
+    height: 52,
+    borderRadius: 6,
+    backgroundColor: "#1A1A1A",
+  },
+  skeletonPlaylistInfo: {
+    flex: 1,
+  },
+  skeletonChevron: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    backgroundColor: "#1A1A1A",
+  },
+  skeletonSongRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    gap: 10,
+  },
+  skeletonSongThumb: {
+    width: 48,
+    height: 48,
+    borderRadius: 6,
+    backgroundColor: "#1A1A1A",
+  },
+  skeletonSongInfo: {
+    flex: 1,
+  },
+  skeletonDots: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    backgroundColor: "#1A1A1A",
+  },
+  skeletonHistoryHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 14,
+    marginTop: 4,
+  },
+  skeletonHistoryButtons: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  skeletonPillBtn: {
+    width: 100,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#1A1A1A",
+  },
+  skeletonCircleBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#1A1A1A",
   },
 });

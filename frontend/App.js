@@ -456,7 +456,12 @@ function AppContent() {
   }
 
   return (
-    <NavigationContainer theme={navTheme}>
+    <NavigationContainer
+      theme={navTheme}
+      // This app uses custom tabs rather than navigator-managed screens. Without
+      // a formatter, React Navigation writes an undefined route title on web.
+      documentTitle={{ formatter: () => "Staytup" }}
+    >
       <StatusBar style="light" backgroundColor="#000000" />
       <MainTabs />
       {/* Global Profile Page Modal */}

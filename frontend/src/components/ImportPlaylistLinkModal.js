@@ -54,18 +54,6 @@ export default function ImportPlaylistLinkModal({
     }
   }, [visible]);
 
-  const handlePaste = async () => {
-    try {
-      if (typeof navigator !== "undefined" && navigator.clipboard?.readText) {
-        const text = await navigator.clipboard.readText();
-        if (text) {
-          setUrl(text);
-          setError(null);
-        }
-      }
-    } catch (_) {}
-  };
-
   const handleImport = async () => {
     const targetUrl = (url || "").trim();
     if (!targetUrl) {
@@ -287,17 +275,7 @@ export default function ImportPlaylistLinkModal({
                   color="rgba(255, 255, 255, 0.45)"
                 />
               </TouchableOpacity>
-            ) : (
-              Platform.OS === "web" && !fetching && (
-                <TouchableOpacity
-                  style={styles.pasteBtn}
-                  onPress={handlePaste}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.pasteBtnText}>Paste</Text>
-                </TouchableOpacity>
-              )
-            )}
+            ) : null}
           </View>
         </View>
 
@@ -517,19 +495,6 @@ const styles = StyleSheet.create({
   clearBtn: {
     padding: 4,
     marginLeft: 4,
-  },
-  pasteBtn: {
-    backgroundColor: "rgba(255, 255, 255, 0.14)",
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 16,
-    marginLeft: 6,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  pasteBtnText: {
-    fontFamily: fonts.bold,
-    fontSize: 11,
-    color: "#FFFFFF",
   },
   keyboardAvoidArea: {
     flex: 1,

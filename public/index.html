@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <!-- Viewport configured to strictly prevent auto-zoom on input focus and enable safe-area insets -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Staytup</title>
+
+    <!-- PWA Manifest & App Icons -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="Staytup" />
+    <meta name="msapplication-navbutton-color" content="#000000" />
+    <!-- Instant Preload for Google Fonts Poppins with font-display: swap -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" />
+
+    <!-- React Native Web Reset & Outline / Zoom Elimination -->
+    <style id="staytup-pwa-styles">
+      @font-face {
+        font-family: 'Poppins_400Regular';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: local('Poppins'), local('Poppins-Regular');
+      }
+      @font-face {
+        font-family: 'Poppins_500Medium';
+        font-style: normal;
+        font-weight: 500;
+        font-display: swap;
+        src: local('Poppins Medium'), local('Poppins-Medium');
+      }
+      @font-face {
+        font-family: 'Poppins_600SemiBold';
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: local('Poppins SemiBold'), local('Poppins-SemiBold');
+      }
+      @font-face {
+        font-family: 'Poppins_700Bold';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: local('Poppins Bold'), local('Poppins-Bold');
+      }
+      @font-face {
+        font-family: 'Poppins_800ExtraBold';
+        font-style: normal;
+        font-weight: 800;
+        font-display: swap;
+        src: local('Poppins ExtraBold'), local('Poppins-ExtraBold');
+      }
+      html, body {
+        height: 100%;
+        height: 100dvh;
+        min-height: 100dvh;
+        background-color: #000000;
+        color: #ffffff;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        position: fixed;
+        width: 100%;
+        left: 0;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #root {
+        display: flex;
+        height: 100%;
+        height: 100dvh;
+        min-height: 100dvh;
+        width: 100%;
+        flex: 1;
+        background-color: #000000;
+      }
+      /* Prevent mobile tap highlight and completely eliminate focus outline */
+      input, textarea, select {
+        outline: none !important;
+        -webkit-tap-highlight-color: transparent !important;
+        box-shadow: none !important;
+      }
+      input:focus, textarea:focus, select:focus, button:focus, *:focus {
+        outline: none !important;
+        box-shadow: none !important;
+      }
+      ::selection {
+        background-color: #1DB954;
+        color: #000000;
+      }
+
+      /* ── Native HTML Splash Screen ── */
+      #staytup-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        background: #000000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        transition: opacity 0.35s ease-out;
+      }
+      #staytup-splash.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #staytup-splash img {
+        width: 220px;
+        max-width: 70vw;
+        animation: splashPop 0.55s cubic-bezier(0.34,1.56,0.64,1) both;
+      }
+      @keyframes splashPop {
+        from { opacity: 0; transform: scale(0.88); }
+        to   { opacity: 1; transform: scale(1); }
+      }
+    </style>
+    <!-- Early Console & Error Filter: Suppresses browser quirks and external third-party script warnings -->
+    <script>
+      (function() {
+        var IGNORE = [
+          'Banner not shown', 'beforeinstallprompt', 'powerPreference', 'requestAdapter',
+          '369219127', 'postMessage', 'DOMWindow', 'target origin', 'www-widgetapi',
+          'Failed to convert value to \'Response\'', 'FetchEvent for', 'network error response',
+          'doubleclick', 'googleads', 'ytimg', 'innertube', 'startTime', 'reportAllChanges'
+        ];
+        function shouldIgnore(args) {
+          try {
+            var str = Array.prototype.slice.call(args).map(function(x) {
+              return typeof x === 'string' ? x : (x && typeof x === 'object' ? (x.message || '') + ' ' + (x.stack || '') : String(x || ''));
+            }).join(' ');
+            return IGNORE.some(function(term) { return str.indexOf(term) !== -1; });
+          } catch (_) { return false; }
+        }
+        if (typeof console !== 'undefined') {
+          var _w = console.warn, _e = console.error, _i = console.info, _l = console.log, _d = console.debug;
+          console.warn = function() { if (!shouldIgnore(arguments)) _w.apply(console, arguments); };
+          console.error = function() { if (!shouldIgnore(arguments)) _e.apply(console, arguments); };
+          console.info = function() { if (!shouldIgnore(arguments)) _i.apply(console, arguments); };
+          console.log = function() { if (!shouldIgnore(arguments)) _l.apply(console, arguments); };
+          console.debug = function() { if (!shouldIgnore(arguments)) _d.apply(console, arguments); };
+        }
+        window.addEventListener('error', function(e) {
+          var m = ((e && e.message) || '') + ' ' + ((e && e.filename) || '') + ' ' + ((e && e.error && e.error.stack) || '');
+          if (IGNORE.some(function(term) { return m.indexOf(term) !== -1; })) {
+            e.preventDefault();
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+            return false;
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function(e) {
+          var r = (e && e.reason) || '';
+          var m = r && typeof r === 'object' ? ((r.message || '') + ' ' + (r.stack || String(r))) : String(r || '');
+          if (IGNORE.some(function(term) { return m.indexOf(term) !== -1; })) {
+            e.preventDefault();
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+            return false;
+          }
+        }, true);
+      })();
+    </script>
+  <meta name="theme-color" content="#000000">
+<link rel="icon" href="/favicon.ico"/></head>
+
+  <body>
+    <noscript>
+      Staytup requires JavaScript to stream music.
+    </noscript>
+
+    <!-- Instant splash: visible before ANY JS runs -->
+    <div id="staytup-splash">
+      <img src="/staytup_logo.png" alt="Staytup" />
+    </div>
+
+    <div id="root"></div>
+
+    <!-- Register PWA Service Worker & Install Prompt -->
+    <script>
+      window.deferredPWAInstallPrompt = null;
+      window.addEventListener('beforeinstallprompt', function(e) {
+        window.deferredPWAInstallPrompt = e;
+        window.dispatchEvent(new CustomEvent('pwa-prompt-ready'));
+      });
+      window.addEventListener('appinstalled', function() {
+        window.deferredPWAInstallPrompt = null;
+        window.dispatchEvent(new CustomEvent('pwa-installed'));
+      });
+
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js').then(function(reg) {
+            if (reg) {
+              reg.update();
+            }
+          }).catch(function() {});
+        });
+      }
+
+      // Handle bfcache (Back-Forward Cache) page restoration gracefully
+      window.addEventListener('pageshow', function(e) {
+        if (e.persisted) {
+          window.dispatchEvent(new CustomEvent('staytup-bfcache-resume'));
+        }
+      });
+
+      // Hide the HTML splash once React has rendered (MutationObserver watches #root)
+      (function() {
+        var splash = document.getElementById('staytup-splash');
+        if (!splash) return;
+        var observer = new MutationObserver(function() {
+          var root = document.getElementById('root');
+          if (root && root.children.length > 0) {
+            observer.disconnect();
+            splash.classList.add('hidden');
+            setTimeout(function() { splash.remove(); }, 380);
+          }
+        });
+        observer.observe(document.getElementById('root'), { childList: true, subtree: false });
+        // Safety: always remove after 6s even if React never mounts
+        setTimeout(function() {
+          splash.classList.add('hidden');
+          setTimeout(function() { splash.remove(); }, 380);
+        }, 6000);
+      })();
+    </script>
+  <script src="/_expo/static/js/web/index-96daba200b1c754c7a986d035e9b0df3.js" defer></script>
+</body>
+</html>

@@ -44,7 +44,7 @@ function SongCard({
   const isDesktop = responsive.isDesktop;
   const isTablet = responsive.isTablet;
 
-  const { currentTrack, isPlaying, togglePlayPause } = useAudioPlayback();
+  const { currentTrack, isPlaying, isLoading, togglePlayPause } = useAudioPlayback();
   const { isTrackInAnyPlaylist } = useUser?.() || {};
   const isInPlaylist = isTrackInAnyPlaylist ? isTrackInAnyPlaylist(track) : false;
   const trackId = track?.videoId || track?.video_id;
@@ -52,7 +52,9 @@ function SongCard({
     isActive ||
     (currentTrack?.videoId && trackId && currentTrack.videoId === trackId)
   );
-  const isThisPlaying = isCurrent && Boolean(isPlaying);
+  // A next track can be resolving while the previous stream finishes. Do not
+  // present this card as playing until its audio has reached the ready state.
+  const isThisPlaying = isCurrent && Boolean(isPlaying) && !isLoading;
 
   const handlePress = (e) => {
     if (isCurrent) {

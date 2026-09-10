@@ -1,45 +1,132 @@
-// API client — connects to Render production backend (https://staytup.onrender.com)
-// for all data loading: search, home feed, lyrics, suggestions, artist search.
-// Music playback is handled directly client-side via the default YouTube web engine.
+// API client — Routes all JioSaavn calls through PHP backend
+// No CORS proxies needed — server-side cURL handles everything
+// Firebase stays untouched for user data (auth, playlists, likes, history)
 import { Platform } from "react-native";
 import { getCachedArtist, saveCachedArtist, getBatchCachedArtists } from "../services/firebase";
 
-// Primary production backend link on Render
-const RENDER_BASE_URL = "https://staytup.onrender.com";
+// ─── Configuration ───────────────────────────────────────────────────────────
+const LRCLIB_API = "https://lrclib.net/api";
 
-let customBaseUrl = null;
+// Backend URL — set EXPO_PUBLIC_API_URL to your PHP backend
+// For local dev with XAMPP (no mod_rewrite): http://localhost/odera/api/index.php
+// For production: /api/index.php (relative, same domain)
+const configuredApiBase =
+  (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_API_URL) ||
+  null;
 
-export function getBackendBase() {
-  if (customBaseUrl) {
-    return customBaseUrl;
+// Expo web development runs on port 8081, while XAMPP serves this repository's
+// PHP API from port 80 under /staytup. Without this, every stream request goes
+// to Metro and receives a 404, so no song can start. Production stays relative.
+const API_BASE = configuredApiBase || (
+  typeof window !== "undefined" &&
+  window.location.hostname === "localhost" &&
+  window.location.port === "8081"
+    ? `${window.location.protocol}//${window.location.hostname}/staytup/api/index.php`
+    : "/api/index.php"
+);
+
+// ─── CryptoJS lazy load ──────────────────────────────────────────────────────
+let CryptoJS = null;
+function getCryptoJS() {
+  if (CryptoJS) return CryptoJS;
+  try {
+    CryptoJS = require("crypto-js");
+  } catch (e) {
+    console.warn("[API] crypto-js not available:", e.message);
   }
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL.replace(/\/$/, "");
-  }
-  if (Platform.OS === "web" && typeof window !== "undefined" && window.location) {
-    const { hostname, port, protocol } = window.location;
-    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname.startsWith("192.168.")) {
-      if (port === "3000") {
-        return window.location.origin;
-      }
-      return `${protocol}//${hostname}:3000`;
-    }
-  }
-  return RENDER_BASE_URL;
+  return CryptoJS;
 }
 
-export const setApiBaseUrl = (url) => {
-  if (url) {
-    customBaseUrl = url.replace(/\/$/, "");
+// ─── Core Backend Fetch ──────────────────────────────────────────────────────
+async function backendFetch(endpoint, params = {}, options = {}) {
+  // Build full URL — handle both absolute and relative API_BASE
+  let baseUrl = `${API_BASE}/${endpoint}`;
+  if (typeof window !== "undefined" && baseUrl.startsWith("/")) {
+    baseUrl = window.location.origin + baseUrl;
   }
-};
+  const url = new URL(baseUrl);
+  Object.entries(params).forEach(([key, val]) => {
+    if (val !== undefined && val !== null) url.searchParams.set(key, val);
+  });
 
-export const getApiBaseUrl = () => getBackendBase();
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), options.timeout || 12000) : null;
 
-// Standard user identifier
-export const DEFAULT_USER_ID = "staytup_user_main";
+  try {
+    const resp = await fetch(url.toString(), {
+      method: options.method || "GET",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+      ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
 
-// Helper to parse LRC lyrics strings
+    if (timeoutId) clearTimeout(timeoutId);
+
+    if (!resp.ok) {
+      const errorBody = await resp.text().catch(() => "");
+      throw new Error(`HTTP ${resp.status}: ${errorBody || resp.statusText}`);
+    }
+
+    return await resp.json();
+  } catch (err) {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (err.name === "AbortError") throw new Error("Request timeout");
+    throw err;
+  }
+}
+
+// ─── Stream URL Decryption (DES-ECB, key 38346591) ──────────────────────────
+function decryptStreamUrl(encrypted) {
+  if (!encrypted) return null;
+  const CJ = getCryptoJS();
+  if (!CJ) return null;
+  try {
+    const key = CJ.enc.Utf8.parse("38346591");
+    const decrypted = CJ.DES.decrypt(
+      { ciphertext: CJ.enc.Base64.parse(encrypted) },
+      key,
+      { mode: CJ.mode.ECB, padding: CJ.pad.Pkcs7 }
+    );
+    let url = decrypted.toString(CJ.enc.Utf8);
+    if (!url) return null;
+    url = url.replace("_96.mp4", "_320.mp4").replace("_160.mp4", "_320.mp4");
+    url = url.replace("http://", "https://");
+    return url;
+  } catch (e) {
+    console.error("[API] Decrypt failed:", e.message);
+    return null;
+  }
+}
+
+// ─── Extract best quality stream URL from song details ───────────────────────
+function extractStreamUrl(songData) {
+  if (!songData) return null;
+
+  // 1. Try encrypted_media_url (JioSaavn v1 format)
+  const encrypted = songData.encrypted_media_url || songData.more_info?.encrypted_media_url;
+  if (encrypted) {
+    const url = decryptStreamUrl(encrypted);
+    if (url) return url;
+  }
+
+  // 2. Try downloadUrl array (JioSaavn v4 format)
+  const dl = songData.downloadUrl || songData.data?.downloadUrl;
+  if (Array.isArray(dl) && dl.length > 0) {
+    const sorted = [...dl].sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
+    return sorted[0]?.url || dl[dl.length - 1]?.url;
+  }
+
+  // 3. Try direct url
+  if (songData.url) return songData.url;
+
+  return null;
+}
+
+// ─── LRC Lyrics Parser ───────────────────────────────────────────────────────
 function parseLrc(lrcText) {
   if (!lrcText || typeof lrcText !== "string") return [];
   const result = [];
@@ -54,363 +141,219 @@ function parseLrc(lrcText) {
   return result.sort((a, b) => a.time - b.time);
 }
 
-// Core request with timeout + 1 auto-retry
-async function request(endpoint, options = {}, retries = 1) {
-  const base = getBackendBase();
-  const url = endpoint.startsWith("http") ? endpoint : `${base}${endpoint}`;
-  const timeoutMs = 8000;
-  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+// ─── Helper for user identifier (kept for backward compat) ───────────────────
+export const DEFAULT_USER_ID = "staytup_user_main";
 
-  const config = {
-    ...options,
-    headers: {
-      Accept: "application/json",
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...options.headers,
-    },
-    ...(controller && !options.signal ? { signal: controller.signal } : {}),
-  };
-
-  try {
-    const response = await fetch(url, config);
-    if (timeoutId) clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      if ((response.status === 408 || response.status === 502 || response.status === 503) && retries > 0) {
-        await new Promise((r) => setTimeout(r, 1200));
-        return request(endpoint, options, retries - 1);
-      }
-      const body = await response.text().catch(() => "");
-      throw new Error(`HTTP ${response.status}: ${body || response.statusText}`);
-    }
-    return await response.json();
-  } catch (err) {
-    if (timeoutId) clearTimeout(timeoutId);
-    if (err.name === "AbortError" && retries > 0) {
-      await new Promise((r) => setTimeout(r, 1200));
-      return request(endpoint, options, retries - 1);
-    }
-    throw err;
-  }
+// ─── Backend URL helpers ─────────────────────────────────────────────────────
+export function getBackendBase() {
+  return API_BASE;
 }
+export const setApiBaseUrl = () => {};
+export const getApiBaseUrl = () => API_BASE;
+export const warmupBackend = () => backendFetch("health").catch(() => {});
 
-
-
-// Ping backend on app launch to keep Render instance warm
-export const warmupBackend = () => {
-  fetch(`${getBackendBase()}/api/health`).catch(() => {});
-};
-
+// ═════════════════════════════════════════════════════════════════════════════
+// PUBLIC API — Routes through PHP backend (no CORS issues)
+// ═════════════════════════════════════════════════════════════════════════════
 export const api = {
   // Health check
-  getHealth: () => request("/api/health"),
+  getHealth: async () => {
+    try {
+      return await backendFetch("health");
+    } catch (_) {
+      return { status: "error", source: "backend_unreachable" };
+    }
+  },
 
-  // Search songs via Saavn direct audio catalog with automatic YouTube enrichment
+  // ─── Search songs ─────────────────────────────────────────────────────────
   search: async (query, offset = 0, limit = 30) => {
     if (!query || !query.trim()) {
       return { query: "", count: 0, results: [], tracks: [], has_more: false };
     }
-    const cleanQ = query.trim();
     try {
-      const q = encodeURIComponent(cleanQ);
-      const data = await request(`/api/search/saavn?q=${q}&offset=${offset}&limit=${limit}`);
-      const raw = data?.results || data?.tracks || [];
-
-      const list = raw.map((item) => ({
-        ...item,
-        artwork_url: item.artwork_url || item.thumbnail || "",
-        thumbnail: item.thumbnail || item.artwork_url || "",
-      }));
-
+      const data = await backendFetch("search", {
+        q: query.trim(),
+        offset,
+        limit,
+      });
       return {
-        query: cleanQ,
-        count: list.length,
-        results: list,
-        tracks: list,
-        has_more: Boolean(data?.has_more ?? (list.length >= 20)),
+        query: query.trim(),
+        count: data.count || 0,
+        results: data.results || [],
+        tracks: data.tracks || [],
+        has_more: data.has_more || false,
       };
     } catch (err) {
-      console.warn("Saavn search request error:", err.message);
-      return { query: cleanQ, count: 0, results: [], tracks: [], has_more: false };
+      console.warn("[API] Search error:", err.message);
+      return { query: query.trim(), count: 0, results: [], tracks: [], has_more: false };
     }
   },
 
-  // Autocomplete suggestions
+  // ─── Autocomplete suggestions ─────────────────────────────────────────────
   getSuggestions: async (query = "") => {
     if (!query || !query.trim()) return { suggestions: [] };
     try {
-      return await request(`/api/suggest?q=${encodeURIComponent(query.trim())}`);
+      const data = await backendFetch("suggestions", { q: query.trim() });
+      return { suggestions: data.suggestions || [] };
     } catch (_) {
       return { suggestions: [] };
     }
   },
 
-  // Home feed — direct Saavn rich trending sections
-  getHomeFeed: async (userId = DEFAULT_USER_ID, forceRefresh = false) => {
+  // ─── Home feed ────────────────────────────────────────────────────────────
+  getHomeFeed: async (_userId, forceRefresh = false) => {
     try {
-      const data = await request(`/api/home/saavn${forceRefresh ? "?force_refresh=true" : ""}`);
-      if (data && Array.isArray(data.sections) && data.sections.length > 0) {
-        return data;
-      }
+      const data = await backendFetch("home", {
+        user_id: _userId,
+        force: forceRefresh ? "true" : "false",
+      });
+      return { sections: data.sections || [], _raw: data._raw };
     } catch (err) {
-      console.warn("Error fetching Saavn feed, falling back:", err.message);
+      console.warn("[API] Home feed error:", err.message);
+      return { sections: [] };
     }
-    // Fallback to legacy /home
-    try {
-      const data = await request(`/home${forceRefresh ? "?force_refresh=true" : ""}`);
-      if (data && Array.isArray(data.sections) && data.sections.length > 0) {
-        return data;
-      }
-    } catch (_) {}
-    return { sections: [] };
   },
 
-  // Personalized feed — deprecated mood sections removed
   getPersonalizedFeed: async () => {
-    return { sections: [], personalized: false };
+    try {
+      const data = await backendFetch("feed/personalized");
+      return { sections: data.sections || [], personalized: data.personalized || false };
+    } catch (_) {
+      return { sections: [], personalized: false };
+    }
   },
 
-  // Lyrics — proxied through backend
-  getLyrics: async (title, artist = "", videoId = "") => {
+  // ─── Lyrics (via PHP backend → lrclib.net) ──────────────────────────────
+  getLyrics: async (title, artist = "", _videoId = "") => {
     if (!title || !title.trim()) {
       return { has_lyrics: false, is_synced: false, synced_lyrics: [], plain_lyrics: "", instrumental: false };
     }
     try {
-      const qs = new URLSearchParams({
+      const data = await backendFetch("lyrics", {
         title: title.trim(),
-        artist: (artist || "").trim(),
-        videoId: videoId || "",
-      }).toString();
-      const data = await request(`/api/lyrics?${qs}`);
-      if (data) {
-        let synced = [];
-        if (Array.isArray(data.synced_lyrics)) {
-          synced = data.synced_lyrics;
-        } else if (Array.isArray(data.syncedLyrics)) {
-          synced = data.syncedLyrics;
-        } else if (typeof (data.syncedLyrics || data.synced_lyrics) === "string") {
-          synced = parseLrc(data.syncedLyrics || data.synced_lyrics);
-        }
-
-        const plain =
-          data.plain_lyrics ||
-          data.plainLyrics ||
-          (synced.length > 0 ? synced.map((s) => s.text).join("\n") : "");
-
-        const has = Boolean(synced.length > 0 || (plain && plain.trim().length > 0));
-        return {
-          has_lyrics: has,
-          is_synced: synced.length > 0,
-          synced_lyrics: synced,
-          plain_lyrics: plain,
-          plainLyrics: plain,
-          syncedLyrics: data.syncedLyrics || null,
-          instrumental: Boolean(data.instrumental),
-        };
-      }
+        artist: artist.trim(),
+        video_id: _videoId,
+      }, { timeout: 5000 });
+      return {
+        has_lyrics: data.has_lyrics || false,
+        is_synced: data.is_synced || false,
+        synced_lyrics: data.synced_lyrics || [],
+        plain_lyrics: data.plain_lyrics || "",
+        plainLyrics: data.plainLyrics || data.plain_lyrics || "",
+        syncedLyrics: data.syncedLyrics || null,
+        instrumental: data.instrumental || false,
+      };
     } catch (err) {
-      console.warn("Lyrics fetch error:", err.message);
+      console.warn("[API] Lyrics fetch error:", err.message);
     }
     return { has_lyrics: false, is_synced: false, synced_lyrics: [], plain_lyrics: "", instrumental: false };
   },
 
-  // Stream — resolves fresh direct audio stream URL from Saavn (with retry for rate limits)
-  getStream: async (videoIdOrTrackId, retries = 3) => {
+  // ─── Stream URL (PHP backend decrypts DES-ECB) ──────────────────────────
+  getStream: async (videoIdOrTrackId, retries = 2) => {
     if (!videoIdOrTrackId) return { stream_url: null, proxy_url: null };
     const cleanId = String(videoIdOrTrackId).replace(/^saavn_/, "").trim();
+
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const data = await request(`/api/stream/saavn/${encodeURIComponent(cleanId)}`);
-        return {
-          ...data,
-          stream_url: data?.stream_url || null,
-          videoId: cleanId,
-          id: `saavn_${cleanId}`,
-        };
+        const data = await backendFetch(`stream/${cleanId}`, {}, { timeout: 8000 });
+        if (data && data.stream_url) {
+          return {
+            stream_url: data.stream_url,
+            videoId: data.videoId || cleanId,
+            id: data.id || `saavn_${cleanId}`,
+            duration: data.duration,
+          };
+        }
       } catch (err) {
-        const is429 = err.message?.includes("429");
-        const is502 = err.message?.includes("502");
-        if ((is429 || is502) && attempt < retries) {
-          const delay = Math.min(1500 * Math.pow(2, attempt), 6000);
-          console.warn(`[API] Stream resolve ${is429 ? "429 rate limited" : "502"} for ${cleanId}, retry ${attempt + 1}/${retries} after ${delay}ms`);
-          await new Promise((r) => setTimeout(r, delay));
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
           continue;
         }
-        console.warn(`[API] Backend failed to resolve Saavn stream for ${cleanId}, trying direct provider fallback:`, err.message);
-        try {
-          const directUrls = [
-            `https://staytup-api.onrender.com/api/songs/${encodeURIComponent(cleanId)}`,
-          ];
-          for (const dUrl of directUrls) {
-            try {
-              const res = await fetch(dUrl, { signal: AbortSignal.timeout(6000) });
-              if (res.ok) {
-                const sData = await res.json();
-                const song = Array.isArray(sData?.data) ? sData.data[0] : sData?.data;
-                const dList = song?.downloadUrl;
-                if (Array.isArray(dList) && dList.length > 0) {
-                  const sorted = [...dList].sort((a, b) => {
-                    const qa = parseInt(a.quality || 0, 10);
-                    const qb = parseInt(b.quality || 0, 10);
-                    return qb - qa;
-                  });
-                  return {
-                    stream_url: sorted[0]?.url || dList[dList.length - 1]?.url,
-                    videoId: cleanId,
-                    id: `saavn_${cleanId}`,
-                    duration: song?.duration ? parseInt(song.duration, 10) : undefined,
-                  };
-                }
-              }
-            } catch (_) {}
-          }
-        } catch (_) {}
-        throw err;
+        console.warn(`[API] Stream resolve failed for ${cleanId}:`, err.message);
       }
     }
+    return { stream_url: null, proxy_url: null, videoId: cleanId, id: `saavn_${cleanId}` };
   },
 
-  getSaavnStream: async (id) => {
-    return api.getStream(id);
-  },
+  getSaavnStream: async (id) => api.getStream(id),
 
-  // High-res track artwork resolution (Backend RTDB cache + Staytup-API)
+  // ─── Track image resolution ───────────────────────────────────────────────
   getTrackImage: async (videoIdOrTrackId, title = "", artist = "") => {
     if (!videoIdOrTrackId) return null;
     const cleanId = String(videoIdOrTrackId).replace(/^saavn_/, "").trim();
     if (!cleanId) return null;
 
-    // 1. Query backend server (which uses RTDB caching + Staytup API)
     try {
-      const queryParams = [];
-      if (title) queryParams.push(`title=${encodeURIComponent(title)}`);
-      if (artist) queryParams.push(`artist=${encodeURIComponent(artist)}`);
-      const qStr = queryParams.length > 0 ? `?${queryParams.join("&")}` : "";
-      const data = await request(`/api/track-image/${encodeURIComponent(cleanId)}${qStr}`);
-      if (data?.image) {
-        return data.image;
-      }
+      const data = await backendFetch(`track/${cleanId}/image`);
+      return data?.image || null;
     } catch (_) {}
 
-    // 2. Direct fallback to Staytup API
+    // Fallback: search for image
     try {
-      const searchQ = `${title} ${artist}`.trim();
-      const directUrls = [
-        `https://staytup-api.onrender.com/api/songs/${encodeURIComponent(cleanId)}`,
-        ...(searchQ
-          ? [`https://staytup-api.onrender.com/api/search/songs?query=${encodeURIComponent(searchQ)}&limit=1`]
-          : []),
-      ];
-      for (const dUrl of directUrls) {
-        try {
-          const res = await fetch(dUrl, { signal: AbortSignal.timeout(5000) });
-          if (res.ok) {
-            const sData = await res.json();
-            const song = sData?.data?.results?.[0] || (Array.isArray(sData?.data) ? sData.data[0] : sData?.data);
-            if (song) {
-              let imgUrl = null;
-              if (Array.isArray(song.image) && song.image.length > 0) {
-                const fiveHundred = song.image.find((img) => img.quality === "500x500");
-                imgUrl = fiveHundred?.url || song.image[song.image.length - 1]?.url || null;
-              } else if (typeof song.image === "string") {
-                imgUrl = song.image;
-              }
-              if (imgUrl) {
-                return String(imgUrl).replace(/(?:50x50|150x150)\.jpg/i, "500x500.jpg");
-              }
-            }
-          }
-        } catch (_) {}
-      }
+      const query = title ? `${title} ${artist}`.trim() : cleanId;
+      const data = await backendFetch("search", { q: query, offset: 0, limit: 5 });
+      const results = data?.results || [];
+      const match = results.find((r) => {
+        const rid = String(r.id || "").replace(/^saavn_/, "");
+        return rid === cleanId || r.title?.toLowerCase() === title?.toLowerCase();
+      });
+      if (match?.image) return match.image;
     } catch (_) {}
-
     return null;
   },
 
-  // Track info via oEmbed on backend
-  getTrackInfo: (videoId) => request(`/api/track-info?v=${encodeURIComponent(videoId)}`),
+  getTrackInfo: async (videoId) => {
+    try {
+      const data = await backendFetch(`track/${videoId}`);
+      return data || {};
+    } catch (_) {
+      return {};
+    }
+  },
 
-  // Search artists live via Staytup API
+  // ─── Artist search ────────────────────────────────────────────────────────
   searchArtists: async (query, limit = 10) => {
     if (!query || !query.trim()) return { artists: [], results: [] };
-    const cleanQ = query.trim();
-
-    // 1. Direct call to Staytup API for fastest, verified Saavn artist data
     try {
-      const directUrl = `https://staytup-api.onrender.com/api/search/artists?query=${encodeURIComponent(cleanQ)}&limit=${limit}`;
-      const resp = await fetch(directUrl, { signal: AbortSignal.timeout(5000) });
-      if (resp.ok) {
-        const json = await resp.json();
-        const rawList = json?.data?.results || [];
-        if (Array.isArray(rawList) && rawList.length > 0) {
-          const normalized = rawList
-            .filter((a) => a && a.name)
-            .map((a) => {
-              const id = String(a.id || a.artistId || "");
-              const name = a.name.trim();
-              const imgUrl = Array.isArray(a.image)
-                ? (a.image[2]?.url || a.image[1]?.url || a.image[0]?.url || null)
-                : (typeof a.image === "string" ? a.image : null);
-              if (id && imgUrl) {
-                saveCachedArtist({ id, name, imageUrl: imgUrl }).catch(() => {});
-              }
-              return {
-                id,
-                name,
-                image: imgUrl,
-                thumbnail: imgUrl,
-                role: a.role || "Artist",
-                type: "artist",
-              };
-            })
-            .filter((a) => a.name.length > 1 && !a.name.toLowerCase().includes("default"));
-
-          if (normalized.length > 0) {
-            return { artists: normalized, results: normalized };
-          }
-        }
-      }
-    } catch (_) {}
-
-    // 2. Fallback to backend /artists/search
-    try {
-      const data = await request(`/artists/search?q=${encodeURIComponent(cleanQ)}&limit=${limit}`);
-      const list = data?.results || data?.artists || [];
-      const normalized = list.map((a) => {
-        const id = String(a.id || a.artistId || "");
-        const name = a.name || a.artist || a.title || "";
-        const image = a.image || a.thumbnail || a.artwork_url || null;
-        if (id && image) {
-          saveCachedArtist({ id, name, imageUrl: image }).catch(() => {});
-        }
-        return {
-          id,
-          name,
-          image,
-          thumbnail: image,
-          role: a.role || "Artist",
-          type: "artist",
-        };
-      });
-      return {
-        artists: normalized,
-        results: normalized,
-      };
-    } catch (_) {
+      const data = await backendFetch("artists/search", { q: query.trim(), limit });
+      return { artists: data.artists || [], results: data.results || [] };
+    } catch (err) {
+      console.warn("[API] Artist search error:", err.message);
       return { artists: [], results: [] };
     }
   },
 
-  // Firebase-backed user data endpoints (no-op stubs if called directly)
-  recordPlayEvent: () => Promise.resolve({}),
-  toggleFavorite: () => Promise.resolve({}),
-  getFavorites: () => Promise.resolve({ favorites: [] }),
-  getUserHistory: () => Promise.resolve({ recent: [], stats: {} }),
-  onboardUser: () => Promise.resolve({}),
-  getUserProfile: () => Promise.resolve({}),
+  // ─── Artist songs (from artist page topSongs) ─────────────────────────────
+  getArtistSongs: async (artistIdOrName, page = 0, limit = 20) => {
+    if (!artistIdOrName) return { tracks: [], results: [], has_more: false };
+    try {
+      const data = await backendFetch(`artist/${artistIdOrName}/songs`, {
+        page: page + 1,
+        limit,
+      });
+      const tracks = data.tracks || [];
+      const results = data.results || tracks;
+      return {
+        tracks,
+        results,
+        // Some providers omit has_more. Keep paging while a full page arrives.
+        has_more: typeof data.has_more === "boolean" ? data.has_more : tracks.length >= limit,
+        artist: data.artist || {},
+      };
+    } catch (err) {
+      console.warn("[API] Artist songs error:", err.message);
+    }
 
-  // Get artist image: check RTDB first, then Staytup API, save to RTDB
+    // Fallback: search for artist songs
+    try {
+      return await api.search(`${artistIdOrName} songs`, page * limit, limit);
+    } catch (_) {
+      return { tracks: [], results: [], has_more: false };
+    }
+  },
+
+  // ─── Artist image ─────────────────────────────────────────────────────────
   getArtistImage: async (artistIdOrName) => {
     if (!artistIdOrName) return { image: null };
     try {
@@ -418,190 +361,98 @@ export const api = {
       if (cached && (cached.imageUrl || cached.image)) {
         return { image: cached.imageUrl || cached.image, id: cached.id };
       }
-      const cleanName = String(artistIdOrName).trim();
-      const directUrl = `https://staytup-api.onrender.com/api/search/artists?query=${encodeURIComponent(cleanName)}&limit=1`;
-      const resp = await fetch(directUrl, { signal: AbortSignal.timeout(5000) });
-      if (resp.ok) {
-        const json = await resp.json();
-        const first = json?.data?.results?.[0];
-        if (first) {
-          const img = Array.isArray(first.image)
-            ? (first.image[2]?.url || first.image[1]?.url || first.image[0]?.url)
-            : first.image;
-          if (img && !img.includes("artist-default-music.png") && !img.includes("default_artist")) {
-            saveCachedArtist({
-              id: String(first.id || cleanName),
-              name: first.name || cleanName,
-              imageUrl: img,
-            }).catch(() => {});
-            return { image: img, id: String(first.id || "") };
-          }
-        }
-      }
-      return { image: null };
-    } catch (_) {
-      return { image: null };
-    }
-  },
 
-  // Get official artist songs (deduplicated original movie/album releases)
-  getArtistSongs: async (artistIdOrName, page = 0, limit = 20) => {
-    if (!artistIdOrName) return { tracks: [], results: [], has_more: false };
-    try {
-      const param = encodeURIComponent(String(artistIdOrName).trim());
-      const data = await request(`/artists/${param}/songs?page=${page}&limit=${limit}`);
-      if (data && Array.isArray(data.tracks) && data.tracks.length > 0) {
-        return data;
+      const data = await backendFetch(`artist/${artistIdOrName}/image`);
+      if (data?.image) {
+        saveCachedArtist({ id: data.id || artistIdOrName, name: artistIdOrName, imageUrl: data.image }).catch(() => {});
+        return { image: data.image, id: data.id };
       }
     } catch (_) {}
-
-    // Fallback to standard search
-    try {
-      const data = await api.search(`${artistIdOrName} songs`, page * limit, limit);
-      return data;
-    } catch (_) {
-      return { tracks: [], results: [], has_more: false };
-    }
+    return { image: null };
   },
 
-  // Get related/similar artists via Staytup API
+  // ─── Related / Similar artists ────────────────────────────────────────────
   getRelatedArtists: async (artistIdOrName, limit = 6) => {
     if (!artistIdOrName) return { artists: [], related: [] };
     try {
-      const param = encodeURIComponent(String(artistIdOrName).trim());
-      const data = await request(`/artists/similar?q=${param}&id=${param}&limit=${limit}`);
-      const list = data?.artists || data?.results || [];
-      const normalized = list.map((a) => {
-        const id = String(a.id || "");
-        const name = a.name || a.artist || "";
-        const image = a.image || a.thumbnail || null;
-        if (image) {
-          saveCachedArtist({ id: id || name, name, imageUrl: image }).catch(() => {});
-        }
-        return {
-          id: id || name,
-          name,
-          image,
-          thumbnail: image,
-          type: "artist",
-        };
+      const data = await backendFetch(`artist/${artistIdOrName}/related`, { limit });
+      const artists = data.artists || data.related || [];
+      artists.forEach((a) => {
+        if (a.image) saveCachedArtist({ id: a.id || a.name, name: a.name, imageUrl: a.image }).catch(() => {});
       });
-      return { artists: normalized, related: normalized };
+      return { artists, related: artists };
     } catch (_) {
       return { artists: [], related: [] };
     }
   },
 
-  // Batch fetch artist images from DB cache and Staytup API
+  // ─── Batch fetch artist images ────────────────────────────────────────────
   getBatchArtistImages: async (artists) => {
-    if (!Array.isArray(artists) || artists.length === 0) {
-      return { images: {} };
-    }
-    try {
-      const images = {};
-      const missing = [];
+    if (!Array.isArray(artists) || artists.length === 0) return { images: {} };
+    const images = {};
+    const missing = [];
 
-      // 1. Check local DB cache
-      const cachedMap = await getBatchCachedArtists(artists);
-      artists.forEach((item) => {
-        const key = typeof item === "object" ? (item.id || item.name) : item;
-        const name = typeof item === "object" ? item.name : item;
-        if (cachedMap[key]?.imageUrl) {
-          images[name] = cachedMap[key].imageUrl;
-          images[key] = cachedMap[key].imageUrl;
-        } else if (cachedMap[name]?.imageUrl) {
-          images[name] = cachedMap[name].imageUrl;
-          images[key] = cachedMap[name].imageUrl;
-        } else {
-          missing.push(item);
-        }
-      });
+    const cachedMap = await getBatchCachedArtists(artists);
+    artists.forEach((item) => {
+      const key = typeof item === "object" ? item.id || item.name : item;
+      const name = typeof item === "object" ? item.name : item;
+      if (cachedMap[key]?.imageUrl) {
+        images[name] = cachedMap[key].imageUrl;
+        images[key] = cachedMap[key].imageUrl;
+      } else {
+        missing.push(item);
+      }
+    });
 
-      // 2. Fetch missing from Staytup API in parallel and upload to database cache
-      if (missing.length > 0) {
-        const fetchResults = await Promise.allSettled(
+    if (missing.length > 0) {
+      try {
+        const data = await backendFetch("artists/batch-images", {}, {
+          method: "POST",
+          body: { artists: missing },
+        });
+        Object.assign(images, data.images || {});
+      } catch (_) {
+        // Fallback: fetch individually
+        const results = await Promise.allSettled(
           missing.map(async (item) => {
-            const queryName = typeof item === "object" ? (item.name || item.id) : item;
-            const directUrl = `https://staytup-api.onrender.com/api/search/artists?query=${encodeURIComponent(queryName)}&limit=1`;
-            const resp = await fetch(directUrl, { signal: AbortSignal.timeout(5000) });
-            if (resp.ok) {
-              const json = await resp.json();
-              const first = json?.data?.results?.[0];
-              if (first) {
-                const img = Array.isArray(first.image)
-                  ? (first.image[2]?.url || first.image[1]?.url || first.image[0]?.url)
-                  : first.image;
-                if (img && !img.includes("artist-default-music.png") && !img.includes("default_artist")) {
-                  saveCachedArtist({
-                    id: String(first.id || queryName),
-                    name: first.name || queryName,
-                    imageUrl: img,
-                  }).catch(() => {});
-                  return { name: queryName, id: String(first.id || ""), thumbnail: img };
-                }
+            const queryName = typeof item === "object" ? item.name || item.id : item;
+            try {
+              const result = await api.getArtistImage(queryName);
+              if (result?.image) {
+                saveCachedArtist({ id: queryName, name: queryName, imageUrl: result.image }).catch(() => {});
+                return { name: queryName, thumbnail: result.image };
               }
-            }
+            } catch (_) {}
             return null;
           })
         );
-
-        fetchResults.forEach((r) => {
+        results.forEach((r) => {
           if (r.status === "fulfilled" && r.value) {
             images[r.value.name] = r.value.thumbnail;
-            if (r.value.id) images[r.value.id] = r.value.thumbnail;
           }
         });
       }
+    }
+    return { images };
+  },
 
-      return { images };
+  // ─── Popular artists by language ──────────────────────────────────────────
+  getPopularArtists: async (language = "Hindi", limit = 12) => {
+    try {
+      const data = await backendFetch("artists/popular", { lang: language, limit });
+      return { artists: data.artists || [], results: data.results || [] };
     } catch (_) {
-      return { images: {} };
+      return { artists: [], results: [] };
     }
   },
 
-  // Get popular artists for a language dynamically via backend / Staytup API
-  getPopularArtists: async (language = "Hindi", limit = 12) => {
-    try {
-      const data = await request(`/artists/popular?language=${encodeURIComponent(language)}&limit=${limit}`);
-      if (data?.artists?.length > 0) return data;
-    } catch (_) {}
-
-    try {
-      const url = `https://staytup-api.onrender.com/api/search/songs?query=${encodeURIComponent(language + " top hits")}&limit=25`;
-      const resp = await fetch(url, { signal: AbortSignal.timeout(6000) });
-      if (resp.ok) {
-        const json = await resp.json();
-        const songs = json?.data?.results || [];
-        const seen = new Set();
-        const artists = [];
-        for (const song of songs) {
-          for (const a of (song.artists?.primary || [])) {
-            if (!a || !a.name) continue;
-            const name = a.name.trim();
-            if (seen.has(name.toLowerCase())) continue;
-            seen.add(name.toLowerCase());
-            const img = Array.isArray(a.image) ? (a.image[2]?.url || a.image[1]?.url || a.image[0]?.url) : a.image;
-            if (img && !img.includes("artist-default-music.png") && !img.includes("default_artist")) {
-              artists.push({
-                id: String(a.id || name),
-                name,
-                image: img,
-                thumbnail: img,
-                role: "Artist",
-                type: "artist",
-              });
-              saveCachedArtist({ id: String(a.id || name), name, imageUrl: img }).catch(() => {});
-            }
-          }
-        }
-        if (artists.length > 0) {
-          return { artists: artists.slice(0, limit), results: artists.slice(0, limit) };
-        }
-      }
-    } catch (_) {}
-    return { artists: [], results: [] };
-  },
-
+  // ─── User data stubs (handled by Firebase directly) ───────────────────────
+  recordPlayEvent: () => Promise.resolve({}),
+  toggleFavorite: () => Promise.resolve({}),
+  getFavorites: () => Promise.resolve({ favorites: [] }),
+  getUserHistory: () => Promise.resolve({ recent: [], stats: {} }),
+  onboardUser: () => Promise.resolve({}),
+  getUserProfile: () => Promise.resolve({}),
   getUserPlaylists: () => Promise.resolve([]),
   createPlaylist: () => Promise.resolve({}),
   getPlaylistDetails: () => Promise.resolve({}),
@@ -611,58 +462,22 @@ export const api = {
   deletePlaylist: () => Promise.resolve({}),
   savePremiumSubscription: () => Promise.resolve({}),
 
-  // YouTube Playlist Import
-  importYouTubePlaylist: (playlistUrlOrId) =>
-    request(`/api/import-playlist?url=${encodeURIComponent(playlistUrlOrId)}`),
+  // ─── YouTube Playlist Import (stub) ──────────────────────────────────────
+  importYouTubePlaylist: () => Promise.resolve({ error: "Not available" }),
 
-  // QR Login (Device Linking) & 4-Digit PIN Authentication
-  createQRSession: (user = null) =>
-    request("/api/qr-login/create", {
-      method: "POST",
-      body: user ? JSON.stringify({ user }) : undefined,
-    }),
-  pollQRSession: (sid) => request(`/api/qr-login/status/${encodeURIComponent(sid)}`),
-  claimQRSession: (target, user = null) => {
-    const payload = typeof target === "object" ? { ...target, ...(user ? { user } : {}) } : { sid: target, ...(user ? { user } : {}) };
-    return request("/api/qr-login/claim", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-  claimQRSessionWithPin: (pin, user = null) =>
-    request("/api/qr-login/claim", {
-      method: "POST",
-      body: JSON.stringify({ pin, ...(user ? { user } : {}) }),
-    }),
-  loginPhoneWithCode: (code) =>
-    request("/api/qr-login/phone-login", {
-      method: "POST",
-      body: JSON.stringify({ code }),
-    }),
-  loginWithPin: (username, pin) =>
-    request("/api/auth/pin-login", {
-      method: "POST",
-      body: JSON.stringify({ username, pin }),
-    }),
+  // ─── QR Login stubs ──────────────────────────────────────────────────────
+  createQRSession: () => Promise.resolve({ error: "Not available" }),
+  pollQRSession: () => Promise.resolve({ error: "Not available" }),
+  claimQRSession: () => Promise.resolve({ error: "Not available" }),
+  claimQRSessionWithPin: () => Promise.resolve({ error: "Not available" }),
+  loginPhoneWithCode: () => Promise.resolve({ error: "Not available" }),
+  loginWithPin: () => Promise.resolve({ error: "Not available" }),
 
-  // Referral System
-  createReferral: (userId, username) =>
-    request("/api/referral/create", {
-      method: "POST",
-      body: JSON.stringify({ userId, username }),
-    }),
-  claimReferral: (code, newUserId) =>
-    request("/api/referral/claim", {
-      method: "POST",
-      body: JSON.stringify({ code, newUserId }),
-    }),
-  getReferralStats: (code) => request(`/api/referral/stats/${encodeURIComponent(code)}`),
+  // ─── Referral stubs ───────────────────────────────────────────────────────
+  createReferral: () => Promise.resolve({ error: "Not available" }),
+  claimReferral: () => Promise.resolve({ error: "Not available" }),
+  getReferralStats: () => Promise.resolve({ error: "Not available" }),
 
-  // Song Recognizer (Shazam / AudD)
-  recognizeSong: async (base64Audio, audioUrl = null) => {
-    return await request("/api/recognize", {
-      method: "POST",
-      body: JSON.stringify({ audio: base64Audio, url: audioUrl }),
-    });
-  },
+  // ─── Song Recognizer (stub) ───────────────────────────────────────────────
+  recognizeSong: () => Promise.resolve({ error: "Not available" }),
 };

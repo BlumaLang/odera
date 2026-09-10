@@ -27,39 +27,22 @@ import SongCard from "../components/SongCard";
 import ChangelogModal from "../components/ChangelogModal";
 import { registerBackAction } from "../services/navigation";
 import { auth, getOrCreateReferralCode, getReferralCount } from "../services/firebase";
+import { resolveLocalArtistImage } from "../theme/artistImages";
 import { APP_VERSION, BUILD_NUMBER, BUILD_DATE } from "../config/version";
 
 const globalArtistPhotoCache = {};
 
-export const DICEBEAR_TOON_SEEDS = [
-  { seed: "Felix", label: "Felix" },
-  { seed: "Sam", label: "Sam" },
-  { seed: "Ruby", label: "Ruby" },
-  { seed: "Jasper", label: "Jasper" },
-  { seed: "Luna", label: "Luna" },
-  { seed: "Milo", label: "Milo" },
-  { seed: "Oliver", label: "Oliver" },
-  { seed: "Aneka", label: "Aneka" },
-  { seed: "Maya", label: "Maya" },
-  { seed: "Leo", label: "Leo" },
-];
-
-export function getToonHeadUrl(seed) {
-  return `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(seed || "Felix")}`;
-}
-
-const AVATAR_OPTIONS = [
-  { id: "initial", label: "Monogram", icon: null },
-];
-
-export const COLOR_OPTIONS = [
-  { id: "#8C52FF", label: "Amethyst", color: "#8C52FF" },
-  { id: "#2EBDD7", label: "Cyan", color: "#2EBDD7" },
-  { id: "#FFA500", label: "Amber", color: "#FFA500" },
-  { id: "#E8115B", label: "Rose", color: "#E8115B" },
-  { id: "#3A86FF", label: "Electric Blue", color: "#3A86FF" },
-  { id: "#FF5722", label: "Coral", color: "#FF5722" },
-  { id: "#FFFFFF", label: "White", color: "#FFFFFF" },
+export const MEMOJI_AVATARS = [
+  { id: "memoji_0", label: "Memoji 1", source: require("../../assets/memoji/pastel_0.jpg") },
+  { id: "memoji_1", label: "Memoji 2", source: require("../../assets/memoji/pastel_1.jpg") },
+  { id: "memoji_2", label: "Memoji 3", source: require("../../assets/memoji/pastel_2.jpg") },
+  { id: "memoji_3", label: "Memoji 4", source: require("../../assets/memoji/pastel_3.jpg") },
+  { id: "memoji_4", label: "Memoji 5", source: require("../../assets/memoji/pastel_4.jpg") },
+  { id: "memoji_5", label: "Memoji 6", source: require("../../assets/memoji/pastel_5.jpg") },
+  { id: "memoji_6", label: "Memoji 7", source: require("../../assets/memoji/pastel_6.jpg") },
+  { id: "memoji_7", label: "Memoji 8", source: require("../../assets/memoji/pastel_7.jpg") },
+  { id: "memoji_8", label: "Memoji 9", source: require("../../assets/memoji/pastel_8.jpg") },
+  { id: "memoji_9", label: "Memoji 10", source: require("../../assets/memoji/pastel_9.jpg") },
 ];
 
 function getArtistInitials(name) {
@@ -249,35 +232,10 @@ export default function ProfileScreen({ visible, onClose }) {
 
   const username = userProfile?.username || "Staytup Listener";
   const userInitial = (username[0] || "A").toUpperCase();
-  const currentAvatar = userProfile?.avatar || "initial";
+  const currentAvatar = userProfile?.avatar || "memoji_0";
   const currentAvatarColor = userProfile?.avatarColor || colors.primary;
 
-  const avatarOptions = useMemo(() => {
-    const list = [
-      ...DICEBEAR_TOON_SEEDS.map((item) => ({
-        id: getToonHeadUrl(item.seed),
-        label: item.label,
-        isPhoto: true,
-        photoUrl: getToonHeadUrl(item.seed),
-      })),
-      ...AVATAR_OPTIONS,
-    ];
-
-    if (
-      userProfile?.avatar &&
-      userProfile.avatar.startsWith("http") &&
-      !list.some((opt) => opt.id === userProfile.avatar)
-    ) {
-      list.unshift({
-        id: userProfile.avatar,
-        label: "Current Avatar",
-        isPhoto: true,
-        photoUrl: userProfile.avatar,
-      });
-    }
-
-    return list;
-  }, [userProfile?.avatar]);
+  const avatarOptions = MEMOJI_AVATARS;
 
   const favoriteArtists = useMemo(() => {
     const list = userProfile?.favoriteArtists || userProfile?.favorite_artists || [];
@@ -426,14 +384,6 @@ export default function ProfileScreen({ visible, onClose }) {
     }).catch(() => {});
   };
 
-  const handleSelectColor = async (newColor) => {
-    setTempColor(newColor);
-    await updateProfile({
-      avatar: tempAvatar,
-      avatarColor: newColor,
-    }).catch(() => {});
-  };
-
   const handleSaveProfile = async () => {
     const finalUser = formatUsername(tempUsername.trim()) || "listener";
     const finalName = formatPersonName(tempName.trim());
@@ -572,6 +522,15 @@ export default function ProfileScreen({ visible, onClose }) {
                   style={{ width: "100%", height: "100%" }}
                   resizeMode="cover"
                 />
+              ) : currentAvatar && currentAvatar.startsWith("memoji_") ? (
+                (() => {
+                  const match = MEMOJI_AVATARS.find((m) => m.id === currentAvatar);
+                  return match ? (
+                    <Image source={match.source} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+                  ) : (
+                    <Text style={[styles.avatarInitialText, isDesktop && { fontSize: 40 }]}>{userInitial}</Text>
+                  );
+                })()
               ) : currentAvatar !== "initial" ? (
                 <Ionicons name={currentAvatar} size={isDesktop ? 46 : 40} color="#000000" />
               ) : (
@@ -600,7 +559,7 @@ export default function ProfileScreen({ visible, onClose }) {
                 </View>
               ) : (
                 <View style={styles.freePill}>
-                  <Text style={styles.freePillText}>FREE</Text>
+                  <Text style={styles.freePillText}>BASIC</Text>
                 </View>
               )}
 
@@ -765,7 +724,7 @@ export default function ProfileScreen({ visible, onClose }) {
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               activeOpacity={0.7}
             >
-              <Ionicons name="arrow-back" size={22} color="#FFFFFF" />
+              <Ionicons name="arrow-back" size={20} color="#FFFFFF" />
             </TouchableOpacity>
 
             <Text style={styles.topBarTitle}>Profile</Text>
@@ -776,7 +735,7 @@ export default function ProfileScreen({ visible, onClose }) {
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               activeOpacity={0.75}
             >
-              <Ionicons name="share-social-outline" size={20} color="#FFFFFF" />
+              <Ionicons name="share-social-outline" size={18} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
 
@@ -801,157 +760,119 @@ export default function ProfileScreen({ visible, onClose }) {
         </View>
       </Modal>
 
-      {/* Customize Profile Modal (Bottom Sheet Style) */}
+      {/* Customize Profile Modal (Instagram-Style Full Screen) */}
       <Modal
         visible={showEditProfileModal}
         transparent
         animationType="slide"
         onRequestClose={() => setShowEditProfileModal(false)}
       >
-        <TouchableOpacity
-          style={styles.editModalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowEditProfileModal(false)}
-        >
-          <View style={styles.editModalBox} onStartShouldSetResponder={() => true}>
-            <View style={styles.sheetHandleArea}>
-              <View style={styles.sheetHandle} />
-            </View>
-
+        <View style={styles.editModalOverlay}>
+          <View style={styles.editModalBox}>
+            {/* Instagram-Style Header */}
             <View style={styles.editModalHeader}>
-              <Text style={styles.editModalTitle}>Customize Profile</Text>
               <TouchableOpacity
-                style={styles.modalCircleCloseBtn}
                 onPress={() => setShowEditProfileModal(false)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                activeOpacity={0.75}
-                accessibilityLabel="Close"
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                activeOpacity={0.7}
               >
-                <Ionicons name="close" size={18} color="#FFFFFF" />
+                <Ionicons name="close" size={26} color="#FFFFFF" />
+              </TouchableOpacity>
+              <Text style={styles.editModalTitle}>Edit Profile</Text>
+              <TouchableOpacity
+                onPress={handleSaveProfile}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.editSaveText, { color: colors.primary }]}>Done</Text>
               </TouchableOpacity>
             </View>
 
-            {/* Full Name Input (Capital first letter, max 15 characters) */}
-            <Text style={styles.fieldLabel}>FULL NAME (MAX 15 CHARACTERS)</Text>
-            <TextInput
-              style={styles.nameInput}
-              value={tempName}
-              onChangeText={(text) => setTempName(formatPersonName(text))}
-              placeholder="e.g. Felix"
-              placeholderTextColor="#777777"
-              maxLength={15}
-              autoCapitalize="words"
-            />
-
-            {/* Username Input (Strictly lowercase, max 15 characters) */}
-            <Text style={styles.fieldLabel}>USERNAME (ALWAYS LOWERCASE, MAX 15)</Text>
-            <TextInput
-              style={styles.nameInput}
-              value={tempUsername}
-              onChangeText={(text) => setTempUsername(formatUsername(text))}
-              placeholder="e.g. felix"
-              placeholderTextColor="#777777"
-              maxLength={15}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            {/* Avatar Icon Picker */}
-            <Text style={styles.fieldLabel}>AVATAR ICON</Text>
+            {/* Scrollable Content */}
             <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={{ flexGrow: 0 }}
-              contentContainerStyle={styles.avatarPickerRow}
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingBottom: 50 }}
+              showsVerticalScrollIndicator={false}
             >
-              {avatarOptions.map((item) => {
-                const isSelected = tempAvatar === item.id;
-                return (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[styles.avatarOptionCard, isSelected && styles.avatarOptionCardActive]}
-                    onPress={() => handleSelectAvatar(item.id)}
-                    activeOpacity={0.8}
-                  >
-                    <View
-                      style={[
-                        styles.avatarOptionIconWrap,
-                        isSelected && { backgroundColor: tempColor },
-                        { overflow: "hidden" },
-                      ]}
-                    >
-                      {item.isPhoto ? (
+              {/* Centered Profile Avatar - Memoji */}
+              <View style={styles.editAvatarSection}>
+                <View style={[styles.editAvatarCircle, { overflow: "hidden" }]}>
+                  {(() => {
+                    if (tempAvatar && tempAvatar.startsWith("http")) {
+                      return <Image source={{ uri: tempAvatar }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />;
+                    }
+                    if (tempAvatar && tempAvatar.startsWith("memoji_")) {
+                      const match = MEMOJI_AVATARS.find((m) => m.id === tempAvatar);
+                      if (match) return <Image source={match.source} style={{ width: "100%", height: "100%" }} resizeMode="cover" />;
+                    }
+                    return <Text style={styles.editAvatarInitial}>{userInitial}</Text>;
+                  })()}
+                </View>
+                <Text style={styles.editAvatarHint}>Swipe to choose your avatar</Text>
+              </View>
+
+              {/* Full Name Input */}
+              <View style={styles.editFieldGroup}>
+                <Text style={styles.editFieldLabel}>Name</Text>
+                <TextInput
+                  style={styles.editInput}
+                  value={tempName}
+                  onChangeText={(text) => setTempName(formatPersonName(text))}
+                  placeholder="Your name"
+                  placeholderTextColor="#555555"
+                  maxLength={15}
+                  autoCapitalize="words"
+                />
+              </View>
+
+              {/* Username Input */}
+              <View style={styles.editFieldGroup}>
+                <Text style={styles.editFieldLabel}>Username</Text>
+                <TextInput
+                  style={styles.editInput}
+                  value={tempUsername}
+                  onChangeText={(text) => setTempUsername(formatUsername(text))}
+                  placeholder="username"
+                  placeholderTextColor="#555555"
+                  maxLength={15}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              {/* Swipeable Memoji Avatar Picker */}
+              <View style={styles.editFieldGroup}>
+                <Text style={styles.editFieldLabel}>Choose Avatar</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.memojiPickerScroll}
+                  decelerationRate="fast"
+                  snapToInterval={72}
+                  snapToAlignment="center"
+                >
+                  {avatarOptions.map((item) => {
+                    const isSelected = tempAvatar === item.id;
+                    return (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={[styles.memojiOption, isSelected && styles.memojiOptionActive]}
+                        onPress={() => handleSelectAvatar(item.id)}
+                        activeOpacity={0.8}
+                      >
                         <Image
-                          source={{ uri: item.photoUrl }}
-                          style={{ width: "100%", height: "100%" }}
+                          source={item.source}
+                          style={styles.memojiImage}
                           resizeMode="cover"
                         />
-                      ) : item.icon ? (
-                        <Ionicons
-                          name={item.icon}
-                          size={20}
-                          color={isSelected ? "#000000" : "#FFFFFF"}
-                        />
-                      ) : (
-                        <Text
-                          style={[
-                            styles.avatarOptionMonogram,
-                            isSelected && { color: "#000000" },
-                          ]}
-                        >
-                          {userInitial}
-                        </Text>
-                      )}
-                    </View>
-                    <Text
-                      style={[
-                        styles.avatarOptionLabel,
-                        isSelected && styles.avatarOptionLabelActive,
-                      ]}
-                    >
-                      {item.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
             </ScrollView>
-
-            {/* Accent Color Picker */}
-            <Text style={styles.fieldLabel}>AVATAR BG COLOR</Text>
-            <View style={styles.colorPickerRow}>
-              {COLOR_OPTIONS.map((c) => {
-                const isSelected = tempColor === c.color;
-                const isWhite = c.color.toUpperCase() === "#FFFFFF";
-                return (
-                  <TouchableOpacity
-                    key={c.id}
-                    style={[
-                      styles.colorCircle,
-                      { backgroundColor: c.color },
-                      isWhite && { borderWidth: 1, borderColor: "rgba(255, 255, 255, 0.35)" },
-                      isSelected && styles.colorCircleActive,
-                      isSelected && isWhite && { borderColor: colors.primary },
-                    ]}
-                    onPress={() => handleSelectColor(c.color)}
-                    activeOpacity={0.8}
-                  >
-                    {isSelected && <Ionicons name="checkmark" size={16} color="#000000" />}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Modal Buttons */}
-            <View style={styles.editModalBtnRow}>
-              <TouchableOpacity
-                style={[styles.editSaveBtn, { flex: 1 }]}
-                onPress={handleSaveProfile}
-              >
-                <Text style={styles.editSaveText}>Save Changes</Text>
-              </TouchableOpacity>
-            </View>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* Artist Profile & Discography Modal */}
@@ -1252,34 +1173,29 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 16,
-    paddingTop:
-      Platform.OS === "web"
-        ? 14
-        : Platform.OS === "android"
-        ? (StatusBar.currentHeight || 24) + 8
-        : 46,
-    paddingBottom: 14,
+    paddingTop: Platform.OS === "web" ? 12 : 14,
+    paddingBottom: 8,
     backgroundColor: "#000000",
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.06)",
   },
   desktopTopBar: {
     width: "100%",
     paddingHorizontal: 32,
   },
   circleBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
   },
   topBarTitle: {
     fontFamily: fonts.bold,
-    fontSize: 18,
+    fontSize: 26,
     color: "#FFFFFF",
-    letterSpacing: -0.2,
+    letterSpacing: -0.4,
   },
   editProfilePill: {
     flexDirection: "row",
@@ -1315,9 +1231,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 20,
     paddingVertical: 18,
-    marginBottom: 28,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.06)",
+    marginBottom: 10,
   },
   profileHeaderDesktop: {
     gap: 24,
@@ -1370,16 +1284,14 @@ const styles = StyleSheet.create({
   badgeRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
     marginBottom: 10,
     flexWrap: "wrap",
   },
   listeningHoursPill: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(29, 185, 84, 0.15)",
-    borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.35)",
+    backgroundColor: "rgba(29, 185, 84, 0.12)",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -2077,166 +1989,101 @@ const styles = StyleSheet.create({
   },
   editModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.8)",
-    justifyContent: "flex-end",
-    alignItems: "center",
+    backgroundColor: "#000000",
   },
   editModalBox: {
-    width: "100%",
-    maxWidth: 580,
-    backgroundColor: "#0D0D0D",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 22,
-    paddingTop: 8,
-    paddingBottom: Platform.OS === "ios" ? 40 : 28,
-    borderWidth: 1,
-    borderBottomWidth: 0,
-    borderColor: "rgba(255,255,255,0.12)",
-  },
-  sheetHandleArea: {
-    width: "100%",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 8,
-    marginBottom: 4,
-  },
-  sheetHandle: {
-    width: 44,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "rgba(255,255,255,0.3)",
+    flex: 1,
+    backgroundColor: "#000000",
+    paddingTop: Platform.OS === "ios" ? 8 : 4,
   },
   editModalHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 16,
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === "web" ? 12 : 14,
+    paddingBottom: 8,
+    backgroundColor: "#000000",
   },
   editModalTitle: {
     fontFamily: fonts.bold,
-    fontSize: 18,
+    fontSize: 17,
     color: "#FFFFFF",
   },
-  modalCircleCloseBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.12)",
+  editAvatarSection: {
     alignItems: "center",
-    justifyContent: "center",
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  fieldLabel: {
-    fontFamily: fonts.bold,
-    fontSize: 11,
-    color: colors.textMuted,
-    letterSpacing: 0.5,
+    paddingVertical: 28,
     marginBottom: 8,
   },
-  nameInput: {
-    height: 46,
-    backgroundColor: "#000000",
-    borderRadius: 10,
-    paddingHorizontal: 14,
+  editAvatarCircle: {
+    width: 86,
+    height: 86,
+    borderRadius: 43,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  editAvatarInitial: {
+    fontFamily: fonts.bold,
+    fontSize: 34,
+    color: "#000000",
+  },
+  editAvatarHint: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: colors.primary,
+  },
+  editFieldGroup: {
+    paddingHorizontal: 16,
+    marginBottom: 22,
+  },
+  editFieldLabel: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: "rgba(255,255,255,0.5)",
+    marginBottom: 8,
+  },
+  editInput: {
+    height: 48,
+    backgroundColor: "#111111",
+    borderRadius: 12,
+    paddingHorizontal: 16,
     fontFamily: fonts.medium,
-    fontSize: 15,
+    fontSize: 16,
     color: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
-    marginBottom: 18,
+    borderWidth: 0.5,
+    borderColor: "rgba(255,255,255,0.08)",
     ...(Platform.OS === "web" ? { outlineStyle: "none" } : {}),
   },
-  avatarPickerRow: {
+  memojiPickerScroll: {
     gap: 10,
-    paddingBottom: 4,
-    marginBottom: 18,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
   },
-  avatarOptionCard: {
-    alignItems: "center",
-    padding: 6,
-    borderRadius: 12,
-    width: 68,
-  },
-  avatarOptionCardActive: {
-    backgroundColor: "rgba(255,255,255,0.08)",
-  },
-  avatarOptionIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.08)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
-  },
-  avatarOptionMonogram: {
-    fontFamily: fonts.bold,
-    fontSize: 18,
-    color: "#FFFFFF",
-  },
-  avatarOptionLabel: {
-    fontFamily: fonts.regular,
-    fontSize: 10,
-    color: colors.textMuted,
-    textAlign: "center",
-  },
-  avatarOptionLabelActive: {
-    color: "#FFFFFF",
-    fontFamily: fonts.semiBold,
-  },
-  colorPickerRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginBottom: 24,
-  },
-  colorCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  colorCircleActive: {
+  memojiOption: {
+    width: 66,
+    height: 66,
+    borderRadius: 33,
+    overflow: "hidden",
     borderWidth: 2.5,
-    borderColor: "#FFFFFF",
+    borderColor: "transparent",
   },
-  editModalBtnRow: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 12,
+  memojiOptionActive: {
+    borderColor: colors.primary,
   },
-  editCancelBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  editCancelText: {
-    fontFamily: fonts.medium,
-    fontSize: 14,
-    color: colors.textSecondary,
-  },
-  editSaveBtn: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 24,
-    alignItems: "center",
-    justifyContent: "center",
+  memojiImage: {
+    width: "100%",
+    height: "100%",
   },
   editSaveText: {
     fontFamily: fonts.bold,
-    fontSize: 14,
-    color: "#000000",
+    fontSize: 15,
+    color: colors.primary,
   },
   simpleListContainer: {
     width: "100%",
-    marginTop: 20,
+    marginTop: 2,
     marginBottom: 20,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255, 255, 255, 0.08)",
   },
   simpleActionRow: {
     flexDirection: "row",
@@ -2271,9 +2118,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "rgba(255, 82, 82, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 82, 82, 0.25)",
+    borderRadius: 24,
     paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingHorizontal: 24,
     marginBottom: 32,
+    marginHorizontal: 4,
   },
   simpleLogoutText: {
     fontFamily: fonts.semiBold,

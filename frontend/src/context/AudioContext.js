@@ -11,10 +11,15 @@ import {
   updatePlaybackSession,
   subscribePlaybackSession,
   addRecentlyPlayed,
+  loadHiddenTracks,
+  isTrackHidden,
+  restoreHiddenTrack,
   recordAppSongPlay,
   recordUserStream,
   saveCachedTrackImage,
   getCachedTrackImage,
+  getCollabPlaylistDetails,
+  addTrackToCollabPlaylist,
 } from "../services/firebase";
 import { getAccurateDeviceInfo } from "./ResponsiveContext";
 
@@ -28,6 +33,34 @@ try {
 const AudioContext = createContext(null);
 export const AudioPlaybackContext = createContext(null);
 
+// Auto-add played songs to blend playlists if not already present
+async function autoAddToBlendPlaylists(uid, track) {
+  if (!uid || !track?.videoId) return;
+  try {
+    const { ref: dbRef, get, child } = await import("firebase/database");
+    const { db } = await import("../services/firebase");
+    const userCollabsSnap = await get(child(dbRef(db), `users/${uid}/collab_playlists`));
+    if (!userCollabsSnap.exists()) return;
+    const collabIds = Object.keys(userCollabsSnap.val());
+    for (const collabId of collabIds) {
+      const plSnap = await get(child(dbRef(db), `collab_playlists/${collabId}`));
+      if (!plSnap.exists()) continue;
+      const pl = plSnap.val();
+      if (!pl.isBlend) continue;
+      const existingTracks = pl.tracks || [];
+      const alreadyAdded = existingTracks.some((t) => (t.videoId || t.id) === track.videoId);
+      if (!alreadyAdded) {
+        await addTrackToCollabPlaylist(collabId, {
+          ...track,
+          videoId: track.videoId,
+          addedAt: Date.now(),
+          blendSource: "auto",
+        });
+      }
+    }
+  } catch (_) {}
+}
+
 export function fisherYatesShuffle(arr) {
   if (!Array.isArray(arr)) return [];
   const result = [...arr];
@@ -38,16 +71,10 @@ export function fisherYatesShuffle(arr) {
   return result;
 }
 
-// ─── Stream URL Cache & Keep-Alive Audio Session (PWA Background Playback) ──
-// In-memory cache: maps clean trackId -> { stream_url, duration, timestamp }
-// Pre-resolves upcoming tracks so track switches happen SYNCHRONOUSLY within
-// the audio 'ended' event — keeping background playback unmuted on iOS & Android.
+// ─── Stream URL Cache ───────────────────────────────────────────────────────
+// In-memory cache: maps clean trackId -> { stream_url, duration, timestamp }.
+// Resolving the next URL early reduces the normal gap between queued tracks.
 const globalStreamCache = new Map();
-
-// Inaudible 0.1s silent WAV data URI used as an active-session bridge during
-// network delay, so iOS Safari & Android Chrome never suspend the audio pipeline.
-const SILENT_AUDIO_URI =
-  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 
 const AudioProvider = ({ children }) => {
   const myDeviceId = getOrCreateDeviceId();
@@ -69,6 +96,7 @@ const AudioProvider = ({ children }) => {
   const [sleepSecondsLeft, setSleepSecondsLeft] = useState(null);
   const [sleepEndOnTrack, setSleepEndOnTrack] = useState(false);
   const sleepEndOnTrackRef = useRef(false);
+  const sleepTimerEndAtRef = useRef(null);
 
   // Native player reference (expo-av)
   const soundRef = useRef(null);
@@ -91,6 +119,9 @@ const AudioProvider = ({ children }) => {
   const lastUpdatePosRef = useRef(0);
   const prevCurSecRef = useRef(0);
   const lastMediaSessionPosUpdateRef = useRef(0);
+  // Every requested track load gets an id. Stream resolution is asynchronous,
+  // so an older request must never replace a newer selection.
+  const playbackRequestRef = useRef(0);
 
   const playTrackRef = useRef(null);
   const togglePlayPauseRef = useRef(null);
@@ -106,6 +137,36 @@ const AudioProvider = ({ children }) => {
   currentTrackRef.current = currentTrack;
   positionMillisRef.current = positionMillis;
   durationMillisRef.current = durationMillis;
+
+  // Use an absolute deadline rather than subtracting one second per render.
+  // iOS may throttle JavaScript timers while the screen is locked; comparing
+  // against the clock keeps the timer accurate as soon as playback reports.
+  const stopForSleepTimer = () => {
+    if (Platform.OS === "web" && webAudioRef.current) {
+      webAudioRef.current.pause();
+    }
+    if (soundRef.current) {
+      soundRef.current.pauseAsync().catch(() => {});
+    }
+    setIsPlaying(false);
+    isPlayingRef.current = false;
+    updateMediaSessionPlaybackState(false);
+    sleepTimerEndAtRef.current = null;
+    setSleepSecondsLeft(null);
+    setSleepEndOnTrack(false);
+  };
+
+  const refreshSleepTimer = () => {
+    const endAt = sleepTimerEndAtRef.current;
+    if (!endAt) return false;
+    const remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+    if (remaining <= 0) {
+      stopForSleepTimer();
+      return true;
+    }
+    setSleepSecondsLeft((previous) => (previous === remaining ? previous : remaining));
+    return false;
+  };
 
   // MediaSession API helper: renders high-res 512x512 album banner on OS lock screens & notification panels
   const setupMediaSessionHandlers = useCallback(() => {
@@ -332,17 +393,6 @@ const AudioProvider = ({ children }) => {
       // this event was a delayed synthetic pause from the previous track — DO NOT mark paused!
       if (audio && !audio.paused) return;
 
-      // 3. When iPhone screen locks, iOS WebKit can emit a synthetic pause during audio pipeline handover.
-      // If we are actively playing, re-assert playback so Lock Screen & Dynamic Island stay in 'playing' state!
-      if (typeof document !== "undefined" && document.visibilityState === "hidden" && isPlayingRef.current) {
-        if (audio && audio.src && audio.paused) {
-          audio.play().then(() => {
-            updateMediaSessionPlaybackState(true);
-          }).catch(() => {});
-          return;
-        }
-      }
-
       setIsPlaying(false);
       isPlayingRef.current = false;
       updateMediaSessionPlaybackState(false);
@@ -368,6 +418,7 @@ const AudioProvider = ({ children }) => {
 
     const onTimeUpdate = () => {
       if (!audio) return;
+      if (refreshSleepTimer()) return;
       const curSec = audio.currentTime || 0;
       const durSec = audio.duration || 0;
       const curMs = Math.round(curSec * 1000);
@@ -400,31 +451,6 @@ const AudioProvider = ({ children }) => {
           prefetchUpcomingStreams(queueRef.current, queueIndexRef.current);
         }
 
-        // ─── Seamless Background & Lock Screen Auto-Advance ──────────────────
-        // Mobile Safari (iOS) and Chrome (Android) terminate background media sessions
-        // if an audio element reaches 'ended'. To keep the hardware audio pipeline
-        // continuously active without muting or requiring the app to be foregrounded,
-        // we advance 0.4s before EOF while the audio element is STILL actively playing!
-        if (remainingSec <= 0.4 && curSec > 5 && !advancingRef.current) {
-          if (sleepEndOnTrackRef.current) {
-            setSleepEndOnTrack(false);
-            if (audio) {
-              audio.loop = false;
-              audio.pause();
-            }
-            setIsPlaying(false);
-            isPlayingRef.current = false;
-            updateMediaSessionPlaybackState(false);
-            return;
-          }
-          if (isRepeatRef.current) {
-            audio.currentTime = 0;
-            audio.play().catch(() => {});
-          } else if (playNextRef.current) {
-            playNextRef.current();
-          }
-          return;
-        }
       }
 
       // Detect wrap-around fallback (if audio.loop wrapped before timeupdate caught it)
@@ -450,19 +476,16 @@ const AudioProvider = ({ children }) => {
 
     const onEnded = () => {
       if (advancingRef.current) return;
-      advancingRef.current = true;
       if (sleepEndOnTrackRef.current) {
         setSleepEndOnTrack(false);
         setIsPlaying(false);
         isPlayingRef.current = false;
         updateMediaSessionPlaybackState(false);
-        advancingRef.current = false;
         return;
       }
       if (isRepeatRef.current) {
         audio.currentTime = 0;
         audio.play().catch(() => {});
-        advancingRef.current = false;
       } else {
         if (playNextRef.current) playNextRef.current();
       }
@@ -522,24 +545,14 @@ const AudioProvider = ({ children }) => {
     audio.addEventListener("ended", onEnded);
     audio.addEventListener("error", onError);
 
-    // ─── Visibility Change: Force-unmute & resume when tab becomes visible ─────
-    // Mobile browsers (especially Chrome) can silently mute or suspend audio
-    // when the tab is backgrounded.  When the user brings the tab back, we
-    // force the audio element back to an audible state.
+    // Restore the UI state when the app becomes visible. Playback itself is never
+    // forced: browsers require a user gesture after a real system interruption.
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible" && webAudioRef.current) {
         const a = webAudioRef.current;
-        a.muted = false;
-        a.volume = volumeRef.current;
-
-        // If we think we should be playing but the audio is actually paused
-        // (browser suspended it), retry playback.
-        if (isPlayingRef.current && a.paused && a.src) {
-          a.play().then(() => {
-            a.muted = false;
-            a.volume = volumeRef.current;
-          }).catch(() => {});
-        }
+        setIsPlaying(!a.paused);
+        isPlayingRef.current = !a.paused;
+        updateMediaSessionPlaybackState(!a.paused);
       }
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -646,6 +659,7 @@ const AudioProvider = ({ children }) => {
       }
 
       const uid = firebaseUser?.uid || "guest";
+      loadHiddenTracks(uid).catch(() => {});
 
       // 1. Restore last played track so miniplayer appears immediately
       try {
@@ -719,6 +733,7 @@ const AudioProvider = ({ children }) => {
 
   // Update playback status handler for native expo-av
   const onPlaybackStatusUpdate = (status) => {
+    if (refreshSleepTimer()) return;
     if (!status.isLoaded) {
       if (status.error) {
         console.error(`Native audio playback error: ${status.error}`);
@@ -795,21 +810,9 @@ const AudioProvider = ({ children }) => {
   // Sleep timer countdown
   useEffect(() => {
     if (sleepSecondsLeft === null) return;
-    if (sleepSecondsLeft <= 0) {
-      if (Platform.OS === "web" && webAudioRef.current) {
-        webAudioRef.current.pause();
-      }
-      if (soundRef.current) {
-        soundRef.current.pauseAsync().catch(() => {});
-      }
-      setIsPlaying(false);
-      isPlayingRef.current = false;
-      setSleepSecondsLeft(null);
-      setSleepEndOnTrack(false);
-      return;
-    }
+    if (refreshSleepTimer()) return;
     const timer = setTimeout(() => {
-      setSleepSecondsLeft((prev) => (prev !== null && prev > 0 ? prev - 1 : null));
+      refreshSleepTimer();
     }, 1000);
     return () => clearTimeout(timer);
   }, [sleepSecondsLeft]);
@@ -817,18 +820,23 @@ const AudioProvider = ({ children }) => {
   const setSleepTimerMinutes = (minutes) => {
     setSleepEndOnTrack(false);
     if (minutes === null) {
+      sleepTimerEndAtRef.current = null;
       setSleepSecondsLeft(null);
       return;
     }
-    setSleepSecondsLeft(minutes * 60);
+    const seconds = Math.max(1, Math.round(Number(minutes) * 60));
+    sleepTimerEndAtRef.current = Date.now() + seconds * 1000;
+    setSleepSecondsLeft(seconds);
   };
 
   const setSleepEndOfTrackMode = () => {
+    sleepTimerEndAtRef.current = null;
     setSleepSecondsLeft(null);
     setSleepEndOnTrack(true);
   };
 
   const cancelSleepTimer = () => {
+    sleepTimerEndAtRef.current = null;
     setSleepSecondsLeft(null);
     setSleepEndOnTrack(false);
   };
@@ -944,7 +952,11 @@ const AudioProvider = ({ children }) => {
           if (curId && targetId && curId !== targetId) return prevQueue;
 
           const seen = new Set(prevQueue.map((t) => t?.videoId || t?.video_id || t?.id).filter(Boolean));
-          const uniqueNew = mergedRecs.filter((t) => !seen.has(t?.videoId || t?.video_id || t?.id));
+          const uid = auth.currentUser?.uid || "guest";
+          const uniqueNew = mergedRecs.filter((t) => {
+            const id = t?.videoId || t?.video_id || t?.id;
+            return id && !seen.has(id) && !isTrackHidden(uid, id);
+          });
           if (uniqueNew.length === 0) return prevQueue;
 
           const updated = [...prevQueue, ...uniqueNew];
@@ -954,6 +966,127 @@ const AudioProvider = ({ children }) => {
       }
     } catch (err) {
       console.warn("[AudioContext] Smart queue enrichment notice:", err?.message);
+    }
+  };
+
+  // ─── Smart Autoplay: Generates context-aware tracks when queue is ending ──
+  const autoplayGeneratedRef = useRef(false);
+
+  const generateAutoplayTracks = async (currentQueue, currentIndex) => {
+    if (!currentQueue || currentIndex < 0) return;
+
+    const currentTrackObj = currentQueue[currentIndex];
+    if (!currentTrackObj) return;
+
+    const normTitle = (str) =>
+      String(str || "")
+        .toLowerCase()
+        .replace(/\(.*?\)/g, "")
+        .replace(/\[.*?\]/g, "")
+        .replace(/feat\..*$/i, "")
+        .replace(/ft\..*$/i, "")
+        .trim();
+
+    // Collect existing IDs and titles from current queue to avoid duplicates
+    const existingIds = new Set(currentQueue.map((t) => t?.videoId || t?.video_id || t?.id).filter(Boolean));
+    const existingTitles = new Set(currentQueue.map((t) => normTitle(t?.title)).filter(Boolean));
+
+    const artists = (currentTrackObj.artist || currentTrackObj.primaryArtists || "")
+      .split(/[,&•/]/)
+      .map((a) => a.replace(/\(.*?\)/g, "").trim())
+      .filter((a) => a.length > 1);
+    const cleanArtist = artists[0] || (currentTrackObj.artist || currentTrackObj.primaryArtists || "").trim();
+
+    const recommendations = [];
+
+    // Priority 1: More tracks from the same artist
+    if (cleanArtist && cleanArtist.length > 1) {
+      try {
+        const data = await api.getArtistSongs(cleanArtist, 0, 8);
+        const tracks = data?.tracks || data?.results || [];
+        for (const t of tracks) {
+          const id = t?.videoId || t?.video_id || t?.id;
+          const tTitle = normTitle(t?.title);
+          if (id && !existingIds.has(id) && (!tTitle || !existingTitles.has(tTitle))) {
+            existingIds.add(id);
+            if (tTitle) existingTitles.add(tTitle);
+            recommendations.push({ ...t, _autoplaySource: "artist" });
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Priority 2: Related/similar artists
+    if (recommendations.length < 10 && cleanArtist && cleanArtist.length > 1) {
+      try {
+        const relData = await api.getRelatedArtists(cleanArtist, 3);
+        const relArtists = relData?.artists || relData?.related || [];
+        for (const rel of relArtists) {
+          if (recommendations.length >= 15) break;
+          const relName = rel?.name || rel?.artist;
+          if (relName && relName.toLowerCase() !== cleanArtist.toLowerCase()) {
+            try {
+              const relSongs = await api.getArtistSongs(relName, 0, 3);
+              const rTracks = relSongs?.tracks || relSongs?.results || [];
+              for (const rt of rTracks) {
+                const id = rt?.videoId || rt?.video_id || rt?.id;
+                const tTitle = normTitle(rt?.title);
+                if (id && !existingIds.has(id) && (!tTitle || !existingTitles.has(tTitle))) {
+                  existingIds.add(id);
+                  if (tTitle) existingTitles.add(tTitle);
+                  recommendations.push({ ...rt, _autoplaySource: "related" });
+                }
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Priority 3: Secondary/co-artist tracks
+    if (recommendations.length < 10 && artists.length > 1) {
+      const secondaryArtist = artists[1];
+      if (secondaryArtist && secondaryArtist.toLowerCase() !== cleanArtist.toLowerCase()) {
+        try {
+          const secData = await api.getArtistSongs(secondaryArtist, 0, 6);
+          const secTracks = secData?.tracks || secData?.results || [];
+          for (const st of secTracks) {
+            const id = st?.videoId || st?.video_id || st?.id;
+            const tTitle = normTitle(st?.title);
+            if (id && !existingIds.has(id) && (!tTitle || !existingTitles.has(tTitle))) {
+              existingIds.add(id);
+              if (tTitle) existingTitles.add(tTitle);
+              recommendations.push({ ...st, _autoplaySource: "artist" });
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    // Filter out hidden tracks
+    const uid = auth.currentUser?.uid || "guest";
+    const filtered = recommendations.filter((t) => {
+      const id = t?.videoId || t?.video_id || t?.id;
+      return id && !isTrackHidden(uid, id);
+    }).slice(0, 20);
+
+    if (filtered.length > 0) {
+      setQueue((prevQueue) => {
+        const curId = currentTrackRef.current?.videoId || currentTrackRef.current?.video_id || currentTrackRef.current?.id;
+        const targetId = currentTrackObj?.videoId || currentTrackObj?.video_id || currentTrackObj?.id;
+        if (curId && targetId && curId !== targetId) return prevQueue;
+
+        const seen = new Set(prevQueue.map((t) => t?.videoId || t?.video_id || t?.id).filter(Boolean));
+        const uniqueNew = filtered.filter((t) => {
+          const id = t?.videoId || t?.video_id || t?.id;
+          return id && !seen.has(id);
+        });
+        if (uniqueNew.length === 0) return prevQueue;
+
+        const updated = [...prevQueue, ...uniqueNew];
+        queueRef.current = updated;
+        return updated;
+      });
     }
   };
 
@@ -1047,10 +1180,22 @@ const AudioProvider = ({ children }) => {
   };
 
   // ─── Play a specific track (JioSaavn Direct Audio Stream) ───────────────────
-  const playTrack = async (track, newQueue = null, index = -1) => {
+  const playTrack = async (track, newQueue = null, index = -1, options = {}) => {
     if (!track) return;
     const trackId = track.videoId || track.video_id || track.id;
     if (!trackId) return;
+    const requestId = ++playbackRequestRef.current;
+    const uid = auth.currentUser?.uid || "guest";
+    // A track removed from history stays out of automatic queues. Selecting it
+    // intentionally restores it to recommendations and history.
+    if (!options.autoAdvance && isTrackHidden(uid, trackId)) {
+      restoreHiddenTrack(uid, trackId).catch(() => {});
+    }
+
+    // Reset autoplay flag when user explicitly selects a track
+    if (!options.autoAdvance) {
+      autoplayGeneratedRef.current = false;
+    }
 
     advancingRef.current = true;
     audioRetryCountRef.current = 0;
@@ -1149,7 +1294,6 @@ const AudioProvider = ({ children }) => {
     };
 
     try {
-      const uid = auth.currentUser?.uid || "guest";
       saveLastPlayback(uid, sanitizedTrack, newQueue || queueRef.current);
       addRecentlyPlayed(uid, sanitizedTrack);
       recordAppSongPlay(sanitizedTrack);
@@ -1161,6 +1305,9 @@ const AudioProvider = ({ children }) => {
         trackTitle: sanitizedTrack.title,
         isPlaying: true,
       });
+
+      // Auto-add played song to blend playlists if not already present
+      autoAddToBlendPlaylists(uid, sanitizedTrack).catch(() => {});
     } catch (_) {}
 
     // Resolve proper 500x500 high-res image from Server / RTDB / Staytup API
@@ -1233,6 +1380,9 @@ const AudioProvider = ({ children }) => {
       if (!playableUrl) {
         try {
           const streamData = await api.getStream(cleanId);
+          // The listener selected another track while this URL was resolving.
+          // Do not let this stale request seize the shared audio element.
+          if (requestId !== playbackRequestRef.current) return;
           if (streamData && streamData.stream_url) {
             playableUrl = streamData.stream_url;
             globalStreamCache.set(cleanId, {
@@ -1262,6 +1412,10 @@ const AudioProvider = ({ children }) => {
       setErrorNotice("Stream URL unavailable.");
       setIsLoading(false);
       advancingRef.current = false;
+      return;
+    }
+
+    if (requestId !== playbackRequestRef.current) {
       return;
     }
 
@@ -1304,6 +1458,11 @@ const AudioProvider = ({ children }) => {
           }
           try {
             await audio.play();
+            if (requestId !== playbackRequestRef.current) {
+              // A newer request owns this shared element now. Do not pause it:
+              // its source may already have been replaced by the newer track.
+              return;
+            }
             playSuccess = true;
             break;
           } catch (playErr) {
@@ -1393,6 +1552,10 @@ const AudioProvider = ({ children }) => {
       console.error("[AudioContext] Native playback error:", err);
       setErrorNotice("Playback error occurred.");
       setIsLoading(false);
+    } finally {
+      // A direct play and an automatic queue transition both take this path.
+      // Always release the transition guard once the native sound is settled.
+      advancingRef.current = false;
     }
   };
   playTrackRef.current = playTrack;
@@ -1407,7 +1570,10 @@ const AudioProvider = ({ children }) => {
         if (currentTrack) playTrack(currentTrack);
         return;
       }
-      if (isPlaying) {
+      // The media element is authoritative. React state can briefly lag during
+      // an automatic track transition, which previously inverted this button.
+      const actuallyPlaying = Boolean(audio.src && !audio.paused);
+      if (actuallyPlaying) {
         audio.pause();
         setIsPlaying(false);
         isPlayingRef.current = false;
@@ -1426,10 +1592,17 @@ const AudioProvider = ({ children }) => {
         audio.loop = Boolean(isRepeatRef.current);
         audio.muted = false;
         audio.volume = volumeRef.current;
-        audio.play().catch(() => {});
-        setIsPlaying(true);
-        isPlayingRef.current = true;
-        updateMediaSessionPlaybackState(true);
+        try {
+          await audio.play();
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+          updateMediaSessionPlaybackState(true);
+        } catch (err) {
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+          updateMediaSessionPlaybackState(false);
+          return;
+        }
         const dur = authoritativeDurationRef.current || durationMillisRef.current || 0;
         if (dur > 0) {
           updateMediaSessionPosition(positionMillisRef.current, dur, true);
@@ -1547,6 +1720,39 @@ const AudioProvider = ({ children }) => {
       if (isRepeatRef.current) {
         nextIdx = 0;
       } else {
+        // Autoplay: generate more tracks when queue ends
+        if (!autoplayGeneratedRef.current && q.length > 0) {
+          autoplayGeneratedRef.current = true;
+          generateAutoplayTracks(q, queueIndexRef.current).then(() => {
+            const updatedQ = queueRef.current;
+            if (updatedQ && updatedQ.length > q.length) {
+              // New tracks were added, play the next one
+              const newNextIdx = queueIndexRef.current + 1;
+              if (newNextIdx < updatedQ.length) {
+                setQueueIndex(newNextIdx);
+                queueIndexRef.current = newNextIdx;
+                playTrack(updatedQ[newNextIdx], null, newNextIdx, { autoAdvance: true })
+                  .catch(() => {})
+                  .finally(() => { advancingRef.current = false; });
+                return;
+              }
+            }
+            setIsPlaying(false);
+            isPlayingRef.current = false;
+            updateMediaSessionPlaybackState(false);
+            if (webAudioRef.current) {
+              webAudioRef.current.loop = false;
+              webAudioRef.current.pause();
+            }
+            advancingRef.current = false;
+          }).catch(() => {
+            setIsPlaying(false);
+            isPlayingRef.current = false;
+            updateMediaSessionPlaybackState(false);
+            advancingRef.current = false;
+          });
+          return;
+        }
         setIsPlaying(false);
         isPlayingRef.current = false;
         updateMediaSessionPlaybackState(false);
@@ -1559,12 +1765,29 @@ const AudioProvider = ({ children }) => {
       }
     }
 
+    // Reset autoplay flag when advancing to a new track within the queue
+    if (nextIdx > 0 && nextIdx < q.length) {
+      autoplayGeneratedRef.current = false;
+    }
+
+    // Skip tracks the listener explicitly removed from history. This does not
+    // alter their saved playlists; it only prevents surprise autoplay.
+    while (nextIdx < q.length && isTrackHidden(auth.currentUser?.uid || "guest", q[nextIdx]?.videoId || q[nextIdx]?.video_id || q[nextIdx]?.id)) {
+      nextIdx += 1;
+    }
+    if (nextIdx >= q.length) {
+      setIsPlaying(false);
+      isPlayingRef.current = false;
+      updateMediaSessionPlaybackState(false);
+      advancingRef.current = false;
+      return;
+    }
     const nextTrack = q[nextIdx];
     if (nextTrack) {
       setQueueIndex(nextIdx);
       queueIndexRef.current = nextIdx;
       // Reset advancingRef after playTrack completes (not on unreliable setTimeout)
-      playTrack(nextTrack)
+      playTrack(nextTrack, null, nextIdx, { autoAdvance: true })
         .catch(() => {})
         .finally(() => { advancingRef.current = false; });
     } else {

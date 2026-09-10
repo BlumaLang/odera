@@ -14,6 +14,7 @@ import { useAudio } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { colors, fonts } from "../theme/colors";
 import LikeConfetti from "./LikeConfetti";
+import { getHighResArtwork } from "../utils/imageUtils";
 
 export default function MiniPlayer() {
   const {
@@ -45,22 +46,6 @@ export default function MiniPlayer() {
       .replace(/\s*[\(\[]\s*\d{4}\s*[\)\]]/g, "")
       .replace(/\s{2,}/g, " ")
       .trim();
-  };
-
-  const getHighResArtwork = (url) => {
-    if (!url) return null;
-    let clean = url;
-    if (clean.includes("yt3.googleusercontent.com") || clean.includes("yt3.ggpht.com")) {
-      clean = clean.replace(/=s\d+[^?&]*/, "=s512").replace(/=w\d+-h\d+[^?&]*/, "=s512");
-      if (!clean.includes("=")) clean = `${clean}=s512`;
-      return clean;
-    }
-    clean = clean.replace(/=w\d+-h\d+[^?&]*/, "=w800-h800-l90-rj");
-    clean = clean.replace(/=s\d+[^?&]*/, "=s800");
-    clean = clean.replace(/\/default\.jpg/, "/mqdefault.jpg");
-    clean = clean.replace(/\/sddefault\.jpg/, "/mqdefault.jpg");
-    clean = clean.replace(/\/maxresdefault\.jpg/, "/mqdefault.jpg");
-    return clean;
   };
 
   const rawArtwork = currentTrack.artwork_url || currentTrack.thumbnail;

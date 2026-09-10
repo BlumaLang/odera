@@ -47,25 +47,29 @@ export default function Header({
               activeOpacity={0.75}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              {userProfile?.avatar === "initial" ? (
-                <Text style={styles.profileAvatarText}>{userInitial}</Text>
-              ) : avatarIcon && avatarIcon.startsWith("http") && !avatarIcon.includes("googleusercontent.com") ? (
-                <Image
-                  source={{ uri: avatarIcon }}
-                  style={styles.profileAvatarImage}
-                  resizeMode="cover"
-                />
-              ) : (
-                <Image
-                  source={{
-                    uri: `https://api.dicebear.com/10.x/toon-head/svg?seed=${encodeURIComponent(
-                      userProfile?.username || "Felix"
-                    )}`,
-                  }}
-                  style={styles.profileAvatarImage}
-                  resizeMode="cover"
-                />
-              )}
+              {(() => {
+                const av = userProfile?.avatar;
+                if (av && av.startsWith("memoji_")) {
+                  const memojiMap = {
+                    memoji_0: require("../../assets/memoji/pastel_0.jpg"),
+                    memoji_1: require("../../assets/memoji/pastel_1.jpg"),
+                    memoji_2: require("../../assets/memoji/pastel_2.jpg"),
+                    memoji_3: require("../../assets/memoji/pastel_3.jpg"),
+                    memoji_4: require("../../assets/memoji/pastel_4.jpg"),
+                    memoji_5: require("../../assets/memoji/pastel_5.jpg"),
+                    memoji_6: require("../../assets/memoji/pastel_6.jpg"),
+                    memoji_7: require("../../assets/memoji/pastel_7.jpg"),
+                    memoji_8: require("../../assets/memoji/pastel_8.jpg"),
+                    memoji_9: require("../../assets/memoji/pastel_9.jpg"),
+                  };
+                  const src = memojiMap[av];
+                  if (src) return <Image source={src} style={styles.profileAvatarImage} resizeMode="cover" />;
+                }
+                if (av && av.startsWith("http") && !av.includes("googleusercontent.com")) {
+                  return <Image source={{ uri: av }} style={styles.profileAvatarImage} resizeMode="cover" />;
+                }
+                return <Text style={styles.profileAvatarText}>{userInitial}</Text>;
+              })()}
             </TouchableOpacity>
           </View>
         </View>

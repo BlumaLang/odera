@@ -52,6 +52,10 @@ import {
   getLocalSession,
   saveLocalSession,
   removeLocalSession,
+  generateAutoPlaylist as fbGenerateAutoPlaylist,
+  syncAvatarToFriends,
+  saveFollowedArtists as fbSaveFollowedArtists,
+  subscribeFollowedArtists as fbSubscribeFollowedArtists,
 } from "../services/firebase";
 
 const UserContext = createContext(null);
@@ -100,10 +104,8 @@ export function formatUsername(raw) {
     .slice(0, 15);
 }
 
-export function getDicebearToonHeadAvatar(seed) {
-  const clean = encodeURIComponent(String(seed || "Felix").trim());
-  return `https://api.dicebear.com/10.x/toon-head/svg?seed=${clean}`;
-}
+// Default avatar is now a local memoji (Pastel Background set)
+export const DEFAULT_AVATAR = "memoji_0";
 
 export const UserProvider = ({ children }) => {
   const isFreshLoginRef = useRef(
@@ -128,7 +130,7 @@ export const UserProvider = ({ children }) => {
   const [loginProvider, setLoginProvider] = useState(null);
   const [userProfile, setUserProfile] = useState({
     username: "Music Lover",
-    avatar: "initial",
+    avatar: DEFAULT_AVATAR,
     avatarColor: "#8C52FF",
     languages: [],
     favoriteArtists: [],
@@ -158,6 +160,7 @@ export const UserProvider = ({ children }) => {
     let unsubscribeRequests = null;
     let unsubscribeCollab = null;
     let unsubscribeCollabInvites = null;
+    let unsubscribeFollowedArtists = null;
 
     const isPendingRedirect =
       typeof window !== "undefined" &&
@@ -318,11 +321,10 @@ export const UserProvider = ({ children }) => {
 
         // Pre-populate initial profile with clean handle (DO NOT leak Gmail personal name as username!)
         const defaultHandle = `listener_${(firebaseUser.uid || "user").slice(0, 5).toLowerCase()}`;
-        const defaultDicebear = getDicebearToonHeadAvatar(defaultHandle);
 
         const initialProfile = {
           username: defaultHandle,
-          avatar: defaultDicebear,
+          avatar: DEFAULT_AVATAR,
           avatarColor: getDeterministicAvatarColor(firebaseUser.uid || defaultHandle),
           languages: [],
           favoriteArtists: [],
@@ -344,16 +346,13 @@ export const UserProvider = ({ children }) => {
             if (data.profile) {
               const currentProfile = { ...data.profile };
               const isGoogle = typeof currentProfile.avatar === "string" && currentProfile.avatar.includes("googleusercontent.com");
-              const is9x = typeof currentProfile.avatar === "string" && currentProfile.avatar.includes("9.x/toon-head");
+              const isDicebear = typeof currentProfile.avatar === "string" && currentProfile.avatar.includes("toon-head");
               const isOldGreen = currentProfile.avatarColor === "#1DB954";
               let needsSave = false;
 
-              if (!currentProfile.avatar || isGoogle || is9x) {
-                if (is9x) {
-                  currentProfile.avatar = currentProfile.avatar.replace("9.x/toon-head", "10.x/toon-head");
-                } else {
-                  currentProfile.avatar = getDicebearToonHeadAvatar(currentProfile.username || cleanName);
-                }
+              // Migrate all old avatars (Google, Dicebear, missing) to memoji_0
+              if (!currentProfile.avatar || isGoogle || isDicebear || currentProfile.avatar === "initial") {
+                currentProfile.avatar = DEFAULT_AVATAR;
                 needsSave = true;
               }
 
@@ -464,6 +463,17 @@ export const UserProvider = ({ children }) => {
         unsubscribeCollabInvites = fbSubscribeCollabInvites(firebaseUser.uid, (invs) => {
           setCollabInvites(invs || []);
         });
+
+        // Dedicated followed artists subscription for cross-device sync
+        unsubscribeFollowedArtists = fbSubscribeFollowedArtists(firebaseUser.uid, (artistsList) => {
+          if (Array.isArray(artistsList) && artistsList.length >= 0) {
+            setUserProfile((prev) => ({
+              ...prev,
+              favoriteArtists: artistsList,
+              favorite_artists: artistsList,
+            }));
+          }
+        });
       } else {
         // Check for active local PIN or QR session before clearing state
         let storedSession = null;
@@ -551,6 +561,7 @@ export const UserProvider = ({ children }) => {
       if (unsubscribeFriends) unsubscribeFriends();
       if (unsubscribeRequests) unsubscribeRequests();
       if (unsubscribeCollab) unsubscribeCollab();
+      if (unsubscribeFollowedArtists) unsubscribeFollowedArtists();
     };
   }, []);
 
@@ -600,7 +611,7 @@ export const UserProvider = ({ children }) => {
         setUserProfile((prev) => ({
           ...prev,
           username: fallbackUser.displayName,
-          avatar: fallbackUser.photoURL || "initial",
+          avatar: fallbackUser.photoURL || DEFAULT_AVATAR,
         }));
         return { success: true, user: fallbackUser };
       }
@@ -755,17 +766,20 @@ export const UserProvider = ({ children }) => {
       favorite_artists: updatedList,
     };
 
+    // Optimistic local update
     setUserProfile(updatedProfile);
 
     const uid = currentUser?.uid || DEFAULT_USER_ID;
     try {
-      await fbSaveUserProfile(uid, updatedProfile);
+      await fbSaveFollowedArtists(uid, updatedList);
       api.onboardUser({
         user_id: uid,
         ...updatedProfile,
       }).catch((e) => console.warn("Syncing favorite artist error:", e.message));
     } catch (err) {
-      console.warn("Error saving favorite artist to Firebase:", err);
+      console.warn("Error saving followed artists, rolling back:", err.message);
+      // Rollback local state on save failure
+      setUserProfile(userProfile);
     }
   };
 
@@ -822,6 +836,14 @@ export const UserProvider = ({ children }) => {
         user_id: uid,
         ...updatedProfile,
       }).catch((e) => console.warn("Update profile sync error:", e.message));
+      // Sync avatar changes to all friends' stored copies
+      if (cleanUpdates.avatar || cleanUpdates.avatarColor) {
+        syncAvatarToFriends(
+          uid,
+          updatedProfile.avatar,
+          updatedProfile.avatarColor
+        ).catch(() => {});
+      }
     } catch (err) {
       console.warn("Error updating profile in Firebase:", err);
     }
@@ -878,7 +900,7 @@ export const UserProvider = ({ children }) => {
       )
     );
 
-    if (String(playlistId).startsWith("collab_")) {
+    if (/^(collab_|blend_)/.test(String(playlistId))) {
       return await fbRenameCollabPlaylist(playlistId, trimmed, newCover);
     }
     return await renamePlaylistRTDB(uid, playlistId, trimmed, newCover);
@@ -888,7 +910,7 @@ export const UserProvider = ({ children }) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
     setPlaylists((prev) => (prev || []).filter((p) => (p.id || p.collabId) !== playlistId));
     setCollabPlaylists((prev) => (prev || []).filter((p) => (p.id || p.collabId) !== playlistId));
-    if (String(playlistId).startsWith("collab_")) {
+    if (/^(collab_|blend_)/.test(String(playlistId))) {
       return await fbDeleteCollabPlaylist(playlistId);
     }
     return await deletePlaylistRTDB(uid, playlistId);
@@ -896,7 +918,7 @@ export const UserProvider = ({ children }) => {
 
   const addTrackToPlaylist = async (playlistId, track) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
-    const isCollab = String(playlistId).startsWith("collab_");
+    const isCollab = /^(collab_|blend_)/.test(String(playlistId));
     const ok = isCollab
       ? await fbAddTrackToCollabPlaylist(playlistId, track)
       : await addTrackToPlaylistRTDB(uid, playlistId, track);
@@ -944,7 +966,7 @@ export const UserProvider = ({ children }) => {
 
   const removeTrackFromPlaylist = async (playlistId, videoId) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
-    const isCollab = String(playlistId).startsWith("collab_");
+    const isCollab = /^(collab_|blend_)/.test(String(playlistId));
     const ok = isCollab
       ? await fbRemoveTrackFromCollabPlaylist(playlistId, videoId)
       : await removeTrackFromPlaylistRTDB(uid, playlistId, videoId);
@@ -985,7 +1007,7 @@ export const UserProvider = ({ children }) => {
     const sender = {
       uid: currentUser?.uid || DEFAULT_USER_ID,
       username: userProfile?.username || currentUser?.displayName || "Staytup Listener",
-      avatar: userProfile?.avatar || "initial",
+      avatar: userProfile?.avatar || DEFAULT_AVATAR,
       avatarColor: userProfile?.avatarColor || getDeterministicAvatarColor(currentUser?.uid),
     };
     return await sendFriendRequestRTDB(sender, recipientUid, recipientUser);
@@ -995,7 +1017,7 @@ export const UserProvider = ({ children }) => {
     const me = {
       uid: currentUser?.uid || DEFAULT_USER_ID,
       username: userProfile?.username || currentUser?.displayName || "Staytup Listener",
-      avatar: userProfile?.avatar || "initial",
+      avatar: userProfile?.avatar || DEFAULT_AVATAR,
       avatarColor: userProfile?.avatarColor || getDeterministicAvatarColor(currentUser?.uid),
     };
     return await acceptFriendRequestRTDB(me, requestUser);
@@ -1069,16 +1091,32 @@ export const UserProvider = ({ children }) => {
     return await fbSendCollabInvite(uid, userProfile, targetUid, data);
   };
 
-  const acceptCollabInvite = async (collabId) => {
+  const acceptCollabInvite = async (collabIdOrInvite) => {
     const uid = currentUser?.uid;
-    if (!uid) return { success: false };
-    return await fbAcceptCollabInvite(uid, userProfile, collabId);
+    if (!uid) return { success: false, error: "Not authenticated" };
+    const res = await fbAcceptCollabInvite(uid, userProfile, collabIdOrInvite);
+    if (res?.success && res.playlist) {
+      setCollabPlaylists((prev) => {
+        const list = Array.isArray(prev) ? prev : [];
+        const pId = res.playlist.collabId || res.playlist.id;
+        if (list.some((p) => (p.collabId || p.id) === pId)) {
+          return list;
+        }
+        return [res.playlist, ...list];
+      });
+      // Remove invite from local state
+      const targetId = typeof collabIdOrInvite === "string" ? collabIdOrInvite.replace(/^invite_/, "") : (collabIdOrInvite?.collabId || collabIdOrInvite?.id);
+      setCollabInvites((prev) => (prev || []).filter((inv) => (inv.collabId || inv.id) !== targetId && inv.id !== `invite_${targetId}`));
+    }
+    return res;
   };
 
-  const declineCollabInvite = async (collabId) => {
+  const declineCollabInvite = async (collabIdOrInvite) => {
     const uid = currentUser?.uid;
     if (!uid) return { success: false };
-    return await fbDeclineCollabInvite(uid, collabId);
+    const targetId = typeof collabIdOrInvite === "string" ? collabIdOrInvite.replace(/^invite_/, "") : (collabIdOrInvite?.collabId || collabIdOrInvite?.id);
+    setCollabInvites((prev) => (prev || []).filter((inv) => (inv.collabId || inv.id) !== targetId && inv.id !== `invite_${targetId}`));
+    return await fbDeclineCollabInvite(uid, collabIdOrInvite);
   };
 
   const getFriendBlend = async (friendUid, friendProfile) => {
@@ -1159,6 +1197,8 @@ export const UserProvider = ({ children }) => {
         deleteCollabPlaylist: deleteCollab,
         // Blend & Compatibility
         getFriendBlend,
+        // Auto Playlist Generation
+        generateAutoPlaylist: fbGenerateAutoPlaylist,
       }}
     >
       {children}
