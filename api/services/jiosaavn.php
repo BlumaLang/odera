@@ -295,18 +295,15 @@ class JioSaavnService {
             ]);
             
             $allTracks = [];
+            $totalSearchTracks = 0;
+            $offset = ($page - 2) * $limit;
             if (!empty($searchData['results'])) {
                 $searchTracks = self::filterSearchByArtist($searchData['results'], $artistName, []);
-                
-                // Calculate offset for this page
-                // Page 2 starts after top songs, so offset = (page - 2) * limit
-                $offset = ($page - 2) * $limit;
+                $totalSearchTracks = count($searchTracks);
                 $allTracks = array_slice($searchTracks, $offset, $limit);
             }
             
-            // Check if there are more songs
-            $totalSearchTracks = isset($searchTracks) ? count($searchTracks) : 0;
-            $hasMore = count($allTracks) >= $limit && ($totalSearchTracks > $offset + $limit || $searchLimit >= $searchLimit);
+            $hasMore = count($allTracks) >= $limit && $totalSearchTracks > $offset + $limit;
         }
         
         // Ensure we don't exceed limit
@@ -356,18 +353,6 @@ class JioSaavnService {
         }
         
         return $filtered;
-    }
-        if ($topSongsTotal > 0 && $page * $limit < $topSongsTotal) {
-            $hasMore = true;
-        }
-        
-        return [
-            'tracks'   => $allTracks,
-            'results'  => $allTracks,
-            'has_more' => $hasMore,
-            'artist'   => $artist,
-            'total'    => max($topSongsTotal, count($allTracks)),
-        ];
     }
     
     public static function getArtistImage($artistId) {
