@@ -109,6 +109,22 @@ if(typeof console!=='undefined'){
         e.preventDefault();return false;
       }
     },true);
+    if (typeof window.requestIdleCallback === 'function') {
+      var _origRIC = window.requestIdleCallback;
+      window.requestIdleCallback = function(cb, opts) {
+        return _origRIC.call(window, function(deadline) {
+          try {
+            return cb(deadline);
+          } catch (err) {
+            var s = (err && (err.message || err.stack)) ? (err.message + ' ' + (err.stack || '')) : String(err || '');
+            if (s.indexOf('startTime') !== -1 || s.indexOf('reportAllChanges') !== -1) {
+              return;
+            }
+            throw err;
+          }
+        }, opts);
+      };
+    }
   }catch(e){}
 }
 

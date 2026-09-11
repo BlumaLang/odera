@@ -209,6 +209,45 @@
             return false;
           }
         }, true);
+        if (typeof window !== 'undefined') {
+          if (typeof window.requestIdleCallback === 'function') {
+            var _origRIC = window.requestIdleCallback;
+            window.requestIdleCallback = function(cb, opts) {
+              return _origRIC.call(window, function(deadline) {
+                try {
+                  return cb(deadline);
+                } catch (err) {
+                  var s = (err && (err.message || err.stack)) ? (err.message + ' ' + (err.stack || '')) : String(err || '');
+                  if (IGNORE.some(function(term) { return s.indexOf(term) !== -1; })) {
+                    return;
+                  }
+                  throw err;
+                }
+              }, opts);
+            };
+          }
+          if (typeof window.setTimeout === 'function') {
+            var _origST = window.setTimeout;
+            window.setTimeout = function(handler, delay) {
+              var args = Array.prototype.slice.call(arguments, 2);
+              if (typeof handler === 'function') {
+                var safeHandler = function() {
+                  try {
+                    return handler.apply(this, args);
+                  } catch (err) {
+                    var s = (err && (err.message || err.stack)) ? (err.message + ' ' + (err.stack || '')) : String(err || '');
+                    if (IGNORE.some(function(term) { return s.indexOf(term) !== -1; })) {
+                      return;
+                    }
+                    throw err;
+                  }
+                };
+                return _origST.call(window, safeHandler, delay);
+              }
+              return _origST.apply(window, arguments);
+            };
+          }
+        }
       })();
     </script>
   </head>
