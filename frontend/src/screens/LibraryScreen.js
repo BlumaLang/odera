@@ -145,6 +145,8 @@ export default function LibraryScreen() {
     playlistFolders = [],
     createFolder,
     deleteFolder,
+    addPlaylistToFolder,
+    removePlaylistFromFolder,
   } = useUser();
 
   const [activeTab, setActiveTab] = useState("playlists");
@@ -158,6 +160,9 @@ export default function LibraryScreen() {
   const [sortBy, setSortBy] = useState("recent_added"); // "recent_added" | "alpha_asc" | "alpha_desc" | "track_count"
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFolder, setActiveFolder] = useState(null);
+  const [folderSelectPlaylist, setFolderSelectPlaylist] = useState(null);
+  const [folderToDelete, setFolderToDelete] = useState(null);
+  const [libraryToast, setLibraryToast] = useState("");
 
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderColor, setNewFolderColor] = useState(FOLDER_COLORS[0]);
@@ -521,7 +526,7 @@ export default function LibraryScreen() {
         openPlaylist(res);
       }
     } catch (err) {
-      alert("Invalid JSON playlist backup. Please verify your file contents.");
+      setLibraryToast("Invalid JSON playlist backup. Please verify your file contents.");
     } finally {
       setImportLoading(false);
     }
@@ -804,6 +809,15 @@ export default function LibraryScreen() {
               <Ionicons name="folder" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
               <Text style={styles.breadcrumbBadgeText}>{activeFolder.name}</Text>
             </View>
+            <TouchableOpacity
+              style={styles.folderBreadcrumbDeleteBtn}
+              onPress={() => setFolderToDelete(activeFolder)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.7}
+              accessibilityLabel="Delete folder"
+            >
+              <Ionicons name="trash-outline" size={14} color="#FF453A" />
+            </TouchableOpacity>
           </View>
         )}
 
@@ -899,7 +913,25 @@ export default function LibraryScreen() {
                           {item.description ? ` • ${item.description}` : ""}
                         </Text>
                       </View>
-                      <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <TouchableOpacity
+                          style={styles.folderRowActionBtn}
+                          onPress={(e) => {
+                            e?.stopPropagation?.();
+                            setFolderSelectPlaylist(item);
+                          }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          activeOpacity={0.7}
+                          accessibilityLabel="Organize into folder"
+                        >
+                          <Ionicons
+                            name={(playlistFolders || []).some((f) => Array.isArray(f.playlistIds) && f.playlistIds.includes(item.id)) ? "folder" : "folder-outline"}
+                            size={18}
+                            color={(playlistFolders || []).some((f) => Array.isArray(f.playlistIds) && f.playlistIds.includes(item.id)) ? "#1DB954" : colors.textMuted}
+                          />
+                        </TouchableOpacity>
+                        <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                      </View>
                     </TouchableOpacity>
                   );
                 }}
@@ -1308,7 +1340,7 @@ export default function LibraryScreen() {
                     </View>
                     <TouchableOpacity
                       style={styles.folderDeleteBtn}
-                      onPress={() => deleteFolder(item.id)}
+                      onPress={() => setFolderToDelete(item)}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                       <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
@@ -1436,6 +1468,135 @@ export default function LibraryScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Organize / Add to Folder Modal */}
+      <Modal visible={Boolean(folderSelectPlaylist)} transparent={true} animationType="fade" onRequestClose={() => setFolderSelectPlaylist(null)}>
+        <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setFolderSelectPlaylist(null)}>
+          <View style={styles.folderSelectCard} onStartShouldSetResponder={() => true}>
+            <View style={styles.folderSelectHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.folderModalTitle}>Add to Folder</Text>
+                <Text style={styles.folderSelectSub} numberOfLines={1}>{folderSelectPlaylist?.name}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setFolderSelectPlaylist(null)} style={styles.folderCloseBtn}>
+                <Ionicons name="close" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+              {(!playlistFolders || playlistFolders.length === 0) ? (
+                <View style={styles.folderEmptyPicker}>
+                  <Ionicons name="folder-open-outline" size={38} color={colors.textMuted} />
+                  <Text style={styles.folderEmptyPickerText}>No folders created yet</Text>
+                  <Text style={styles.folderEmptyPickerSub}>Create a folder to organize your playlists.</Text>
+                </View>
+              ) : (
+                playlistFolders.map((f) => {
+                  const isInFolder = Array.isArray(f.playlistIds) && f.playlistIds.includes(folderSelectPlaylist?.id);
+                  return (
+                    <TouchableOpacity
+                      key={f.id}
+                      style={[styles.folderPickerRow, isInFolder && styles.folderPickerRowActive]}
+                      onPress={async () => {
+                        if (!folderSelectPlaylist) return;
+                        if (isInFolder) {
+                          await removePlaylistFromFolder?.(f.id, folderSelectPlaylist.id);
+                        } else {
+                          await addPlaylistToFolder?.(f.id, folderSelectPlaylist.id);
+                        }
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.folderPickerIcon, { backgroundColor: f.color || "#1DB954" }]}>
+                        <Ionicons name="folder" size={16} color="#FFFFFF" />
+                      </View>
+                      <View style={{ flex: 1, marginHorizontal: 12 }}>
+                        <Text style={styles.folderPickerName} numberOfLines={1}>{f.name}</Text>
+                        <Text style={styles.folderPickerCount}>
+                          {(f.playlistIds || []).length} {(f.playlistIds || []).length === 1 ? "playlist" : "playlists"}
+                        </Text>
+                      </View>
+                      <Ionicons
+                        name={isInFolder ? "checkmark-circle" : "ellipse-outline"}
+                        size={22}
+                        color={isInFolder ? "#1DB954" : "rgba(255, 255, 255, 0.3)"}
+                      />
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={styles.folderCreateInlineBtn}
+              onPress={() => {
+                setNewFolderName("");
+                setNewFolderColor(FOLDER_COLORS[0]);
+                setShowFolderModal(true);
+              }}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="add-circle-outline" size={20} color="#1DB954" style={{ marginRight: 6 }} />
+              <Text style={styles.folderCreateInlineText}>Create New Folder</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.folderDoneBtn}
+              onPress={() => setFolderSelectPlaylist(null)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.folderDoneBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Delete Folder Confirmation Modal */}
+      <Modal visible={Boolean(folderToDelete)} transparent={true} animationType="fade" onRequestClose={() => setFolderToDelete(null)}>
+        <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setFolderToDelete(null)}>
+          <View style={styles.folderDeleteConfirmCard} onStartShouldSetResponder={() => true}>
+            <Text style={styles.folderModalTitle}>Delete Folder?</Text>
+            <Text style={styles.folderDeleteConfirmSub}>
+              Are you sure you want to delete "{folderToDelete?.name}"? Your playlists will not be deleted.
+            </Text>
+            <View style={styles.folderModalButtons}>
+              <TouchableOpacity
+                style={styles.folderCancelBtn}
+                onPress={() => setFolderToDelete(null)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.folderCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.folderCreateBtn, { backgroundColor: "#FF453A" }]}
+                onPress={async () => {
+                  if (folderToDelete) {
+                    await deleteFolder?.(folderToDelete.id);
+                    if (activeFolder?.id === folderToDelete.id) {
+                      setActiveFolder(null);
+                    }
+                    setFolderToDelete(null);
+                  }
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.folderCreateText, { color: "#FFFFFF" }]}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Toast Notice Banner */}
+      {Boolean(libraryToast) && (
+        <View style={styles.libraryToastBanner}>
+          <Ionicons name="information-circle" size={18} color="#1DB954" style={{ marginRight: 8 }} />
+          <Text style={styles.libraryToastText}>{libraryToast}</Text>
+          <TouchableOpacity onPress={() => setLibraryToast("")} style={{ marginLeft: 12 }}>
+            <Ionicons name="close" size={16} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Sort Options Modal */}
       <Modal visible={showSortModal} transparent={true} animationType="fade" onRequestClose={() => setShowSortModal(false)}>
@@ -2172,5 +2333,168 @@ const styles = StyleSheet.create({
     height: 16,
     borderRadius: 8,
     backgroundColor: "rgba(255, 255, 255, 0.08)",
+  },
+  folderRowActionBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  folderBreadcrumbDeleteBtn: {
+    padding: 6,
+    marginLeft: 10,
+    borderRadius: 8,
+    backgroundColor: "rgba(255, 69, 58, 0.12)",
+  },
+  folderSelectCard: {
+    width: "100%",
+    maxWidth: 380,
+    backgroundColor: "#16161A",
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+  },
+  folderSelectHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  folderSelectSub: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  folderCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  folderEmptyPicker: {
+    alignItems: "center",
+    paddingVertical: 24,
+  },
+  folderEmptyPickerText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: "#FFFFFF",
+    marginTop: 8,
+  },
+  folderEmptyPickerSub: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 4,
+    textAlign: "center",
+  },
+  folderPickerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 6,
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+  },
+  folderPickerRowActive: {
+    backgroundColor: "rgba(29, 185, 84, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.25)",
+  },
+  folderPickerIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  folderPickerName: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: "#FFFFFF",
+  },
+  folderPickerCount: {
+    fontFamily: fonts.regular,
+    fontSize: 11.5,
+    color: colors.textMuted,
+    marginTop: 1,
+  },
+  folderCreateInlineBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    marginTop: 8,
+    borderRadius: 12,
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  folderCreateInlineText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: "#1DB954",
+  },
+  folderDoneBtn: {
+    backgroundColor: "#1DB954",
+    borderRadius: 20,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 14,
+  },
+  folderDoneBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    color: "#000000",
+  },
+  folderDeleteConfirmCard: {
+    width: "100%",
+    maxWidth: 340,
+    backgroundColor: "#16161A",
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+  },
+  folderDeleteConfirmSub: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginVertical: 14,
+    lineHeight: 19,
+  },
+  libraryToastBanner: {
+    position: "absolute",
+    bottom: 90,
+    left: 20,
+    right: 20,
+    backgroundColor: "#1E1E22",
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+    zIndex: 999,
+  },
+  libraryToastText: {
+    flex: 1,
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "#FFFFFF",
   },
 });
