@@ -26,6 +26,8 @@ import { resolveLocalArtistImage } from "../theme/artistImages";
 import { useResponsive } from "../context/ResponsiveContext";
 import { registerBackAction } from "../services/navigation";
 import { getHighResArtwork } from "../utils/imageUtils";
+import LiveReactionOverlay from "./LiveReactionOverlay";
+import ActiveDevicesModal from "./ActiveDevicesModal";
 
 const { width, height } = Dimensions.get("window");
 // Larger artwork size for better visual impact
@@ -1477,10 +1479,16 @@ export default function FullPlayerModal() {
           {/* 3-Section Control Row */}
           <View style={styles.desktopDeckRow}>
             {/* Left Section: Device & Status */}
-            <View style={styles.desktopDeckLeft}>
+            <TouchableOpacity
+              style={styles.desktopDeckLeft}
+              onPress={() => setShowConnectModal(true)}
+              activeOpacity={0.75}
+              accessibilityLabel="Audio device output"
+              accessibilityRole="button"
+            >
               <Ionicons name={deviceIcon} size={16} color={colors.primary} />
               <Text style={styles.desktopDeckDeviceText}>Playing on {deviceLabel}</Text>
-            </View>
+            </TouchableOpacity>
 
             {/* Center Section: Primary Playback Controls */}
             <View style={styles.desktopDeckCenter}>
@@ -2002,6 +2010,9 @@ export default function FullPlayerModal() {
             </View>
           )}
 
+          {/* Real-time Airbuds Live Reaction Bursts inside Full Player Modal */}
+          <LiveReactionOverlay inModal={true} />
+
         {/* Dedicated Sleep Timer Modal */}
         <Modal
           animationType="slide"
@@ -2182,119 +2193,34 @@ export default function FullPlayerModal() {
           </View>
         </Modal>
 
-        {/* Spotify-style "Connect" Device Bottom Sheet Modal */}
-        <Modal
-          animationType="slide"
-          transparent={true}
+        {/* Active Devices & Sessions Modal */}
+        <ActiveDevicesModal
           visible={showConnectModal}
-          onRequestClose={() => setShowConnectModal(false)}
-        >
-          <TouchableOpacity
-            style={styles.connectModalOverlay}
-            activeOpacity={1}
-            onPress={() => setShowConnectModal(false)}
-          >
-            <Animated.View
-              style={[
-                styles.connectModalSheet,
-                { transform: [{ translateY: connectPanY }] },
-              ]}
-              {...connectPanResponder.panHandlers}
-              onStartShouldSetResponder={() => true}
-            >
-              {/* Drag Handle */}
-              <View style={styles.connectDragHandle} />
+          onClose={() => setShowConnectModal(false)}
+        />
 
-              <Text style={styles.connectModalTitle}>Connect</Text>
-
-              {/* Current Active Device Card */}
-              <View style={styles.connectCurrentDeviceCard}>
-                <View style={styles.connectDeviceInfo}>
-                  <View style={styles.connectDeviceNameRow}>
-                    <Text style={styles.connectDeviceName}>
-                      {deviceName ? (deviceName.toLowerCase().includes("this") ? deviceName : `This ${deviceName}`) : "This Device"}
-                    </Text>
-                    <View style={styles.connectNormalBadge}>
-                      <Text style={styles.connectNormalBadgeText}>Normal</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.connectSongSubtitle} numberOfLines={1}>
-                    {cleanTitle(currentTrack?.title || "")} {currentTrack?.artist ? `— ${currentTrack.artist}` : ""}
-                  </Text>
-                </View>
-
-                <View style={styles.connectDeviceIconWrap}>
-                  <Ionicons name={accurateDeviceIcon || "phone-portrait"} size={26} color="#1DB954" />
-                </View>
-              </View>
-
-              {/* Expandable "Don't see your device?" Section */}
-              <TouchableOpacity
-                style={styles.connectHelpCard}
-                onPress={() => setShowConnectHelp(!showConnectHelp)}
-                activeOpacity={0.8}
-              >
-                <View style={styles.connectHelpLeft}>
-                  <Ionicons name="hardware-chip-outline" size={18} color="#FFFFFF" style={{ marginRight: 10 }} />
-                  <Text style={styles.connectHelpTitle}>Don’t see your device?</Text>
-                </View>
-                <Ionicons
-                  name={showConnectHelp ? "chevron-up" : "chevron-down"}
-                  size={18}
-                  color="#AAAAAA"
-                />
-              </TouchableOpacity>
-
-              {showConnectHelp ? (
-                <View style={styles.connectHelpBody}>
-                  <Text style={styles.connectHelpBodyText}>
-                    Make sure your speakers, smart TV, or other audio devices are turned on and connected to the same Wi-Fi or Bluetooth.
-                  </Text>
-                </View>
-              ) : (
-                <Text style={styles.connectNoDevicesText}>No devices found on this network.</Text>
-              )}
-
-              {/* Bluetooth & Airplay Button */}
-              <TouchableOpacity
-                style={styles.connectAirplayButton}
-                onPress={() => {
-                  if (Platform.OS === "web") {
-                    alert("Bluetooth & AirPlay output is active. You can switch audio output in your system sound settings.");
-                  }
-                }}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="bluetooth" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-                <Text style={styles.connectAirplayButtonText}>Bluetooth & Airplay</Text>
-              </TouchableOpacity>
-            </Animated.View>
-          </TouchableOpacity>
-        </Modal>
-
-        {/* Track Options & Share Bottom Sheet Modal */}
+        {/* Track Options & Share Modal */}
         <Modal
-          animationType="slide"
+          animationType="fade"
           transparent={true}
           visible={showTrackOptionsModal}
           onRequestClose={() => setShowTrackOptionsModal(false)}
         >
           <TouchableOpacity
-            style={styles.optionsModalOverlay}
+            style={[
+              styles.optionsModalOverlay,
+              (isDesktop || isTablet) && styles.optionsModalOverlayDesktop,
+            ]}
             activeOpacity={1}
             onPress={() => setShowTrackOptionsModal(false)}
           >
-            <Animated.View
+            <View
               style={[
                 styles.optionsModalSheet,
-                { transform: [{ translateY: trackOptionsPanY }] },
+                (isDesktop || isTablet) && styles.optionsModalSheetDesktop,
               ]}
-              {...trackOptionsPanResponder.panHandlers}
               onStartShouldSetResponder={() => true}
             >
-              {/* Drag Handle */}
-              <View style={styles.optionsDragHandle} />
-
               {/* Track Header Card */}
               <View style={styles.optionsTrackHeader}>
                 {artwork ? (
@@ -2447,16 +2373,7 @@ export default function FullPlayerModal() {
                   <Ionicons name="chevron-forward" size={18} color="#666666" />
                 </TouchableOpacity>
               </ScrollView>
-
-              {/* Close Button */}
-              <TouchableOpacity
-                style={styles.optionsCloseButton}
-                onPress={() => setShowTrackOptionsModal(false)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.optionsCloseButtonText}>Close</Text>
-              </TouchableOpacity>
-            </Animated.View>
+            </View>
           </TouchableOpacity>
         </Modal>
 
@@ -3926,19 +3843,30 @@ const styles = StyleSheet.create({
   // Track Options / Share Bottom Sheet Modal
   optionsModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.72)",
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
     justifyContent: "flex-end",
+    alignItems: "center",
+  },
+  optionsModalOverlayDesktop: {
+    justifyContent: "center",
+    paddingHorizontal: 20,
   },
   optionsModalSheet: {
+    width: "100%",
+    maxWidth: 480,
     backgroundColor: "#16161C",
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    paddingTop: 12,
+    paddingTop: 18,
     paddingBottom: Platform.OS === "ios" ? 36 : 24,
     paddingHorizontal: 20,
     maxHeight: "85%",
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  optionsModalSheetDesktop: {
+    borderRadius: 24,
+    paddingBottom: 20,
   },
   optionsDragHandle: {
     width: 40,

@@ -23,6 +23,8 @@ import {
   subscribeFollowedArtists,
   getAppTrendingTracksRTDB,
   getTrendingFeedRTDB,
+  registerActiveDevice,
+  updateActiveDeviceHeartbeat,
 } from "../services/firebase";
 import { getAccurateDeviceInfo } from "./ResponsiveContext";
 
@@ -106,10 +108,14 @@ const AudioProvider = ({ children }) => {
   const [isRepeat, setIsRepeat] = useState(false);
   const [isShuffle, setIsShuffle] = useState(false);
   const [isFullPlayerVisible, setIsFullPlayerVisible] = useState(false);
+  const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false);
   const [errorNotice, setErrorNotice] = useState(null);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [queueNotice, setQueueNotice] = useState(null);
   const queueNoticeTimerRef = useRef(null);
+
+  const openDeviceModal = useCallback(() => setIsDeviceModalOpen(true), []);
+  const closeDeviceModal = useCallback(() => setIsDeviceModalOpen(false), []);
 
   // Sleep Timer state
   const [sleepSecondsLeft, setSleepSecondsLeft] = useState(null);
@@ -149,15 +155,38 @@ const AudioProvider = ({ children }) => {
   const enrichmentTokenRef = useRef(0);
   const followedArtistsRef = useRef([]);
 
-  // Keep followed artists live for personalized & diverse auto-queue
+  // Keep followed artists live and maintain active device presence
   useEffect(() => {
     let unsubscribeFollowed = null;
+    let heartbeatTimer = null;
+
     const unsubAuth = onAuthChange((user) => {
       if (unsubscribeFollowed) {
         unsubscribeFollowed();
         unsubscribeFollowed = null;
       }
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+
       if (user?.uid) {
+        // 1. Register this device presence in RTDB
+        registerActiveDevice(user.uid, {
+          id: myDeviceId,
+          name: myDeviceInfo.name,
+          platform: myDeviceInfo.platform,
+          browser: myDeviceInfo.browser,
+          deviceType: myDeviceInfo.deviceType,
+          icon: myDeviceInfo.icon,
+        }).catch(() => {});
+
+        // 2. Periodic presence heartbeat (every 45s)
+        heartbeatTimer = setInterval(() => {
+          updateActiveDeviceHeartbeat(user.uid, myDeviceId).catch(() => {});
+        }, 45000);
+
+        // 3. Followed artists subscription
         unsubscribeFollowed = subscribeFollowedArtists(user.uid, (artistsList) => {
           const cleanList = (Array.isArray(artistsList) ? artistsList : [])
             .map((a) => (typeof a === "string" ? a : a?.name || "").trim())
@@ -171,9 +200,10 @@ const AudioProvider = ({ children }) => {
 
     return () => {
       if (unsubscribeFollowed) unsubscribeFollowed();
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (unsubAuth) unsubAuth();
     };
-  }, []);
+  }, [myDeviceId, myDeviceInfo]);
 
   queueRef.current = queue;
   queueIndexRef.current = queueIndex;
@@ -2191,6 +2221,10 @@ const AudioProvider = ({ children }) => {
       isRepeat,
       isShuffle,
       isFullPlayerVisible,
+      isDeviceModalOpen,
+      setIsDeviceModalOpen,
+      openDeviceModal,
+      closeDeviceModal,
       errorNotice,
       volume,
       setVolume,
@@ -2232,6 +2266,9 @@ const AudioProvider = ({ children }) => {
       isRepeat,
       isShuffle,
       isFullPlayerVisible,
+      isDeviceModalOpen,
+      openDeviceModal,
+      closeDeviceModal,
       errorNotice,
       volume,
       sleepSecondsLeft,
@@ -2329,6 +2366,10 @@ const defaultAudioContext = {
   setIsQueueOpen: () => {},
   queueNotice: null,
   showQueueNotice: () => {},
+  isDeviceModalOpen: false,
+  setIsDeviceModalOpen: () => {},
+  openDeviceModal: () => {},
+  closeDeviceModal: () => {},
 };
 
 export const useAudio = () => {

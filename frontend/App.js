@@ -33,6 +33,8 @@ import DesktopPlayerBar from "./src/components/DesktopPlayerBar";
 import ChangelogModal from "./src/components/ChangelogModal";
 import QueueNoticeBanner from "./src/components/QueueNoticeBanner";
 import LiveReactionOverlay from "./src/components/LiveReactionOverlay";
+import ActiveDevicesModal from "./src/components/ActiveDevicesModal";
+import { useAudio } from "./src/context/AudioContext";
 import { BUILD_NUMBER, APP_VERSION } from "./src/config/version";
 import { colors, fonts } from "./src/theme/colors";
 import { handleGlobalBack, registerBackAction } from "./src/services/navigation";
@@ -355,6 +357,7 @@ function AppContent() {
     isProfileOpen,
     closeProfile,
   } = useUser();
+  const { isDeviceModalOpen, closeDeviceModal } = useAudio();
 
   const [showUpdateChangelog, setShowUpdateChangelog] = useState(false);
   const [forceReady, setForceReady] = useState(false);
@@ -478,6 +481,8 @@ function AppContent() {
       />
       {/* Real-time Airbuds Live Reaction Bursts & Floating Emojis */}
       <LiveReactionOverlay />
+      {/* Global Active Devices Modal */}
+      <ActiveDevicesModal visible={isDeviceModalOpen} onClose={closeDeviceModal} />
     </NavigationContainer>
   );
 }

@@ -29,6 +29,7 @@ import { registerBackAction } from "../services/navigation";
 import { auth, getOrCreateReferralCode, getReferralCount } from "../services/firebase";
 import { resolveLocalArtistImage } from "../theme/artistImages";
 import { APP_VERSION, BUILD_NUMBER, BUILD_DATE } from "../config/version";
+import LiveReactionOverlay from "../components/LiveReactionOverlay";
 
 const globalArtistPhotoCache = {};
 
@@ -102,7 +103,7 @@ export default function ProfileScreen({ visible, onClose }) {
     recentlyPlayed,
     streamCount,
   } = useUser();
-  const { playTrack, currentTrack } = useAudioPlayback();
+  const { playTrack, currentTrack, openDeviceModal } = useAudioPlayback();
 
   // Profile and listening statistics
   const [historyData, setHistoryData] = useState(null);
@@ -578,6 +579,30 @@ export default function ProfileScreen({ visible, onClose }) {
 
         {/* Simple Clean Profile Actions List (No Cards, No Heavy Boxes) */}
         <View style={styles.simpleListContainer}>
+          {/* Active Devices & Sessions */}
+          <TouchableOpacity
+            style={styles.simpleActionRow}
+            onPress={() => {
+              try {
+                if (typeof window !== "undefined") {
+                  window.dispatchEvent(new CustomEvent("staytup-open-devices"));
+                }
+              } catch (_) {}
+              if (openDeviceModal) openDeviceModal();
+            }}
+            activeOpacity={0.7}
+          >
+            <View style={styles.simpleActionIconWrap}>
+              <Ionicons name="hardware-chip-outline" size={20} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.simpleActionTitle}>Active Devices</Text>
+              <Text style={styles.simpleActionSub}>View & manage active listening sessions</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.25)" />
+          </TouchableOpacity>
+          <View style={styles.simpleRowDivider} />
+
           {/* Referral / Invite */}
           <TouchableOpacity
             style={styles.simpleActionRow}
@@ -749,6 +774,9 @@ export default function ProfileScreen({ visible, onClose }) {
 
             <View style={{ height: 60 }} />
           </ScrollView>
+
+          {/* Real-time Airbuds Live Reaction Bursts inside Profile Modal */}
+          <LiveReactionOverlay inModal={true} />
         </View>
       </Modal>
 

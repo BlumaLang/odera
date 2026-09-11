@@ -58,6 +58,7 @@ export default function DesktopPlayerBar() {
     toggleRepeat,
     setFullPlayerVisible,
     openQueue,
+    openDeviceModal,
   } = useAudio();
   const { isSongLiked, toggleLikeSong } = useUser();
 
@@ -451,7 +452,20 @@ export default function DesktopPlayerBar() {
           <Ionicons name="list" size={19} color={colors.textSecondary} />
         </TouchableOpacity>
 
-        <View style={styles.streamBadge}>
+        <TouchableOpacity
+          style={styles.streamBadge}
+          onPress={() => {
+            try {
+              if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("staytup-open-devices"));
+              }
+            } catch (_) {}
+            if (openDeviceModal) openDeviceModal();
+          }}
+          activeOpacity={0.75}
+          accessibilityLabel="Active devices"
+          accessibilityRole="button"
+        >
           <Ionicons
             name={deviceIcon || (isDesktop ? "desktop-outline" : isTablet ? "tablet-portrait-outline" : "phone-portrait-outline")}
             size={14}
@@ -461,7 +475,7 @@ export default function DesktopPlayerBar() {
           <Text style={styles.streamText}>
             {deviceName || (isDesktop ? "Desktop" : isTablet ? "iPad / Tablet" : "Phone")}
           </Text>
-        </View>
+        </TouchableOpacity>
 
         {/* Maximize to modal */}
         <TouchableOpacity
@@ -657,11 +671,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
     backgroundColor: "rgba(29, 185, 84, 0.08)",
-    paddingVertical: 4,
-    paddingHorizontal: 8,
+    paddingVertical: 5,
+    paddingHorizontal: 9,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.2)",
+    borderColor: "rgba(29, 185, 84, 0.22)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   streamDot: {
     width: 6,

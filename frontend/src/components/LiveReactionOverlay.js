@@ -7,18 +7,47 @@ import {
   Easing,
   useWindowDimensions,
   Platform,
+  TouchableOpacity,
 } from "react-native";
 import { useUser } from "../context/UserContext";
+import { useAudio } from "../context/AudioContext";
 import { subscribeLiveReactions } from "../services/firebase";
 import { colors, fonts } from "../theme/colors";
 
-// Global dispatcher so sender screens can trigger local burst immediately
-const localBurstListeners = new Set();
+// Global dispatcher so any screen (Home, Friends, FullPlayer) can trigger a reaction burst
+const burstListeners = new Set();
+
 export function triggerLocalReactionBurst(payload) {
-  localBurstListeners.forEach((fn) => {
+  burstListeners.forEach((fn) => {
     try {
       fn({ ...payload, isLocalSender: true });
     } catch (_) {}
+  });
+}
+
+export function triggerIncomingReaction(payload) {
+  burstListeners.forEach((fn) => {
+    try {
+      fn(payload);
+    } catch (_) {}
+  });
+}
+
+// Single subscription manager to prevent duplicate Firebase RTDB listeners
+let activeSubUid = null;
+let activeUnsubscribe = null;
+
+function ensureSubscription(uid) {
+  if (!uid || activeSubUid === uid) return;
+  if (activeUnsubscribe) {
+    try {
+      activeUnsubscribe();
+    } catch (_) {}
+    activeUnsubscribe = null;
+  }
+  activeSubUid = uid;
+  activeUnsubscribe = subscribeLiveReactions(uid, (reaction) => {
+    triggerIncomingReaction(reaction);
   });
 }
 
@@ -216,16 +245,36 @@ function NativeParticle({ particle, onComplete }) {
   );
 }
 
-export default function LiveReactionOverlay() {
-  const { currentUser } = useUser() || {};
+export default function LiveReactionOverlay({ inModal = false }) {
+  const { currentUser, userProfile } = useUser() || {};
+  const { isFullPlayerVisible } = useAudio() || {};
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [particles, setParticles] = useState([]);
   const [heroEmoji, setHeroEmoji] = useState(null);
   const [activeBanner, setActiveBanner] = useState(null);
 
-  const bannerAnimY = useRef(new Animated.Value(-100)).current;
+  const bannerAnimY = useRef(new Animated.Value(-80)).current;
   const bannerOpacity = useRef(new Animated.Value(0)).current;
   const bannerTimerRef = useRef(null);
+
+  const dismissBanner = useCallback(() => {
+    if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    Animated.parallel([
+      Animated.timing(bannerAnimY, {
+        toValue: -80,
+        duration: 250,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: Platform.OS !== "web",
+      }),
+      Animated.timing(bannerOpacity, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: Platform.OS !== "web",
+      }),
+    ]).start(() => {
+      setActiveBanner(null);
+    });
+  }, [bannerAnimY, bannerOpacity]);
 
   const spawnBurst = useCallback(
     (reaction) => {
@@ -234,7 +283,7 @@ export default function LiveReactionOverlay() {
       const centerX = (windowWidth || 360) / 2 - 20;
       const bottomY = Math.max(120, (windowHeight || 600) * 0.28);
 
-      // Trigger subtle haptic pulse on supported mobile devices
+      // Subtle tactile feedback on web if supported
       if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.vibrate) {
         try {
           navigator.vibrate([25, 35, 25]);
@@ -278,7 +327,7 @@ export default function LiveReactionOverlay() {
 
       setParticles((prev) => [...prev.slice(-18), ...newItems]);
 
-      // Top Toast Banner: Only show when a friend reacted, never for local sender
+      // Slim Dynamic Island Banner: Show only when a friend reacted
       if (reaction.senderName && !reaction.isLocalSender && reaction.senderName !== "You") {
         setActiveBanner({
           emoji,
@@ -290,35 +339,21 @@ export default function LiveReactionOverlay() {
 
         Animated.parallel([
           Animated.spring(bannerAnimY, {
-            toValue: Platform.OS === "web" ? 24 : 50,
-            tension: 85,
-            friction: 7,
+            toValue: Platform.OS === "web" ? 16 : 48,
+            tension: 90,
+            friction: 8,
             useNativeDriver: Platform.OS !== "web",
           }),
           Animated.timing(bannerOpacity, {
             toValue: 1,
-            duration: 200,
+            duration: 180,
             useNativeDriver: Platform.OS !== "web",
           }),
         ]).start();
 
         bannerTimerRef.current = setTimeout(() => {
-          Animated.parallel([
-            Animated.timing(bannerAnimY, {
-              toValue: -100,
-              duration: 300,
-              easing: Easing.in(Easing.cubic),
-              useNativeDriver: Platform.OS !== "web",
-            }),
-            Animated.timing(bannerOpacity, {
-              toValue: 0,
-              duration: 250,
-              useNativeDriver: Platform.OS !== "web",
-            }),
-          ]).start(() => {
-            setActiveBanner(null);
-          });
-        }, 3600);
+          dismissBanner();
+        }, 3400);
       }
 
       // Auto-cleanup particles after animation completes
@@ -326,34 +361,49 @@ export default function LiveReactionOverlay() {
         setParticles((prev) => prev.filter((p) => !newItems.some((n) => n.id === p.id)));
       }, 2400);
     },
-    [bannerAnimY, bannerOpacity, windowHeight, windowWidth]
+    [bannerAnimY, bannerOpacity, dismissBanner, windowHeight, windowWidth]
   );
 
-  // Subscribe to Firebase RTDB for incoming friend reactions
+  // Maintain RTDB subscription for active user
+  const effectiveUid =
+    currentUser?.uid ||
+    userProfile?.uid ||
+    (typeof localStorage !== "undefined" ? localStorage.getItem("@staytup_uid") : null);
+
   useEffect(() => {
-    const uid = currentUser?.uid;
-    if (!uid) return;
+    if (effectiveUid) {
+      ensureSubscription(effectiveUid);
+    }
+  }, [effectiveUid]);
 
-    const unsubscribe = subscribeLiveReactions(uid, (reaction) => {
+  // Subscribe to reaction dispatch stream
+  useEffect(() => {
+    const handler = (reaction) => {
+      // If root overlay but FullPlayerModal is currently expanded,
+      // let the overlay mounted inside FullPlayerModal handle the animation
+      if (!inModal && isFullPlayerVisible) {
+        return;
+      }
       spawnBurst(reaction);
-    });
+    };
 
+    burstListeners.add(handler);
     return () => {
-      if (typeof unsubscribe === "function") unsubscribe();
+      burstListeners.delete(handler);
+    };
+  }, [inModal, isFullPlayerVisible, spawnBurst]);
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
       if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
     };
-  }, [currentUser?.uid, spawnBurst]);
+  }, []);
 
-  // Listen to local triggers (when currentUser reacts to a friend, preview it instantly!)
-  useEffect(() => {
-    const listener = (payload) => {
-      spawnBurst(payload);
-    };
-    localBurstListeners.add(listener);
-    return () => {
-      localBurstListeners.delete(listener);
-    };
-  }, [spawnBurst]);
+  // When root overlay and full player modal is open, avoid duplicate rendering behind modal
+  if (!inModal && isFullPlayerVisible) {
+    return null;
+  }
 
   if (particles.length === 0 && !activeBanner && !heroEmoji) {
     return null;
@@ -361,7 +411,7 @@ export default function LiveReactionOverlay() {
 
   return (
     <View pointerEvents="none" style={styles.overlayRoot}>
-      {/* Top Airbuds Toast Notification */}
+      {/* Sleek Dynamic Island Toast Capsule */}
       {activeBanner && (
         <Animated.View
           style={[
@@ -369,23 +419,34 @@ export default function LiveReactionOverlay() {
             {
               top: bannerAnimY,
               opacity: bannerOpacity,
-              maxWidth: Math.min(windowWidth - 32, 420),
+              maxWidth: Math.min(windowWidth - 24, 380),
             },
           ]}
         >
-          <View style={styles.bannerEmojiCircle}>
-            <Text style={styles.bannerEmojiText}>{activeBanner.emoji}</Text>
-          </View>
-          <View style={styles.bannerTextGroup}>
-            <Text style={styles.bannerTitle} numberOfLines={1}>
-              <Text style={styles.bannerSenderBold}>{activeBanner.senderName}</Text> reacted to your vibe
-            </Text>
-            {Boolean(activeBanner.trackTitle) && (
-              <Text style={styles.bannerSubtext} numberOfLines={1}>
-                {activeBanner.trackTitle}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={dismissBanner}
+            style={styles.bannerInner}
+          >
+            {/* Animated Emoji Badge */}
+            <View style={styles.bannerEmojiBadge}>
+              <Text style={styles.bannerEmojiText}>{activeBanner.emoji}</Text>
+            </View>
+
+            {/* Slim Single-Line Content */}
+            <View style={styles.bannerContent}>
+              <Text style={styles.bannerInlineText} numberOfLines={1} ellipsizeMode="tail">
+                <Text style={styles.bannerSenderBold}>{activeBanner.senderName}</Text>
+                <Text style={styles.bannerActionMuted}> reacted</Text>
+                {Boolean(activeBanner.trackTitle) && (
+                  <Text style={styles.bannerTrackMuted}> • {activeBanner.trackTitle}</Text>
+                )}
               </Text>
-            )}
-          </View>
+            </View>
+
+            {/* Glowing Emerald Live Pulse Dot */}
+            <View style={styles.bannerLiveDot} />
+          </TouchableOpacity>
         </Animated.View>
       )}
 
@@ -434,55 +495,77 @@ const styles = StyleSheet.create({
   bannerPill: {
     position: "absolute",
     alignSelf: "center",
+    zIndex: 1000000,
+    elevation: 24,
+    pointerEvents: "auto",
+  },
+  bannerInner: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(14, 14, 18, 0.96)",
-    borderRadius: 30,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    paddingRight: 20,
-    borderWidth: 1.5,
-    borderColor: "rgba(29, 185, 84, 0.4)",
+    backgroundColor: "rgba(16, 16, 20, 0.94)",
+    borderRadius: 22,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingRight: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
     shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.7,
-    shadowRadius: 24,
-    elevation: 24,
-    zIndex: 1000000,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 12,
+    ...(Platform.OS === "web"
+      ? {
+          backdropFilter: "blur(20px) saturate(180%)",
+          WebkitBackdropFilter: "blur(20px) saturate(180%)",
+          cursor: "pointer",
+        }
+      : {}),
   },
-  bannerEmojiCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: "rgba(29, 185, 84, 0.15)",
+  bannerEmojiBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 12,
-    borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.3)",
+    marginRight: 8,
   },
   bannerEmojiText: {
-    fontSize: 22,
+    fontSize: 14,
+    lineHeight: 18,
   },
-  bannerTextGroup: {
+  bannerContent: {
     flexShrink: 1,
-    justifyContent: "center",
+    marginRight: 8,
   },
-  bannerTitle: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontFamily: fonts.medium,
+  bannerInlineText: {
+    fontSize: 12,
     letterSpacing: 0.1,
   },
   bannerSenderBold: {
     fontFamily: fonts.bold,
     color: "#1DB954",
   },
-  bannerSubtext: {
-    color: "#A0A0A0",
-    fontSize: 11,
+  bannerActionMuted: {
+    fontFamily: fonts.medium,
+    color: "#FFFFFF",
+  },
+  bannerTrackMuted: {
     fontFamily: fonts.regular,
-    marginTop: 2,
+    color: "#8E8E93",
+  },
+  bannerLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#1DB954",
+    shadowColor: "#1DB954",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 6,
+    elevation: 4,
+    flexShrink: 0,
   },
   floatingEmojiContainer: {
     position: "absolute",

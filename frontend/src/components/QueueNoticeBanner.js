@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import { View, Text, StyleSheet, Animated, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAudioPlayback } from "../context/AudioContext";
@@ -7,20 +7,20 @@ import { colors, fonts } from "../theme/colors";
 export default function QueueNoticeBanner() {
   const { queueNotice } = useAudioPlayback();
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(-24)).current;
+  const slideAnim = useRef(new Animated.Value(-20)).current;
 
   useEffect(() => {
     if (queueNotice) {
       Animated.parallel([
         Animated.timing(fadeAnim, {
           toValue: 1,
-          duration: 220,
+          duration: 200,
           useNativeDriver: Platform.OS !== "web",
         }),
         Animated.spring(slideAnim, {
           toValue: 0,
-          friction: 6,
-          tension: 60,
+          friction: 7,
+          tension: 70,
           useNativeDriver: Platform.OS !== "web",
         }),
       ]).start();
@@ -28,12 +28,12 @@ export default function QueueNoticeBanner() {
       Animated.parallel([
         Animated.timing(fadeAnim, {
           toValue: 0,
-          duration: 200,
+          duration: 180,
           useNativeDriver: Platform.OS !== "web",
         }),
         Animated.timing(slideAnim, {
-          toValue: -24,
-          duration: 200,
+          toValue: -20,
+          duration: 180,
           useNativeDriver: Platform.OS !== "web",
         }),
       ]).start();
@@ -57,7 +57,7 @@ export default function QueueNoticeBanner() {
     >
       <View style={styles.pill}>
         <View style={styles.iconCircle}>
-          <Ionicons name={iconName} size={14} color="#000000" />
+          <Ionicons name={iconName} size={12} color="#000000" />
         </View>
         <Text style={styles.noticeText} numberOfLines={1}>
           {queueNotice.text}
@@ -70,7 +70,7 @@ export default function QueueNoticeBanner() {
 const styles = StyleSheet.create({
   container: {
     position: "absolute",
-    top: Platform.OS === "web" ? 24 : 52,
+    top: Platform.OS === "web" ? 16 : 48,
     left: 0,
     right: 0,
     zIndex: 99999,
@@ -81,32 +81,38 @@ const styles = StyleSheet.create({
   pill: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(18, 18, 18, 0.94)",
-    borderColor: "rgba(255, 255, 255, 0.16)",
+    backgroundColor: "rgba(16, 16, 20, 0.94)",
+    borderColor: "rgba(255, 255, 255, 0.12)",
     borderWidth: 1,
-    borderRadius: 30,
-    paddingVertical: 9,
-    paddingHorizontal: 16,
+    borderRadius: 22,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     maxWidth: "88%",
     shadowColor: "#000000",
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.45,
-    shadowRadius: 12,
+    shadowRadius: 14,
     elevation: 10,
+    ...(Platform.OS === "web"
+      ? {
+          backdropFilter: "blur(20px) saturate(180%)",
+          WebkitBackdropFilter: "blur(20px) saturate(180%)",
+        }
+      : {}),
   },
   iconCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: colors.primary || "#1DB954",
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 10,
+    marginRight: 8,
   },
   noticeText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 13,
+    fontFamily: fonts.medium,
+    fontSize: 12,
     color: "#FFFFFF",
-    letterSpacing: 0.2,
+    letterSpacing: 0.1,
   },
 });

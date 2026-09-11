@@ -26,6 +26,8 @@ import {
   goOnline,
   goOffline,
   push,
+  onDisconnect,
+  remove,
 } from "firebase/database";
 
 const firebaseConfig = {
@@ -832,6 +834,98 @@ export function subscribePlaybackSession(uid, callback) {
       off(sessionRef, "value", listener);
     } catch (_) {}
   };
+}
+
+/**
+ * Register or update active device presence in RTDB
+ */
+export async function registerActiveDevice(uid, deviceData) {
+  if (!uid || !deviceData?.id) return;
+  try {
+    const devRef = ref(db, `users/${uid}/activeDevices/${deviceData.id}`);
+    await set(devRef, {
+      ...deviceData,
+      isOnline: true,
+      lastActive: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    // Configure onDisconnect to gracefully mark as offline when closed/lost connection
+    try {
+      onDisconnect(devRef).update({
+        isOnline: false,
+        lastActive: Date.now(),
+      });
+    } catch (_) {}
+  } catch (error) {
+    console.warn("Failed to register active device in RTDB:", error.message);
+  }
+}
+
+/**
+ * Send heartbeat ping for this device in RTDB
+ */
+export async function updateActiveDeviceHeartbeat(uid, deviceId, extra = {}) {
+  if (!uid || !deviceId) return;
+  try {
+    const devRef = ref(db, `users/${uid}/activeDevices/${deviceId}`);
+    await update(devRef, {
+      ...extra,
+      isOnline: true,
+      lastActive: Date.now(),
+    });
+  } catch (_) {}
+}
+
+/**
+ * Subscribe in real time to all active devices/sessions for this account
+ */
+export function subscribeActiveDevices(uid, callback) {
+  if (!uid || !callback) return () => {};
+  const devicesRef = ref(db, `users/${uid}/activeDevices`);
+  const listener = onValue(
+    devicesRef,
+    (snapshot) => {
+      const val = snapshot.val();
+      if (!val) {
+        callback([]);
+        return;
+      }
+      const list = Object.keys(val).map((k) => ({
+        ...val[k],
+        id: k,
+      }));
+      // Sort: online first, then by lastActive descending
+      list.sort((a, b) => {
+        if (Boolean(a.isOnline) !== Boolean(b.isOnline)) {
+          return a.isOnline ? -1 : 1;
+        }
+        return (b.lastActive || 0) - (a.lastActive || 0);
+      });
+      callback(list);
+    },
+    (error) => {
+      console.warn("RTDB active devices subscription error:", error.message);
+    }
+  );
+  return () => {
+    try {
+      off(devicesRef, "value", listener);
+    } catch (_) {}
+  };
+}
+
+/**
+ * Remove an active device session from RTDB
+ */
+export async function removeActiveDevice(uid, deviceId) {
+  if (!uid || !deviceId) return;
+  try {
+    const devRef = ref(db, `users/${uid}/activeDevices/${deviceId}`);
+    await remove(devRef);
+  } catch (error) {
+    console.warn("Failed to remove active device in RTDB:", error.message);
+  }
 }
 
 // ----------------------------------------------------
@@ -2269,7 +2363,7 @@ const globalSeenReactionIds = new Set();
 export function subscribeLiveReactions(uid, callback) {
   if (!uid || !callback) return () => {};
   const reactionsRef = ref(db, `users/${uid}/liveReactions`);
-  const subscriptionStartTime = Date.now() - 1000; // Only fresh reactions created at or after listener setup
+  const subscriptionStartTime = Date.now() - 25000; // 25s window so network latency & slight clock skew never drop reactions
 
   const listener = onValue(
     reactionsRef,

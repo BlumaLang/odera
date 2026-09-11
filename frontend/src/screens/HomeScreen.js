@@ -1664,7 +1664,7 @@ export default function HomeScreen({ onNavigate } = {}) {
                               <View style={styles.liveFriendReactionBar}>
                                 <Text style={styles.liveFriendReactionLabel}>REACT</Text>
                                 <View style={styles.liveFriendEmojiRow}>
-                                  {["🔥", "😭", "💀", "🫶", "🕺", "💔"].map((emoji) => (
+                                  {["🔥", "😭", "💀", "💔"].map((emoji) => (
                                     <TouchableOpacity
                                       key={emoji}
                                       style={styles.liveFriendEmojiBtn}
@@ -1850,7 +1850,7 @@ export default function HomeScreen({ onNavigate } = {}) {
                     <View style={styles.friendModalReactionBar}>
                       <Text style={styles.friendModalReactionLabel}>REACT</Text>
                       <View style={styles.friendModalEmojiRow}>
-                        {["🔥", "😭", "💀", "🫶", "🕺", "💔"].map((emoji) => (
+                        {["🔥", "😭", "💀", "💔"].map((emoji) => (
                           <TouchableOpacity
                             key={emoji}
                             style={styles.friendModalEmojiBtn}

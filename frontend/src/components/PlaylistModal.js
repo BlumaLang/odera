@@ -159,6 +159,7 @@ export default function PlaylistModal({
   const [showCollabDeleteModal, setShowCollabDeleteModal] = useState(false);
   const [showCollabModal, setShowCollabModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [invitingUids, setInvitingUids] = useState(new Set());
   const [enablingCollab, setEnablingCollab] = useState(false);
@@ -231,7 +232,26 @@ export default function PlaylistModal({
     restoreScrollPosition();
   }, [restoreScrollPosition]);
 
+  const openOptionsMenu = useCallback(() => {
+    freezeScrollPosition();
+    setShowOptionsMenu(true);
+  }, [freezeScrollPosition]);
+
+  const closeOptionsMenu = useCallback(() => {
+    setShowOptionsMenu(false);
+    restoreScrollPosition();
+  }, [restoreScrollPosition]);
+
   // Android hardware back button handler stack
+  useEffect(() => {
+    if (showOptionsMenu) {
+      return registerBackAction(() => {
+        setShowOptionsMenu(false);
+        return true;
+      });
+    }
+  }, [showOptionsMenu]);
+
   useEffect(() => {
     if (showRenameModal) {
       return registerBackAction(() => {
@@ -799,7 +819,7 @@ export default function PlaylistModal({
           <View style={styles.topBarActions}>
             <TouchableOpacity
               style={styles.deleteHeaderBtn}
-              onPress={handleDelete}
+              onPress={openOptionsMenu}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               activeOpacity={0.7}
               accessibilityRole="button"
@@ -835,52 +855,93 @@ export default function PlaylistModal({
                   ]}
                 >
                   {artwork ? (
-                    <Image source={{ uri: getHighResArtwork(artwork) || artwork }} style={styles.heroArtwork} />
+                    <Image
+                      source={{ uri: getHighResArtwork(artwork) || artwork }}
+                      style={[
+                        styles.heroArtwork,
+                        (isDesktop || isTablet) && styles.heroArtworkDesktop,
+                      ]}
+                    />
                   ) : (
-                    <View style={[styles.heroArtwork, styles.heroArtworkFallback]}>
-                      <Ionicons name="musical-notes" size={54} color={colors.primary} />
+                    <View
+                      style={[
+                        styles.heroArtwork,
+                        styles.heroArtworkFallback,
+                        (isDesktop || isTablet) && styles.heroArtworkDesktop,
+                      ]}
+                    >
+                      <Ionicons name="musical-notes" size={(isDesktop || isTablet) ? 68 : 54} color={colors.primary} />
                     </View>
                   )}
 
-                  <View style={styles.heroInfo}>
-                    <View style={styles.badgeRow}>
-                      <View style={styles.playlistBadge}>
-                        <Text style={styles.playlistBadgeText}>PLAYLIST</Text>
-                      </View>
-                      {isCollab && !isBlend && (
-                        <View style={styles.collabBadge}>
-                          <Ionicons name="people" size={11} color="#1DB954" style={{ marginRight: 4 }} />
-                          <Text style={styles.collabBadgeText}>COLLABORATIVE</Text>
+                  <View
+                    style={[
+                      styles.heroInfo,
+                      (isDesktop || isTablet) && styles.heroInfoDesktop,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.badgeRow,
+                        (isDesktop || isTablet) && styles.badgeRowDesktop,
+                      ]}
+                    >
+                      {!isBlend && (
+                        <View style={[styles.playlistBadge, (isDesktop || isTablet) && styles.playlistBadgeDesktop]}>
+                          <Text style={[styles.playlistBadgeText, (isDesktop || isTablet) && styles.playlistBadgeTextDesktop]}>
+                            {isCollab ? "COLLABORATIVE PLAYLIST" : "PLAYLIST"}
+                          </Text>
                         </View>
                       )}
                       {isBlend && (
-                        <View style={[styles.collabBadge, { borderColor: "rgba(139, 92, 246, 0.4)", backgroundColor: "rgba(139, 92, 246, 0.12)" }]}>
-                          <Ionicons name="flash" size={11} color="#8B5CF6" style={{ marginRight: 4 }} />
+                        <View
+                          style={[
+                            styles.collabBadge,
+                            styles.blendBadge,
+                            (isDesktop || isTablet) && styles.blendBadgeDesktop,
+                          ]}
+                        >
+                          <Ionicons name="flash" size={12} color="#8B5CF6" style={{ marginRight: 5 }} />
                           <Text style={[styles.collabBadgeText, { color: "#8B5CF6" }]}>BLEND</Text>
                         </View>
                       )}
                     </View>
 
                     <TouchableOpacity
-                      style={styles.heroTitleRow}
+                      style={[
+                        styles.heroTitleRow,
+                        (isDesktop || isTablet) && styles.heroTitleRowDesktop,
+                      ]}
                       onPress={openRenameModal}
                       activeOpacity={0.7}
                       accessibilityRole="button"
                       accessibilityLabel="Rename Playlist"
                     >
-                      <Text style={styles.heroTitle} numberOfLines={2}>
+                      <Text
+                        style={[
+                          styles.heroTitle,
+                          (isDesktop || isTablet) && styles.heroTitleDesktop,
+                        ]}
+                        numberOfLines={2}
+                      >
                         {playlistData?.name}
                       </Text>
                       <Ionicons
                         name="pencil-outline"
-                        size={16}
+                        size={(isDesktop || isTablet) ? 20 : 16}
                         color="rgba(255, 255, 255, 0.4)"
                         style={{ marginLeft: 8 }}
                       />
                     </TouchableOpacity>
 
                     {playlistData?.description ? (
-                      <Text style={styles.heroDesc} numberOfLines={3}>
+                      <Text
+                        style={[
+                          styles.heroDesc,
+                          (isDesktop || isTablet) && styles.heroDescDesktop,
+                        ]}
+                        numberOfLines={3}
+                      >
                         {playlistData.description}
                       </Text>
                     ) : null}
@@ -888,7 +949,10 @@ export default function PlaylistModal({
                     {/* Collaborator Avatars (if any) */}
                     {collaboratorList.length > 0 && (
                       <TouchableOpacity
-                        style={styles.collabAvatarsRow}
+                        style={[
+                          styles.collabAvatarsRow,
+                          (isDesktop || isTablet) && styles.collabAvatarsRowDesktop,
+                        ]}
                         onPress={openCollabModal}
                         activeOpacity={0.8}
                       >
@@ -897,7 +961,7 @@ export default function PlaylistModal({
                             <UserAvatar
                               key={c.uid || i}
                               user={getCollabUser(c)}
-                              size={24}
+                              size={(isDesktop || isTablet) ? 26 : 24}
                               fontSize={10}
                               style={{
                                 marginLeft: i > 0 ? -8 : 0,
@@ -914,7 +978,12 @@ export default function PlaylistModal({
                             </View>
                           )}
                         </View>
-                        <Text style={styles.collabCountText}>
+                        <Text
+                          style={[
+                            styles.collabCountText,
+                            (isDesktop || isTablet) && styles.collabCountTextDesktop,
+                          ]}
+                        >
                           {collaboratorList.length}{" "}
                           {isBlend
                             ? (collaboratorList.length === 1 ? "participant" : "participants")
@@ -923,18 +992,29 @@ export default function PlaylistModal({
                       </TouchableOpacity>
                     )}
 
-                    <Text style={styles.heroMeta}>
+                    <Text
+                      style={[
+                        styles.heroMeta,
+                        (isDesktop || isTablet) && styles.heroMetaDesktop,
+                      ]}
+                    >
                       {trackCount} {trackCount === 1 ? "track" : "tracks"}
                       {totalDurationStr ? ` • ${totalDurationStr}` : ""} • Staytup Music
                     </Text>
                   </View>
                 </View>
 
-                {/* Playlist Action Bar: Play All, Shuffle, Collab, Edit */}
-                <View style={styles.actionsBar}>
+                {/* Playlist Action Bar: Play All, Shuffle, Collab, Link, More Options */}
+                <View
+                  style={[
+                    styles.actionsBar,
+                    (isDesktop || isTablet) && styles.actionsBarDesktop,
+                  ]}
+                >
                   <TouchableOpacity
                     style={[
                       styles.playAllButton,
+                      (isDesktop || isTablet) && styles.playAllButtonDesktop,
                       tracks.length === 0 && styles.disabledBtn,
                     ]}
                     disabled={tracks.length === 0}
@@ -966,23 +1046,13 @@ export default function PlaylistModal({
                     onPress={openCollabModal}
                     activeOpacity={0.8}
                     accessibilityRole="button"
-                    accessibilityLabel="Collaborate"
+                    accessibilityLabel={isBlend ? "Blend Participants" : "Collaborate"}
                   >
                     <Ionicons
-                      name="people-outline"
+                      name={isBlend ? "flash-outline" : "people-outline"}
                       size={20}
                       color={isCollab ? colors.primary : colors.text}
                     />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.renameActionButton}
-                    onPress={openRenameModal}
-                    activeOpacity={0.8}
-                    accessibilityRole="button"
-                    accessibilityLabel="Edit Playlist"
-                  >
-                    <Ionicons name="pencil-outline" size={20} color={colors.text} />
                   </TouchableOpacity>
 
                   {/* Import Songs from Link Button */}
@@ -995,10 +1065,26 @@ export default function PlaylistModal({
                   >
                     <Ionicons name="link-outline" size={20} color={colors.text} />
                   </TouchableOpacity>
+
+                  {/* More Options 3-Dot Button */}
+                  <TouchableOpacity
+                    style={styles.moreActionButton}
+                    onPress={openOptionsMenu}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Playlist Options"
+                  >
+                    <Ionicons name="ellipsis-horizontal" size={20} color={colors.text} />
+                  </TouchableOpacity>
                 </View>
 
                 {/* Tracks Header */}
-                <View style={styles.tracksHeaderRow}>
+                <View
+                  style={[
+                    styles.tracksHeaderRow,
+                    (isDesktop || isTablet) && styles.tracksHeaderRowDesktop,
+                  ]}
+                >
                   <Text style={styles.tracksHeaderText}>Tracks</Text>
                   {isLoadingTracks && (
                     <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 10 }} />
@@ -1104,37 +1190,142 @@ export default function PlaylistModal({
           playlistName={playlistData?.name || "Playlist"}
         />
 
+        {/* Playlist Options Modal */}
+        <Modal
+          visible={showOptionsMenu}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={closeOptionsMenu}
+        >
+          <TouchableOpacity
+            style={styles.optionsModalOverlay}
+            activeOpacity={1}
+            onPress={closeOptionsMenu}
+          >
+            <View
+              style={[
+                styles.optionsModalCard,
+                (isDesktop || isTablet) && styles.optionsModalCardDesktop,
+              ]}
+              onStartShouldSetResponder={() => true}
+            >
+              {!(isDesktop || isTablet) && <View style={styles.dragHandle} />}
+
+              {/* Header inside options */}
+              <View style={styles.optionsHeaderRow}>
+                {artwork ? (
+                  <Image source={{ uri: getHighResArtwork(artwork) || artwork }} style={styles.optionsThumb} />
+                ) : (
+                  <View style={[styles.optionsThumb, styles.optionsThumbFallback]}>
+                    <Ionicons name="musical-notes" size={20} color={colors.primary} />
+                  </View>
+                )}
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.optionsTitle} numberOfLines={1}>
+                    {playlistData?.name || "Playlist"}
+                  </Text>
+                  <Text style={styles.optionsSub}>
+                    {trackCount} {trackCount === 1 ? "track" : "tracks"} • Staytup
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.optionsDivider} />
+
+              {/* Action Rows */}
+              <TouchableOpacity
+                style={styles.optionsRow}
+                onPress={() => {
+                  closeOptionsMenu();
+                  setTimeout(() => openRenameModal(), 150);
+                }}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="pencil-outline" size={20} color={colors.text} style={styles.optionsRowIcon} />
+                <Text style={styles.optionsRowText}>Edit Details</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.optionsRow}
+                onPress={() => {
+                  closeOptionsMenu();
+                  setTimeout(() => openCollabModal(), 150);
+                }}
+                activeOpacity={0.75}
+              >
+                <Ionicons
+                  name={isBlend ? "flash-outline" : "people-outline"}
+                  size={20}
+                  color={isBlend ? "#8B5CF6" : colors.text}
+                  style={styles.optionsRowIcon}
+                />
+                <Text style={styles.optionsRowText}>
+                  {isBlend ? "View Blend Participants" : "Collaborate with Friends"}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.optionsRow}
+                onPress={() => {
+                  closeOptionsMenu();
+                  setTimeout(() => openImportModal(), 150);
+                }}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="link-outline" size={20} color={colors.text} style={styles.optionsRowIcon} />
+                <Text style={styles.optionsRowText}>Import Songs from Link</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.optionsRow, styles.optionsRowDestructive]}
+                onPress={() => {
+                  closeOptionsMenu();
+                  setTimeout(() => openDeleteModal(), 150);
+                }}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="trash-outline" size={20} color={colors.error} style={styles.optionsRowIcon} />
+                <Text style={[styles.optionsRowText, { color: colors.error }]}>Delete Playlist</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.optionsCancelBtn}
+                onPress={closeOptionsMenu}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.optionsCancelText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
         {/* Delete Playlist Confirmation Modal */}
-        {/* ═══════════ DELETE PLAYLIST BOTTOM SHEET MODAL ═══════════ */}
         <Modal
           visible={showDeleteModal}
           transparent={true}
           animationType="slide"
           onRequestClose={closeDeleteModal}
         >
-          <View style={styles.deleteModalBackdrop}>
+          <View style={styles.deleteModalOverlay}>
             <TouchableOpacity
               style={StyleSheet.absoluteFillObject}
               activeOpacity={1}
               onPress={closeDeleteModal}
             />
-            <View style={styles.deleteModalCard} onStartShouldSetResponder={() => true}>
+            <View style={styles.deleteModalContent} onStartShouldSetResponder={() => true}>
               <View style={styles.dragHandle} />
-              <View style={styles.deleteModalIconWrap}>
-                <Ionicons name="trash-outline" size={28} color={colors.error} />
+              <View style={styles.deleteAvatarWrap}>
+                <View style={styles.deleteIconBox}>
+                  <Ionicons name="trash" size={30} color="#E53935" />
+                </View>
               </View>
-              <Text style={styles.deleteModalTitle}>Delete Playlist?</Text>
-              <Text style={styles.deleteModalDesc}>
-                Are you sure you want to delete "{playlistData?.name}"? This action cannot be undone.
+              <Text style={styles.deleteModalTitle}>
+                Delete {playlistData?.name || "Playlist"}?
+              </Text>
+              <Text style={styles.deleteModalSub}>
+                Are you sure you want to delete "{playlistData?.name || "this playlist"}"? This action cannot be undone.
               </Text>
               <View style={styles.deleteModalActions}>
-                <TouchableOpacity
-                  style={styles.deleteModalCancelBtn}
-                  onPress={closeDeleteModal}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.deleteModalCancelText}>Cancel</Text>
-                </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.deleteModalConfirmBtn}
                   onPress={() => {
@@ -1143,7 +1334,14 @@ export default function PlaylistModal({
                   }}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.deleteModalConfirmText}>Delete</Text>
+                  <Text style={styles.deleteModalConfirmBtnText}>Delete Playlist</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.deleteModalCancelBtn}
+                  onPress={closeDeleteModal}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -1346,23 +1544,20 @@ export default function PlaylistModal({
                   activeOpacity={1}
                   onPress={() => setShowCollabDeleteModal(false)}
                 />
-                <View style={styles.deleteModalCard} onStartShouldSetResponder={() => true}>
+                <View style={styles.deleteModalContent} onStartShouldSetResponder={() => true}>
                   <View style={styles.dragHandle} />
-                  <View style={styles.deleteModalIconWrap}>
-                    <Ionicons name="trash-outline" size={28} color={colors.error} />
+                  <View style={styles.deleteAvatarWrap}>
+                    <View style={styles.deleteIconBox}>
+                      <Ionicons name="trash" size={30} color="#E53935" />
+                    </View>
                   </View>
-                  <Text style={styles.deleteModalTitle}>Delete Playlist?</Text>
-                  <Text style={styles.deleteModalDesc}>
+                  <Text style={styles.deleteModalTitle}>
+                    Delete {playlistData?.name || "Collab Playlist"}?
+                  </Text>
+                  <Text style={styles.deleteModalSub}>
                     Are you sure you want to delete "{playlistData?.name}"? All collaborators will lose access and this action cannot be undone.
                   </Text>
                   <View style={styles.deleteModalActions}>
-                    <TouchableOpacity
-                      style={styles.deleteModalCancelBtn}
-                      onPress={() => setShowCollabDeleteModal(false)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.deleteModalCancelText}>Cancel</Text>
-                    </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.deleteModalConfirmBtn}
                       onPress={() => {
@@ -1371,7 +1566,15 @@ export default function PlaylistModal({
                       }}
                       activeOpacity={0.8}
                     >
-                      <Text style={styles.deleteModalConfirmText}>Delete</Text>
+                      <Text style={styles.deleteModalConfirmBtnText}>Delete Playlist</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.deleteModalCancelBtn}
+                      onPress={() => setShowCollabDeleteModal(false)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -1407,7 +1610,7 @@ const styles = StyleSheet.create({
   desktopTopBar: {
     width: "100%",
     backgroundColor: "#000000",
-    paddingHorizontal: 24,
+    paddingHorizontal: 32,
   },
   backButton: {
     width: 40,
@@ -1457,7 +1660,7 @@ const styles = StyleSheet.create({
   },
   desktopContentWrap: {
     width: "100%",
-    paddingHorizontal: 16,
+    paddingHorizontal: 32,
   },
   listContent: {
     paddingHorizontal: 16,
@@ -1483,9 +1686,10 @@ const styles = StyleSheet.create({
   },
   heroCardDesktop: {
     flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 20,
-    gap: 24,
+    alignItems: "flex-end",
+    paddingVertical: 24,
+    gap: 32,
+    marginBottom: 20,
   },
   heroArtwork: {
     width: 170,
@@ -1494,6 +1698,17 @@ const styles = StyleSheet.create({
     backgroundColor: "#121212",
     marginBottom: 16,
     overflow: "hidden",
+  },
+  heroArtworkDesktop: {
+    width: 220,
+    height: 220,
+    borderRadius: 10,
+    marginBottom: 0,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.65,
+    shadowRadius: 28,
+    elevation: 16,
   },
   heroArtworkFallback: {
     alignItems: "center",
@@ -1504,11 +1719,21 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
   },
+  heroInfoDesktop: {
+    alignItems: "flex-start",
+    justifyContent: "flex-end",
+    flex: 1,
+    paddingBottom: 4,
+  },
   badgeRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     marginBottom: 8,
+  },
+  badgeRowDesktop: {
+    alignSelf: "flex-start",
+    marginBottom: 10,
   },
   playlistBadge: {
     paddingHorizontal: 10,
@@ -1516,11 +1741,23 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(29, 185, 84, 0.18)",
     borderRadius: 14,
   },
+  playlistBadgeDesktop: {
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    backgroundColor: "transparent",
+    borderRadius: 0,
+  },
   playlistBadgeText: {
     fontFamily: fonts.bold,
     fontSize: 11,
     color: colors.primary,
     letterSpacing: 1,
+  },
+  playlistBadgeTextDesktop: {
+    fontSize: 12,
+    letterSpacing: 1.2,
+    color: "#FFFFFF",
+    fontFamily: fonts.bold,
   },
   collabBadge: {
     flexDirection: "row",
@@ -1538,6 +1775,15 @@ const styles = StyleSheet.create({
     color: "#1DB954",
     letterSpacing: 0.8,
   },
+  blendBadge: {
+    borderColor: "rgba(139, 92, 246, 0.4)",
+    backgroundColor: "rgba(139, 92, 246, 0.12)",
+  },
+  blendBadgeDesktop: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+  },
   heroTitleRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1545,11 +1791,24 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     paddingHorizontal: 16,
   },
+  heroTitleRowDesktop: {
+    justifyContent: "flex-start",
+    alignSelf: "flex-start",
+    paddingHorizontal: 0,
+    marginBottom: 10,
+  },
   heroTitle: {
     fontFamily: fonts.bold,
     fontSize: 22,
     color: colors.text,
     textAlign: "center",
+  },
+  heroTitleDesktop: {
+    fontSize: 38,
+    lineHeight: 44,
+    textAlign: "left",
+    letterSpacing: -0.5,
+    fontFamily: fonts.bold,
   },
   heroDesc: {
     fontFamily: fonts.regular,
@@ -1558,6 +1817,15 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 8,
     paddingHorizontal: 12,
+  },
+  heroDescDesktop: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "left",
+    paddingHorizontal: 0,
+    alignSelf: "flex-start",
+    marginBottom: 10,
+    maxWidth: 720,
   },
   collabAvatarsRow: {
     flexDirection: "row",
@@ -1568,6 +1836,10 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginBottom: 10,
     gap: 8,
+  },
+  collabAvatarsRowDesktop: {
+    alignSelf: "flex-start",
+    marginBottom: 10,
   },
   overlappingAvatars: {
     flexDirection: "row",
@@ -1606,11 +1878,21 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#CCCCCC",
   },
+  collabCountTextDesktop: {
+    fontSize: 12.5,
+    color: "#D1D1D6",
+  },
   heroMeta: {
     fontFamily: fonts.medium,
     fontSize: 13,
     color: colors.textMuted,
     textAlign: "center",
+  },
+  heroMetaDesktop: {
+    textAlign: "left",
+    alignSelf: "flex-start",
+    fontSize: 13,
+    color: "rgba(255, 255, 255, 0.65)",
   },
   actionsBar: {
     flexDirection: "row",
@@ -1618,6 +1900,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 12,
     marginBottom: 24,
+  },
+  actionsBarDesktop: {
+    justifyContent: "flex-start",
+    alignSelf: "flex-start",
+    width: "100%",
+    gap: 16,
+    marginBottom: 28,
   },
   playAllButton: {
     flexDirection: "row",
@@ -1628,6 +1917,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 26,
     borderRadius: 24,
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  playAllButtonDesktop: {
+    paddingVertical: 13,
+    paddingHorizontal: 28,
   },
   playAllText: {
     fontFamily: fonts.bold,
@@ -1675,6 +1968,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
+  moreActionButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
   deleteActionButton: {
     width: 44,
     height: 44,
@@ -1691,6 +1995,104 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     marginBottom: 8,
     paddingLeft: 12,
+  },
+  tracksHeaderRowDesktop: {
+    paddingLeft: 0,
+    marginBottom: 12,
+  },
+  optionsModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    justifyContent: "flex-end",
+    alignItems: "center",
+  },
+  optionsModalCard: {
+    width: "100%",
+    maxWidth: 520,
+    backgroundColor: "#161618",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 28,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+  },
+  optionsModalCardDesktop: {
+    borderRadius: 20,
+    alignSelf: "center",
+    marginVertical: "auto",
+    paddingVertical: 20,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.6,
+    shadowRadius: 32,
+    elevation: 24,
+  },
+  optionsHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  optionsThumb: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: "#222222",
+  },
+  optionsThumbFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#222222",
+  },
+  optionsTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: "#FFFFFF",
+  },
+  optionsSub: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: "#8E8E93",
+    marginTop: 2,
+  },
+  optionsDivider: {
+    height: 1,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    marginVertical: 12,
+  },
+  optionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 13,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  optionsRowDestructive: {
+    marginTop: 4,
+  },
+  optionsRowIcon: {
+    marginRight: 14,
+  },
+  optionsRowText: {
+    fontFamily: fonts.medium,
+    fontSize: 14.5,
+    color: "#FFFFFF",
+  },
+  optionsCancelBtn: {
+    marginTop: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  optionsCancelText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: "#AAAAAA",
   },
   tracksHeaderText: {
     fontFamily: fonts.bold,
@@ -1775,82 +2177,93 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 18,
   },
-  deleteModalBackdrop: {
+  deleteModalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.75)",
     justifyContent: "flex-end",
+    alignItems: "center",
   },
   deleteModalBackdropOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0, 0, 0, 0.75)",
     justifyContent: "flex-end",
+    alignItems: "center",
     zIndex: 999,
   },
-  deleteModalCard: {
+  deleteModalContent: {
     width: "100%",
-    maxWidth: 540,
-    alignSelf: "center",
+    maxWidth: 480,
     backgroundColor: "#161616",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 22,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 24,
     paddingTop: 12,
-    paddingBottom: Platform.OS === "ios" ? 38 : 24,
+    paddingBottom: Platform.OS === "web" ? 32 : 44,
     alignItems: "center",
     borderTopWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.1)",
+    borderLeftWidth: Platform.OS === "web" ? 1 : 0,
+    borderRightWidth: Platform.OS === "web" ? 1 : 0,
+    borderColor: "rgba(255, 255, 255, 0.12)",
   },
-  deleteModalIconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "rgba(235, 67, 53, 0.15)",
+  deleteAvatarWrap: {
+    marginBottom: 14,
+  },
+  deleteIconBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "rgba(229, 57, 53, 0.12)",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "rgba(229, 57, 53, 0.25)",
   },
   deleteModalTitle: {
     fontFamily: fonts.bold,
-    fontSize: 19,
-    color: colors.text,
-    marginBottom: 8,
+    fontSize: 18,
+    color: "#FFFFFF",
     textAlign: "center",
+    marginBottom: 8,
   },
-  deleteModalDesc: {
+  deleteModalSub: {
     fontFamily: fonts.regular,
     fontSize: 13,
-    color: colors.textSecondary,
+    color: colors.textMuted,
     textAlign: "center",
     lineHeight: 19,
+    maxWidth: 340,
     marginBottom: 24,
   },
   deleteModalActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
     width: "100%",
-  },
-  deleteModalCancelBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    alignItems: "center",
-  },
-  deleteModalCancelText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 14,
-    color: colors.text,
+    gap: 10,
   },
   deleteModalConfirmBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: colors.error,
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#E53935",
+    height: 46,
+    borderRadius: 23,
+    width: "100%",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  deleteModalConfirmText: {
+  deleteModalConfirmBtnText: {
     fontFamily: fonts.bold,
+    fontSize: 14,
+    color: "#FFFFFF",
+  },
+  deleteModalCancelBtn: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    height: 46,
+    borderRadius: 23,
+    width: "100%",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  deleteModalCancelBtnText: {
+    fontFamily: fonts.semiBold,
     fontSize: 14,
     color: "#FFFFFF",
   },

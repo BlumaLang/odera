@@ -1523,7 +1523,7 @@ export default function FriendsScreen({ onNavigate }) {
                               <View style={styles.reactionBarContainer}>
                                 <Text style={styles.reactionBarLabel}>REACT</Text>
                                 <View style={styles.reactionEmojiRow}>
-                                  {["🔥", "😭", "💀", "🫶", "🕺", "💔"].map((emoji) => (
+                                  {["🔥", "😭", "💀", "💔"].map((emoji) => (
                                     <TouchableOpacity
                                       key={emoji}
                                       style={[
@@ -2125,7 +2125,7 @@ export default function FriendsScreen({ onNavigate }) {
                     <View style={styles.pmReactionBar}>
                       <Text style={styles.pmReactionLabel}>REACT TO VIBE</Text>
                       <View style={styles.reactionEmojiRow}>
-                        {["🔥", "😭", "💀", "🫶", "🕺", "💔"].map((emoji) => (
+                        {["🔥", "😭", "💀", "💔"].map((emoji) => (
                           <TouchableOpacity
                             key={emoji}
                             style={[
