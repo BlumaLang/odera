@@ -25,6 +25,7 @@ import {
   getUserStreamCount,
   getLikedSongs,
 } from "../services/firebase";
+import { triggerLocalReactionBurst } from "../components/LiveReactionOverlay";
 import PlaylistModal from "../components/PlaylistModal";
 import CreatePlaylistModal from "../components/CreatePlaylistModal";
 import { registerBackAction } from "../services/navigation";
@@ -307,6 +308,13 @@ export default function FriendsScreen({ onNavigate }) {
     if (!targetFriend?.uid || !emoji) return;
     const targetUid = targetFriend.uid;
     setSentReactions((prev) => ({ ...prev, [targetUid]: emoji }));
+
+    // Immediately trigger local tactile burst for the sender!
+    triggerLocalReactionBurst({
+      emoji,
+      senderName: "You",
+      trackTitle: track?.title || "",
+    });
 
     sendLiveReaction(targetUid, {
       emoji,

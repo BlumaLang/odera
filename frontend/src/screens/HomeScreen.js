@@ -35,6 +35,7 @@ import {
   subscribeFriendActivity,
   sendLiveReaction,
 } from "../services/firebase";
+import { triggerLocalReactionBurst } from "../components/LiveReactionOverlay";
 import { getHighResArtwork } from "../utils/imageUtils";
 
 function withTimeout(promise, timeoutMs, message) {
@@ -202,7 +203,7 @@ function HomeSkeleton() {
 }
 
 export default function HomeScreen({ onNavigate } = {}) {
-  const { isDesktop, isTablet, isPhone } = useResponsive();
+  const { isDesktop, isTablet, isPhone, width } = useResponsive();
   const [feed, setFeed] = useState(null);
   const feedRef = useRef(null);
   const [activeFilter, setActiveFilter] = useState("All");
@@ -229,6 +230,13 @@ export default function HomeScreen({ onNavigate } = {}) {
     if (!targetFriend?.uid || !emoji) return;
     const targetUid = targetFriend.uid;
     setSentHomeReactions((prev) => ({ ...prev, [targetUid]: emoji }));
+
+    // Trigger immediate tactile and visual burst for sender!
+    triggerLocalReactionBurst({
+      emoji,
+      senderName: "You",
+      trackTitle: track?.title || "",
+    });
 
     sendLiveReaction(targetUid, {
       emoji,
@@ -1450,12 +1458,24 @@ export default function HomeScreen({ onNavigate } = {}) {
                             (track.video_id && currentTrack.videoId === track.video_id) ||
                             currentTrack.id === track.id);
 
+                        const cardWidth = isPhone
+                          ? (liveListeningFriends.length === 1
+                              ? (width ? width - 32 : "100%")
+                              : Math.min((width ? width - 44 : 340), 340))
+                          : 340;
+
                         return (
-                          <View key={`live_user_card_${friend.uid}`} style={styles.liveFriendCard}>
-                            {/* Card Top Row: Avatar with Live Badge + Name + Listen Button */}
+                          <View
+                            key={`live_user_card_${friend.uid}`}
+                            style={[
+                              styles.liveFriendCard,
+                              { width: cardWidth },
+                            ]}
+                          >
+                            {/* Card Top Row: Avatar with Live Badge + Name + Song + Listen Button */}
                             <View style={styles.liveFriendCardTop}>
                               <View style={styles.liveFriendAvatarWrap}>
-                                <UserAvatar user={friend} size={44} fontSize={16} />
+                                <UserAvatar user={friend} size={46} fontSize={16} />
                                 <View style={styles.liveFriendActiveDot} />
                               </View>
 
@@ -1463,17 +1483,47 @@ export default function HomeScreen({ onNavigate } = {}) {
                                 <Text style={styles.liveFriendName} numberOfLines={1}>
                                   {formatPersonName(friend.displayName || friend.name || friend.username || "")}
                                 </Text>
-                                <View style={styles.liveFriendLiveRow}>
-                                  <MaterialCommunityIcons
-                                    name="waveform"
-                                    size={13}
-                                    color="#1DB954"
-                                    style={{ marginRight: 4 }}
-                                  />
-                                  <Text style={styles.liveFriendListeningTag}>
-                                    Listening now
-                                  </Text>
-                                </View>
+                                {track ? (
+                                  <TouchableOpacity
+                                    style={styles.liveFriendSongRow}
+                                    onPress={() => {
+                                      playTrack(
+                                        {
+                                          ...track,
+                                          videoId: track.videoId || track.video_id || track.id,
+                                        },
+                                        [track],
+                                        0
+                                      );
+                                    }}
+                                    activeOpacity={0.7}
+                                  >
+                                    <MaterialCommunityIcons
+                                      name="waveform"
+                                      size={14}
+                                      color="#1DB954"
+                                      style={{ marginRight: 4 }}
+                                    />
+                                    <Text style={styles.liveFriendSongTitle} numberOfLines={1}>
+                                      {track.title}
+                                      {track.artist ? (
+                                        <Text style={styles.liveFriendSongArtist}> • {track.artist}</Text>
+                                      ) : null}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ) : (
+                                  <View style={styles.liveFriendLiveRow}>
+                                    <MaterialCommunityIcons
+                                      name="waveform"
+                                      size={13}
+                                      color="#1DB954"
+                                      style={{ marginRight: 4 }}
+                                    />
+                                    <Text style={styles.liveFriendListeningTag}>
+                                      Listening now
+                                    </Text>
+                                  </View>
+                                )}
                               </View>
 
                               {/* Listen Button */}
@@ -1507,40 +1557,7 @@ export default function HomeScreen({ onNavigate } = {}) {
                               )}
                             </View>
 
-                            {/* Playing Track Info */}
-                            {track ? (
-                              <TouchableOpacity
-                                style={styles.liveFriendTrackRow}
-                                onPress={() => {
-                                  playTrack(
-                                    {
-                                      ...track,
-                                      videoId: track.videoId || track.video_id || track.id,
-                                    },
-                                    [track],
-                                    0
-                                  );
-                                }}
-                                activeOpacity={0.7}
-                              >
-                                <Ionicons
-                                  name="musical-note"
-                                  size={13}
-                                  color="#1DB954"
-                                  style={{ marginRight: 5 }}
-                                />
-                                <Text style={styles.liveFriendTrackTitle} numberOfLines={1}>
-                                  {track.title}
-                                </Text>
-                                {track.artist ? (
-                                  <Text style={styles.liveFriendTrackArtist} numberOfLines={1}>
-                                    {"  "}• {track.artist}
-                                  </Text>
-                                ) : null}
-                              </TouchableOpacity>
-                            ) : null}
-
-                            {/* Airbuds Live Reaction Emoji Bar */}
+                            {/* Airbuds Live Reaction Emoji Bar (matching Friends screen) */}
                             {track && (
                               <View style={styles.liveFriendReactionBar}>
                                 <Text style={styles.liveFriendReactionLabel}>REACT</Text>
@@ -1929,14 +1946,15 @@ const styles = StyleSheet.create({
 
   // ── Currently Listening Users (Circle + Active Waveform Icon) ──
   liveListeningSection: {
-    marginTop: 8,
-    marginBottom: 22,
-    paddingHorizontal: 16,
+    marginTop: 6,
+    marginBottom: 20,
+    width: "100%",
   },
   liveListeningHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    paddingHorizontal: 16,
     marginBottom: 12,
   },
   liveListeningTitleGroup: {
@@ -1978,20 +1996,19 @@ const styles = StyleSheet.create({
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   liveListeningScrollView: {
-    marginLeft: -16,
-    marginRight: -16,
+    width: "100%",
   },
   liveListeningScrollContent: {
     paddingHorizontal: 16,
-    gap: 16,
+    gap: 12,
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "stretch",
   },
   liveFriendCard: {
-    width: 295,
-    backgroundColor: "#161616",
+    backgroundColor: "rgba(22, 22, 26, 0.96)",
     borderRadius: 16,
-    padding: 13,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.08)",
     shadowColor: "#000000",
@@ -1999,7 +2016,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 8,
     elevation: 4,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+    justifyContent: "space-between",
   },
   liveFriendCardTop: {
     flexDirection: "row",
@@ -2008,7 +2025,7 @@ const styles = StyleSheet.create({
   },
   liveFriendAvatarWrap: {
     position: "relative",
-    marginRight: 10,
+    marginRight: 11,
   },
   liveFriendActiveDot: {
     position: "absolute",
@@ -2019,17 +2036,35 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: "#1DB954",
     borderWidth: 2,
-    borderColor: "#161616",
+    borderColor: "#16161a",
   },
   liveFriendMeta: {
     flex: 1,
     justifyContent: "center",
+    marginRight: 8,
   },
   liveFriendName: {
     fontFamily: fonts.semiBold,
-    fontSize: 13.5,
+    fontSize: 14,
     color: "#FFFFFF",
     letterSpacing: -0.2,
+    marginBottom: 2,
+  },
+  liveFriendSongRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 1,
+  },
+  liveFriendSongTitle: {
+    fontFamily: fonts.medium,
+    fontSize: 12.5,
+    color: "#1DB954",
+    flex: 1,
+  },
+  liveFriendSongArtist: {
+    fontFamily: fonts.regular,
+    fontSize: 11.5,
+    color: "#999999",
   },
   liveFriendLiveRow: {
     flexDirection: "row",
@@ -2049,7 +2084,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 16,
     gap: 4,
-    marginLeft: 8,
+    flexShrink: 0,
   },
   liveFriendListenBtnActive: {
     backgroundColor: "#FFFFFF",
@@ -2059,32 +2094,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#000000",
   },
-  liveFriendTrackRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.04)",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    marginTop: 10,
-    width: "100%",
-  },
-  liveFriendTrackTitle: {
-    fontFamily: fonts.medium,
-    fontSize: 12,
-    color: "#FFFFFF",
-    flexShrink: 1,
-  },
-  liveFriendTrackArtist: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: "rgba(255, 255, 255, 0.5)",
-    flexShrink: 1,
-  },
   liveFriendReactionBar: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 9,
+    marginTop: 10,
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: "rgba(255, 255, 255, 0.06)",
@@ -2102,17 +2115,18 @@ const styles = StyleSheet.create({
   liveFriendEmojiRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 6,
   },
   liveFriendEmojiBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "rgba(255, 255, 255, 0.07)",
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.06)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   liveFriendEmojiBtnActive: {
     backgroundColor: "rgba(29, 185, 84, 0.25)",
@@ -2120,7 +2134,7 @@ const styles = StyleSheet.create({
     transform: [{ scale: 1.15 }],
   },
   liveFriendEmojiText: {
-    fontSize: 14,
+    fontSize: 15,
   },
   liveFriendSentBadge: {
     backgroundColor: "rgba(29, 185, 84, 0.16)",
@@ -2131,7 +2145,7 @@ const styles = StyleSheet.create({
   },
   liveFriendSentText: {
     color: "#1DB954",
-    fontSize: 10,
+    fontSize: 10.5,
     fontFamily: fonts.bold,
   },
 
