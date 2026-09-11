@@ -828,7 +828,7 @@ export default function ProfileScreen({ visible, onClose }) {
                 }}
               >
                 <Ionicons name="cloud-download-outline" size={13} color="#1DB954" style={{ marginRight: 5 }} />
-                <Text style={{ fontSize: 11.5, color: "#1DB954", fontWeight: "600" }}>
+                <Text style={{ fontSize: 11.5, color: "#1DB954", fontFamily: fonts.semiBold }}>
                   {checkingUpdate ? "Updating..." : "Check for Updates"}
                 </Text>
               </TouchableOpacity>

@@ -828,30 +828,42 @@ export default function LibraryScreen() {
           ) : activeTab === "playlists" ? (
             /* Playlists List */
             <>
-              <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingBottom: 10, gap: 8 }}>
-                {[
-                  { key: "all", label: "All" },
-                  { key: "my", label: "My Playlists" },
-                  { key: "public", label: "Public" },
-                  { key: "collab", label: "Collab" },
-                ].map((f) => (
-                  <TouchableOpacity
-                    key={f.key}
-                    onPress={() => setPlaylistSubFilter(f.key)}
-                    style={{
-                      paddingHorizontal: 12,
-                      paddingVertical: 5,
-                      borderRadius: 14,
-                      backgroundColor: playlistSubFilter === f.key ? "rgba(255, 255, 255, 0.18)" : "rgba(255, 255, 255, 0.05)",
-                      borderWidth: 1,
-                      borderColor: playlistSubFilter === f.key ? "rgba(255, 255, 255, 0.3)" : "rgba(255, 255, 255, 0.08)",
-                    }}
-                  >
-                    <Text style={{ fontSize: 12, color: playlistSubFilter === f.key ? "#FFFFFF" : colors.textMuted, fontWeight: playlistSubFilter === f.key ? "600" : "400" }}>
-                      {f.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+              {/* Playlist Sub-filter Pills */}
+              <View style={styles.subFilterRowContainer}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.subFilterContent}
+                >
+                  {[
+                    { key: "all", label: "All" },
+                    { key: "my", label: "My Playlists" },
+                    { key: "public", label: "Public" },
+                    { key: "collab", label: "Collab" },
+                  ].map((f) => {
+                    const isActive = playlistSubFilter === f.key;
+                    return (
+                      <TouchableOpacity
+                        key={f.key}
+                        onPress={() => setPlaylistSubFilter(f.key)}
+                        activeOpacity={0.75}
+                        style={[
+                          styles.subFilterPill,
+                          isActive && styles.subFilterPillActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.subFilterText,
+                            isActive && styles.subFilterTextActive,
+                          ]}
+                        >
+                          {f.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
               </View>
               <FlatList
                 data={playlists}
@@ -2496,5 +2508,39 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: 13,
     color: "#FFFFFF",
+  },
+  subFilterRowContainer: {
+    paddingBottom: 10,
+  },
+  subFilterContent: {
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  subFilterPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer", transition: "all 0.15s ease" } : {}),
+  },
+  subFilterPillActive: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#FFFFFF",
+  },
+  subFilterText: {
+    fontFamily: fonts.medium,
+    fontSize: 12.5,
+    color: colors.textSecondary,
+    letterSpacing: 0.1,
+  },
+  subFilterTextActive: {
+    fontFamily: fonts.bold,
+    color: "#000000",
   },
 });
