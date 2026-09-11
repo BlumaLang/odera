@@ -423,7 +423,6 @@ const AudioProvider = ({ children }) => {
 
     const audio = new window.Audio();
     audio.preload = "auto";
-    audio.crossOrigin = "anonymous";
     try {
       audio.playsInline = true;
       audio.setAttribute("playsinline", "true");
@@ -442,6 +441,29 @@ const AudioProvider = ({ children }) => {
       }
     }
     webAudioRef.current = audio;
+
+    // Web Autoplay Policy Unlocker: Prime audio element on very first user gesture
+    const unlockAudio = () => {
+      if (webAudioRef.current && webAudioRef.current.paused && (!webAudioRef.current.src || webAudioRef.current.src === window.location.href)) {
+        try {
+          webAudioRef.current.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+          webAudioRef.current.play().then(() => {
+            if (webAudioRef.current && webAudioRef.current.src.startsWith("data:")) {
+              webAudioRef.current.pause();
+              webAudioRef.current.src = "";
+            }
+          }).catch(() => {});
+        } catch (_) {}
+      }
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("touchstart", unlockAudio);
+      window.removeEventListener("click", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+    };
+    window.addEventListener("pointerdown", unlockAudio, { passive: true, once: true });
+    window.addEventListener("touchstart", unlockAudio, { passive: true, once: true });
+    window.addEventListener("click", unlockAudio, { passive: true, once: true });
+    window.addEventListener("keydown", unlockAudio, { passive: true, once: true });
 
     const onPlay = () => {
       // Force-ensure audio is audible every time playback starts
@@ -1448,6 +1470,38 @@ const AudioProvider = ({ children }) => {
     if (!track) return;
     const trackId = track.videoId || track.video_id || track.id;
     if (!trackId) return;
+
+    // Web synchronous user activation capture: prime audio element immediately within user gesture
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      try {
+        if (!webAudioRef.current) {
+          const audio = new window.Audio();
+          audio.preload = "auto";
+          try {
+            audio.playsInline = true;
+            audio.setAttribute("playsinline", "true");
+            audio.setAttribute("webkit-playsinline", "true");
+          } catch (_) {}
+          audio.volume = volumeRef.current;
+          audio.muted = false;
+          audio.loop = Boolean(isRepeatRef.current);
+          if (typeof document !== "undefined" && document.body) {
+            audio.id = "staytup-audio-player";
+            audio.style.display = "none";
+            if (!document.getElementById("staytup-audio-player")) {
+              document.body.appendChild(audio);
+            }
+          }
+          webAudioRef.current = audio;
+        }
+        const aEl = webAudioRef.current;
+        if (aEl && aEl.paused && (!aEl.src || aEl.src === window.location.href)) {
+          aEl.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+          aEl.play().catch(() => {});
+        }
+      } catch (_) {}
+    }
+
     const requestId = ++playbackRequestRef.current;
     const uid = auth.currentUser?.uid || "guest";
     // A track removed from history stays out of automatic queues. Selecting it
@@ -1740,7 +1794,11 @@ const AudioProvider = ({ children }) => {
         if (!webAudioRef.current) {
           webAudioRef.current = new window.Audio();
           webAudioRef.current.preload = "auto";
-          webAudioRef.current.crossOrigin = "anonymous";
+          try {
+            webAudioRef.current.playsInline = true;
+            webAudioRef.current.setAttribute("playsinline", "true");
+            webAudioRef.current.setAttribute("webkit-playsinline", "true");
+          } catch (_) {}
         }
         const audio = webAudioRef.current;
 

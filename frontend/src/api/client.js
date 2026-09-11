@@ -14,16 +14,26 @@ const configuredApiBase =
   (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_API_URL) ||
   null;
 
-// Expo web development runs on port 8081, while XAMPP serves this repository's
-// PHP API from port 80 under /staytup. Without this, every stream request goes
-// to Metro and receives a 404, so no song can start. Production stays relative.
-const API_BASE = configuredApiBase || (
-  typeof window !== "undefined" &&
-  window.location.hostname === "localhost" &&
-  window.location.port === "8081"
-    ? `${window.location.protocol}//${window.location.hostname}/staytup/api/index.php`
-    : "/api/index.php"
-);
+// Dynamic API Base URL resolution: auto-detects localhost, XAMPP /staytup subfolder, and root production
+function resolveInitialApiBase() {
+  if (configuredApiBase) return configuredApiBase;
+  if (typeof window !== "undefined") {
+    const { pathname, hostname, protocol, origin } = window.location;
+    // 1. If currently served from /staytup subfolder (XAMPP Apache or reverse proxy)
+    if (pathname.startsWith("/staytup") || pathname.includes("/staytup/")) {
+      return `${origin}/staytup/api/index.php`;
+    }
+    // 2. If running locally (localhost or 127.0.0.1)
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return `${protocol}//${hostname}/staytup/api/index.php`;
+    }
+    // 3. Default relative for root production deployments
+    return "/api/index.php";
+  }
+  return "http://localhost/staytup/api/index.php";
+}
+
+let API_BASE = resolveInitialApiBase();
 
 // ─── CryptoJS lazy load ──────────────────────────────────────────────────────
 let CryptoJS = null;
@@ -53,7 +63,7 @@ async function backendFetch(endpoint, params = {}, options = {}) {
   const timeoutId = controller ? setTimeout(() => controller.abort(), options.timeout || 12000) : null;
 
   try {
-    const resp = await fetch(url.toString(), {
+    let resp = await fetch(url.toString(), {
       method: options.method || "GET",
       headers: {
         Accept: "application/json",
@@ -63,6 +73,35 @@ async function backendFetch(endpoint, params = {}, options = {}) {
       ...(options.body ? { body: JSON.stringify(options.body) } : {}),
       ...(controller ? { signal: controller.signal } : {}),
     });
+
+    // If 404 and in browser, attempt immediate base URL auto-correction (e.g. /staytup/ vs /)
+    if (resp.status === 404 && typeof window !== "undefined" && !options._hasRetriedFailover) {
+      const altBase = API_BASE.includes("/staytup/")
+        ? API_BASE.replace("/staytup/", "/")
+        : (window.location.origin + "/staytup/api/index.php");
+      if (altBase !== API_BASE) {
+        try {
+          const altUrl = new URL(`${altBase}/${endpoint}`);
+          Object.entries(params).forEach(([key, val]) => {
+            if (val !== undefined && val !== null) altUrl.searchParams.set(key, val);
+          });
+          const altResp = await fetch(altUrl.toString(), {
+            method: options.method || "GET",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json",
+              ...options.headers,
+            },
+            ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+            ...(controller ? { signal: controller.signal } : {}),
+          });
+          if (altResp.ok) {
+            API_BASE = altBase;
+            resp = altResp;
+          }
+        } catch (_) {}
+      }
+    }
 
     if (timeoutId) clearTimeout(timeoutId);
 
@@ -603,15 +642,16 @@ export const api = {
     return { has_lyrics: false, is_synced: false, synced_lyrics: [], plain_lyrics: "", instrumental: false };
   },
 
-  // ─── Stream URL (PHP backend decrypts DES-ECB) ──────────────────────────
+  // ─── Stream URL (PHP backend decrypts DES-ECB with direct JioSaavn fallback) ──
   getStream: async (videoIdOrTrackId, retries = 2, title = "", artist = "") => {
     if (!videoIdOrTrackId && !title) return { stream_url: null, proxy_url: null };
     const cleanId = String(videoIdOrTrackId || "").replace(/^saavn_/, "").trim();
 
+    // 1. Try PHP Backend first
     if (cleanId) {
       for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-          const data = await backendFetch(`stream/${cleanId}`, {}, { timeout: 8000 });
+          const data = await backendFetch(`stream/${cleanId}`, {}, { timeout: 7000 });
           if (data && data.stream_url) {
             return {
               stream_url: data.stream_url,
@@ -622,24 +662,49 @@ export const api = {
           }
         } catch (err) {
           if (attempt < retries) {
-            await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+            await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
             continue;
           }
         }
       }
     }
 
-    // Fallback: If cleanId failed (e.g. 404 from old RTDB id or legacy track) and title is available,
-    // search JioSaavn by title + artist to resolve the stream URL seamlessly!
+    // 2. Direct JioSaavn Public API fallback with client-side DES decryption
+    if (cleanId) {
+      try {
+        const jioUrl = `https://www.jiosaavn.com/api.php?__call=song.getDetails&pids=${cleanId}&_format=json&_marker=0&api_version=4&ctx=web6dot0`;
+        const res = await fetch(jioUrl, { signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined });
+        if (res.ok) {
+          const data = await res.json();
+          const song = data?.songs?.[0] || data?.[cleanId];
+          if (song) {
+            const streamUrl = extractStreamUrl(song);
+            if (streamUrl) {
+              const dur = parseInt(song.more_info?.duration || song.duration || 0, 10);
+              return {
+                stream_url: streamUrl,
+                videoId: cleanId,
+                id: `saavn_${cleanId}`,
+                duration: dur,
+              };
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[API] Direct JioSaavn stream fallback error:", err?.message);
+      }
+    }
+
+    // 3. Fallback: Search by title + artist to find song and stream
     if (title && title.trim()) {
       try {
         const query = `${title} ${artist || ""}`.trim();
-        const searchData = await backendFetch("search", { q: query, limit: 3 });
+        const searchData = await backendFetch("search", { q: query, limit: 3 }).catch(() => null);
         const songs = searchData?.results || [];
         const match = songs[0];
         if (match && (match.videoId || match.id)) {
           const fallbackId = String(match.videoId || match.id).replace(/^saavn_/, "").trim();
-          const fallbackData = await backendFetch(`stream/${fallbackId}`, {}, { timeout: 8000 });
+          const fallbackData = await backendFetch(`stream/${fallbackId}`, {}, { timeout: 6000 }).catch(() => null);
           if (fallbackData && fallbackData.stream_url) {
             return {
               stream_url: fallbackData.stream_url,
@@ -647,6 +712,27 @@ export const api = {
               id: fallbackData.id || `saavn_${fallbackId}`,
               duration: fallbackData.duration || match.duration,
             };
+          }
+        }
+      } catch (_) {}
+
+      // 4. Direct JioSaavn Search fallback
+      try {
+        const searchUrl = `https://www.jiosaavn.com/api.php?__call=search.getResults&q=${encodeURIComponent(title.trim())}&_format=json&_marker=0&api_version=4&ctx=web6dot0&p=1&n=5`;
+        const searchRes = await fetch(searchUrl, { signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined });
+        if (searchRes.ok) {
+          const sJson = await searchRes.json();
+          const firstSong = (sJson?.results || []).find((s) => s.type === "song") || sJson?.results?.[0];
+          if (firstSong) {
+            const streamUrl = extractStreamUrl(firstSong);
+            if (streamUrl) {
+              return {
+                stream_url: streamUrl,
+                videoId: firstSong.id || cleanId,
+                id: `saavn_${firstSong.id || cleanId}`,
+                duration: parseInt(firstSong.more_info?.duration || firstSong.duration || 0, 10),
+              };
+            }
           }
         }
       } catch (_) {}

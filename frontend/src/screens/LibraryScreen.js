@@ -232,6 +232,7 @@ export default function LibraryScreen() {
   const [publicPlaylists, setPublicPlaylists] = useState([]);
   const [playlistSubFilter, setPlaylistSubFilter] = useState("all"); // "all" | "my" | "public" | "collab"
   const [contextLoaded, setContextLoaded] = useState(false);
+  const [publicLoaded, setPublicLoaded] = useState(false);
   const [tabLoading, setTabLoading] = useState(true);
   const [appTrending, setAppTrending] = useState([]);
   const [artistImages, setArtistImages] = useState({});
@@ -247,11 +248,18 @@ export default function LibraryScreen() {
   // Subscribe to public playlists from RTDB & API
   useEffect(() => {
     let isMounted = true;
-    api.getPublicPlaylists().then((res) => {
-      if (isMounted && Array.isArray(res) && res.length > 0) {
-        setPublicPlaylists(res.map((p) => ({ ...p, isPublic: true, is_public: true })));
-      }
-    }).catch(() => {});
+    api.getPublicPlaylists()
+      .then((res) => {
+        if (isMounted) {
+          if (Array.isArray(res) && res.length > 0) {
+            setPublicPlaylists(res.map((p) => ({ ...p, isPublic: true, is_public: true })));
+          }
+          setPublicLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (isMounted) setPublicLoaded(true);
+      });
 
     const unsub = subscribePublicPlaylists((list) => {
       if (!isMounted) return;
@@ -264,10 +272,20 @@ export default function LibraryScreen() {
           return Array.from(map.values());
         });
       }
+      setPublicLoaded(true);
     });
+
+    // Safety fallback: Never keep skeleton past 1.5s even on slow or offline connections
+    const safetyTimer = setTimeout(() => {
+      if (isMounted) {
+        setContextLoaded(true);
+        setPublicLoaded(true);
+      }
+    }, 1500);
 
     return () => {
       isMounted = false;
+      clearTimeout(safetyTimer);
       unsub();
     };
   }, []);
@@ -282,12 +300,18 @@ export default function LibraryScreen() {
     return () => unsub();
   }, []);
 
+  // Show skeleton until initial playlist/library data arrives
+  const isLibraryDataReady = contextLoaded && publicLoaded;
+
   useEffect(() => {
-    if (!contextLoaded) return;
+    if (!isLibraryDataReady) {
+      setTabLoading(true);
+      return;
+    }
     setTabLoading(true);
-    const timer = setTimeout(() => setTabLoading(false), 200);
+    const timer = setTimeout(() => setTabLoading(false), 150);
     return () => clearTimeout(timer);
-  }, [activeTab, contextLoaded]);
+  }, [activeTab, isLibraryDataReady]);
 
   // Subscribe to listening history from Firebase RTDB
   useEffect(() => {
@@ -806,7 +830,7 @@ export default function LibraryScreen() {
     if (!tracks || tracks.length === 0) return;
     const formatted = tracks.map((t) => ({
       ...t,
-      videoId: t.video_id || t.videoId,
+      videoId: t.videoId || t.video_id || t.id,
     }));
     playTrack(formatted[startIndex], formatted, startIndex);
   };
@@ -815,7 +839,7 @@ export default function LibraryScreen() {
     if (!tracks || tracks.length === 0) return;
     const formatted = tracks.map((t) => ({
       ...t,
-      videoId: t.video_id || t.videoId,
+      videoId: t.videoId || t.video_id || t.id,
     }));
     const shuffled = fisherYatesShuffle(formatted);
     if (setShuffle) setShuffle(true);
@@ -1242,17 +1266,17 @@ export default function LibraryScreen() {
               }
               renderItem={({ item, index }) => (
                 <SongCard
-                  track={{ ...item, videoId: item.video_id || item.videoId }}
+                  track={{ ...item, videoId: item.videoId || item.video_id || item.id }}
                   layout="row"
                   showRank={false}
                   showDuration={false}
                   style={{ paddingHorizontal: 0 }}
-                  isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
+                  isActive={currentTrack?.videoId === (item.videoId || item.video_id || item.id)}
                   onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
                   onPress={() =>
                     playTrack(
-                      { ...item, videoId: item.video_id || item.videoId },
-                      favorites.map((f) => ({ ...f, videoId: f.video_id || f.videoId })),
+                      { ...item, videoId: item.videoId || item.video_id || item.id },
+                      favorites.map((f) => ({ ...f, videoId: f.videoId || f.video_id || f.id })),
                       index
                     )
                   }
@@ -1424,20 +1448,20 @@ export default function LibraryScreen() {
                 <SongCard
                   track={{
                     ...item,
-                    videoId: item.video_id || item.videoId,
+                    videoId: item.videoId || item.video_id || item.id,
                   }}
                   layout="row"
                   showRank={false}
                   showPlayButton={false}
                   showDuration={false}
                   style={{ paddingHorizontal: 0 }}
-                  isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
+                  isActive={currentTrack?.videoId === (item.videoId || item.video_id || item.id)}
                   onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
                   onRemove={() => removeFromHistory(item)}
                   onPress={() =>
                     playTrack(
-                      { ...item, videoId: item.video_id || item.videoId },
-                      mergedHistory.map((h) => ({ ...h, videoId: h.video_id || h.videoId })),
+                      { ...item, videoId: item.videoId || item.video_id || item.id },
+                      mergedHistory.map((h) => ({ ...h, videoId: h.videoId || h.video_id || h.id })),
                       index
                     )
                   }
@@ -1485,17 +1509,17 @@ export default function LibraryScreen() {
               }
               renderItem={({ item, index }) => (
                 <SongCard
-                  track={{ ...item, videoId: item.video_id || item.videoId }}
+                  track={{ ...item, videoId: item.videoId || item.video_id || item.id }}
                   layout="row"
                   showRank={false}
                   showDuration={false}
                   style={{ paddingHorizontal: 0 }}
-                  isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
+                  isActive={currentTrack?.videoId === (item.videoId || item.video_id || item.id)}
                   onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
                   onPress={() =>
                     playTrack(
-                      { ...item, videoId: item.video_id || item.videoId },
-                      recentlyAddedTracks.map((r) => ({ ...r, videoId: r.video_id || r.videoId })),
+                      { ...item, videoId: item.videoId || item.video_id || item.id },
+                      recentlyAddedTracks.map((r) => ({ ...r, videoId: r.videoId || r.video_id || r.id })),
                       index
                     )
                   }
@@ -1559,17 +1583,17 @@ export default function LibraryScreen() {
               }
               renderItem={({ item, index }) => (
                 <SongCard
-                  track={{ ...item, videoId: item.videoId || item.video_id }}
+                  track={{ ...item, videoId: item.videoId || item.video_id || item.id }}
                   layout="row"
                   showRank={false}
                   showDuration={false}
                   style={{ paddingHorizontal: 0 }}
-                  isActive={currentTrack?.videoId === (item.videoId || item.video_id)}
+                  isActive={currentTrack?.videoId === (item.videoId || item.video_id || item.id)}
                   onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
                   onPress={() =>
                     playTrack(
-                      { ...item, videoId: item.videoId || item.video_id },
-                      downloadedTracks.map((d) => ({ ...d, videoId: d.videoId || d.video_id })),
+                      { ...item, videoId: item.videoId || item.video_id || item.id },
+                      downloadedTracks.map((d) => ({ ...d, videoId: d.videoId || d.video_id || d.id })),
                       index
                     )
                   }

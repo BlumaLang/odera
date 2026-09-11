@@ -11,6 +11,8 @@ import {
   Modal,
   StatusBar,
   ScrollView,
+  Animated,
+  Easing,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import SongCard from "./SongCard";
@@ -57,6 +59,89 @@ function formatTotalPlaylistDuration(tracks) {
   if (!Array.isArray(tracks) || tracks.length === 0) return "";
   const totalSeconds = tracks.reduce((acc, t) => acc + getTrackDurationSeconds(t), 0);
   return formatPlaylistDuration(totalSeconds);
+}
+
+function PlaylistTracksSkeleton() {
+  const pulseAnim = useRef(new Animated.Value(0.25)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 0.6,
+          duration: 750,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0.25,
+          duration: 750,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== "web",
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  return (
+    <View style={{ paddingHorizontal: 16, paddingTop: 10, width: "100%" }}>
+      {[1, 2, 3, 4, 5, 6, 7].map((i) => (
+        <View
+          key={i}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            paddingVertical: 10,
+            borderBottomWidth: 1,
+            borderBottomColor: "rgba(255,255,255,0.04)",
+          }}
+        >
+          <Animated.View
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: 8,
+              backgroundColor: "rgba(255,255,255,0.1)",
+              opacity: pulseAnim,
+              marginRight: 12,
+            }}
+          />
+          <View style={{ flex: 1 }}>
+            <Animated.View
+              style={{
+                width: 140 + (i % 3) * 35,
+                height: 14,
+                borderRadius: 4,
+                backgroundColor: "rgba(255,255,255,0.12)",
+                opacity: pulseAnim,
+                marginBottom: 8,
+              }}
+            />
+            <Animated.View
+              style={{
+                width: 85 + (i % 2) * 30,
+                height: 11,
+                borderRadius: 4,
+                backgroundColor: "rgba(255,255,255,0.07)",
+                opacity: pulseAnim,
+              }}
+            />
+          </View>
+          <Animated.View
+            style={{
+              width: 20,
+              height: 20,
+              borderRadius: 10,
+              backgroundColor: "rgba(255,255,255,0.06)",
+              opacity: pulseAnim,
+            }}
+          />
+        </View>
+      ))}
+    </View>
+  );
 }
 
 function UserAvatar({ user, size = 38, fontSize = 14, style }) {
@@ -599,7 +684,7 @@ export default function PlaylistModal({
       if (tracks.length === 0) return;
       const formatted = tracks.map((t) => ({
         ...t,
-        videoId: t.video_id || t.videoId,
+        videoId: t.videoId || t.video_id || t.id,
       }));
       playTrack(formatted[startIndex], formatted, startIndex);
     },
@@ -611,7 +696,7 @@ export default function PlaylistModal({
     if (tracks.length === 0) return;
     const formatted = tracks.map((t) => ({
       ...t,
-      videoId: t.video_id || t.videoId,
+      videoId: t.videoId || t.video_id || t.id,
     }));
     const shuffled = fisherYatesShuffle(formatted);
     if (setShuffle) setShuffle(true);
@@ -1288,7 +1373,7 @@ export default function PlaylistModal({
               </View>
             }
             renderItem={({ item, index }) => {
-              const vid = item.video_id || item.videoId;
+              const vid = item.videoId || item.video_id || item.id;
               const isSelected = selectedVideoIds.has(vid);
               return (
                 <View style={[styles.trackRowWrapper, isSelected && styles.selectedTrackRowWrapper]}>
@@ -1347,10 +1432,7 @@ export default function PlaylistModal({
             }}
             ListEmptyComponent={
               isLoadingTracks ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="large" color={colors.primary} />
-                  <Text style={styles.loadingText}>Loading playlist songs...</Text>
-                </View>
+                <PlaylistTracksSkeleton />
               ) : (
                 <View style={styles.emptyContainer}>
                   <Ionicons name="musical-notes-outline" size={48} color={colors.textMuted} />
