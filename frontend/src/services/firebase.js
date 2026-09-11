@@ -2260,14 +2260,16 @@ export async function sendLiveReaction(targetUid, { emoji, senderId, senderName,
   }
 }
 
+// Global cache of processed reaction IDs to ensure no emoji replay glitch
+const globalSeenReactionIds = new Set();
+
 /**
  * Subscribe to incoming live reactions for the current user
  */
 export function subscribeLiveReactions(uid, callback) {
   if (!uid || !callback) return () => {};
   const reactionsRef = ref(db, `users/${uid}/liveReactions`);
-  const seenReactions = new Set();
-  const mountTime = Date.now() - 5000; // Only trigger for reactions within last 5 seconds
+  const subscriptionStartTime = Date.now() - 1000; // Only fresh reactions created at or after listener setup
 
   const listener = onValue(
     reactionsRef,
@@ -2282,14 +2284,14 @@ export function subscribeLiveReactions(uid, callback) {
         if (!val || typeof val !== "object") return;
         const ts = val.timestamp || 0;
 
-        // Auto-purge reactions older than 60s
-        if (now - ts > 60000) {
+        // Auto-purge reactions older than 30s
+        if (now - ts > 30000) {
           staleKeys.push(key);
           return;
         }
 
-        if (ts >= mountTime && !seenReactions.has(key)) {
-          seenReactions.add(key);
+        if (ts >= subscriptionStartTime && !globalSeenReactionIds.has(key)) {
+          globalSeenReactionIds.add(key);
           callback({
             id: key,
             ...val,

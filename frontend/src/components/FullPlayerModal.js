@@ -14,7 +14,7 @@ import {
   Animated,
   PanResponder,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useAudio } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { colors, fonts } from "../theme/colors";
@@ -22,7 +22,6 @@ import { api } from "../api/client";
 import AddToPlaylistModal from "./AddToPlaylistModal";
 import ArtistModal from "./ArtistModal";
 import LikeConfetti from "./LikeConfetti";
-import LiveReactionOverlay from "./LiveReactionOverlay";
 import { resolveLocalArtistImage } from "../theme/artistImages";
 import { useResponsive } from "../context/ResponsiveContext";
 import { registerBackAction } from "../services/navigation";
@@ -159,6 +158,83 @@ export default function FullPlayerModal() {
   const [artistsOnTrack, setArtistsOnTrack] = useState([]);
   const [artistPhotos, setArtistPhotos] = useState({});
   const artistPanY = useRef(new Animated.Value(0)).current;
+
+  // Swipe-down dismiss PanResponder for mobile FullPlayerModal on iOS & Android
+  const playerPanY = useRef(new Animated.Value(0)).current;
+  const playerPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        // Intercept downward drag when dy > 8 and vertical drag dominates horizontal drag
+        return gestureState.dy > 8 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.4;
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dy > 0) {
+          playerPanY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy > 110 || gestureState.vy > 0.6) {
+          Animated.timing(playerPanY, {
+            toValue: height || 850,
+            duration: 180,
+            useNativeDriver: Platform.OS !== "web",
+          }).start(() => {
+            setFullPlayerVisible(false);
+            playerPanY.setValue(0);
+          });
+        } else {
+          Animated.spring(playerPanY, {
+            toValue: 0,
+            tension: 70,
+            friction: 9,
+            useNativeDriver: Platform.OS !== "web",
+          }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(playerPanY, {
+          toValue: 0,
+          friction: 9,
+          useNativeDriver: Platform.OS !== "web",
+        }).start();
+      },
+    })
+  ).current;
+
+  // Connect Modal State & Swipe Dismiss
+  const [showConnectModal, setShowConnectModal] = useState(false);
+  const [showConnectHelp, setShowConnectHelp] = useState(false);
+  const connectPanY = useRef(new Animated.Value(0)).current;
+  const connectPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return gestureState.dy > 6 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dy > 0) connectPanY.setValue(gestureState.dy);
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy > 70 || gestureState.vy > 0.5) {
+          Animated.timing(connectPanY, {
+            toValue: 450,
+            duration: 180,
+            useNativeDriver: Platform.OS !== "web",
+          }).start(() => {
+            setShowConnectModal(false);
+            connectPanY.setValue(0);
+          });
+        } else {
+          Animated.spring(connectPanY, {
+            toValue: 0,
+            friction: 8,
+            useNativeDriver: Platform.OS !== "web",
+          }).start();
+        }
+      },
+    })
+  ).current;
 
   const artistPanResponder = useRef(
     PanResponder.create({
@@ -1365,13 +1441,29 @@ export default function FullPlayerModal() {
   };
 
   const renderMobilePlayer = () => (
-    <>
+    <Animated.View
+      style={[
+        styles.mobilePlayerRoot,
+        {
+          transform: [{ translateY: playerPanY }],
+        },
+      ]}
+    >
+      {/* Top Drag Handle for Smooth Swipe Down Dismiss (iOS & Android) */}
+      <View
+        style={styles.mobileTopDragBar}
+        {...playerPanResponder.panHandlers}
+      >
+        <View style={styles.mobileTopDragHandle} />
+      </View>
+
       {/* Top Header Bar */}
-      <View style={styles.topBar}>
+      <View style={styles.topBar} {...playerPanResponder.panHandlers}>
         <TouchableOpacity
           style={styles.topBarButton}
           onPress={() => setFullPlayerVisible(false)}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel="Dismiss player"
         >
           <Ionicons name="chevron-down" size={26} color="#FFFFFF" />
         </TouchableOpacity>
@@ -1387,6 +1479,7 @@ export default function FullPlayerModal() {
           style={styles.topBarButton}
           onPress={() => setShowQueue(!showQueue)}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel="Toggle queue"
         >
           <Ionicons
             name={showQueue ? "close" : "list"}
@@ -1703,43 +1796,70 @@ export default function FullPlayerModal() {
               onPress={toggleRepeat}
               style={styles.controlIcon}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityLabel="Repeat track"
             >
-              <Ionicons
+              <MaterialCommunityIcons
                 name="repeat"
-                size={22}
-                color={isRepeat ? colors.primary : "#777777"}
+                size={24}
+                color={isRepeat ? colors.primary : "#8E8E93"}
               />
+              {isRepeat && <View style={styles.activeRepeatDot} />}
             </TouchableOpacity>
           </View>
 
-          {/* Bottom Utilities Row (Device Indicator on left, Sleep Timer on right) */}
+          {/* Bottom Utilities Row (Device Indicator on left, Sleep Timer & Queue on right) */}
           <View style={styles.bottomUtilitiesRow}>
-            {/* Dynamic Device Indicator */}
-            <View style={styles.deviceIndicator}>
-              <Ionicons name={deviceIcon} size={16} color={colors.primary} />
-              <Text style={styles.deviceLabel}>Playing on {deviceLabel}</Text>
-            </View>
-
-            {/* Sleep Timer Trigger Button */}
+            {/* Dynamic Device Indicator - clicking opens Spotify-style Connect modal */}
             <TouchableOpacity
-              style={styles.utilityButton}
-              onPress={() => setShowSleepModal(true)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              activeOpacity={0.7}
+              style={styles.deviceIndicator}
+              onPress={() => setShowConnectModal(true)}
+              activeOpacity={0.75}
+              accessibilityLabel="Audio device output"
             >
-              <Ionicons
-                name={sleepSecondsLeft !== null || sleepEndOnTrack ? "moon" : "moon-outline"}
-                size={20}
-                color={sleepSecondsLeft !== null || sleepEndOnTrack ? colors.primary : "#A7A7A7"}
-              />
-              {(sleepSecondsLeft !== null || sleepEndOnTrack) && (
-                <View style={styles.sleepActiveDot} />
-              )}
+              <Ionicons name={accurateDeviceIcon || "phone-portrait-outline"} size={16} color={colors.primary} />
+              <Text style={styles.deviceLabel} numberOfLines={1}>
+                {deviceName ? (deviceName.toLowerCase().includes("this") ? deviceName : `This ${deviceName}`) : "This Device"}
+              </Text>
             </TouchableOpacity>
+
+            <View style={styles.rightUtilitiesGroup}>
+              {/* Sleep Timer Trigger Button with Stopwatch Icon */}
+              <TouchableOpacity
+                style={styles.utilityButton}
+                onPress={() => setShowSleepModal(true)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                activeOpacity={0.7}
+                accessibilityLabel="Sleep timer"
+              >
+                <Ionicons
+                  name={sleepSecondsLeft !== null || sleepEndOnTrack ? "stopwatch" : "stopwatch-outline"}
+                  size={21}
+                  color={sleepSecondsLeft !== null || sleepEndOnTrack ? colors.primary : "#A7A7A7"}
+                />
+                {(sleepSecondsLeft !== null || sleepEndOnTrack) && (
+                  <View style={styles.sleepActiveDot} />
+                )}
+              </TouchableOpacity>
+
+              {/* Queue Button directly after Sleep Button */}
+              <TouchableOpacity
+                style={styles.utilityButton}
+                onPress={() => setShowQueue(!showQueue)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                activeOpacity={0.7}
+                accessibilityLabel="Playback queue"
+              >
+                <Ionicons
+                  name="list"
+                  size={22}
+                  color={showQueue ? colors.primary : "#A7A7A7"}
+                />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       )}
-    </>
+    </Animated.View>
   );
 
   return (
@@ -1933,6 +2053,96 @@ export default function FullPlayerModal() {
           </View>
         </Modal>
 
+        {/* Spotify-style "Connect" Device Bottom Sheet Modal */}
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={showConnectModal}
+          onRequestClose={() => setShowConnectModal(false)}
+        >
+          <TouchableOpacity
+            style={styles.connectModalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowConnectModal(false)}
+          >
+            <Animated.View
+              style={[
+                styles.connectModalSheet,
+                { transform: [{ translateY: connectPanY }] },
+              ]}
+              {...connectPanResponder.panHandlers}
+              onStartShouldSetResponder={() => true}
+            >
+              {/* Drag Handle */}
+              <View style={styles.connectDragHandle} />
+
+              <Text style={styles.connectModalTitle}>Connect</Text>
+
+              {/* Current Active Device Card */}
+              <View style={styles.connectCurrentDeviceCard}>
+                <View style={styles.connectDeviceInfo}>
+                  <View style={styles.connectDeviceNameRow}>
+                    <Text style={styles.connectDeviceName}>
+                      {deviceName ? (deviceName.toLowerCase().includes("this") ? deviceName : `This ${deviceName}`) : "This Device"}
+                    </Text>
+                    <View style={styles.connectNormalBadge}>
+                      <Text style={styles.connectNormalBadgeText}>Normal</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.connectSongSubtitle} numberOfLines={1}>
+                    {cleanTitle(currentTrack?.title || "")} {currentTrack?.artist ? `— ${currentTrack.artist}` : ""}
+                  </Text>
+                </View>
+
+                <View style={styles.connectDeviceIconWrap}>
+                  <Ionicons name={accurateDeviceIcon || "phone-portrait"} size={26} color="#1DB954" />
+                </View>
+              </View>
+
+              {/* Expandable "Don't see your device?" Section */}
+              <TouchableOpacity
+                style={styles.connectHelpCard}
+                onPress={() => setShowConnectHelp(!showConnectHelp)}
+                activeOpacity={0.8}
+              >
+                <View style={styles.connectHelpLeft}>
+                  <Ionicons name="hardware-chip-outline" size={18} color="#FFFFFF" style={{ marginRight: 10 }} />
+                  <Text style={styles.connectHelpTitle}>Don’t see your device?</Text>
+                </View>
+                <Ionicons
+                  name={showConnectHelp ? "chevron-up" : "chevron-down"}
+                  size={18}
+                  color="#AAAAAA"
+                />
+              </TouchableOpacity>
+
+              {showConnectHelp ? (
+                <View style={styles.connectHelpBody}>
+                  <Text style={styles.connectHelpBodyText}>
+                    Make sure your speakers, smart TV, or other audio devices are turned on and connected to the same Wi-Fi or Bluetooth.
+                  </Text>
+                </View>
+              ) : (
+                <Text style={styles.connectNoDevicesText}>No devices found on this network.</Text>
+              )}
+
+              {/* Bluetooth & Airplay Button */}
+              <TouchableOpacity
+                style={styles.connectAirplayButton}
+                onPress={() => {
+                  if (Platform.OS === "web") {
+                    alert("Bluetooth & AirPlay output is active. You can switch audio output in your system sound settings.");
+                  }
+                }}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="bluetooth" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.connectAirplayButtonText}>Bluetooth & Airplay</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          </TouchableOpacity>
+        </Modal>
+
         {/* Add to Playlist Modal */}
         <AddToPlaylistModal
           visible={showAddToPlaylist}
@@ -2005,8 +2215,6 @@ export default function FullPlayerModal() {
               : null
           }
         />
-        {/* Airbuds Live Reaction Bursts Floating Over Player & Artwork */}
-        <LiveReactionOverlay />
       </View>
       )}
     </Modal>
@@ -3203,5 +3411,172 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
     marginTop: 2,
+  },
+
+  // Swipe Gestures & Bottom Bar Styles
+  mobilePlayerRoot: {
+    flex: 1,
+    width: "100%",
+  },
+  mobileTopDragBar: {
+    width: "100%",
+    paddingTop: 8,
+    paddingBottom: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "grab" } : {}),
+  },
+  mobileTopDragHandle: {
+    width: 36,
+    height: 4.5,
+    borderRadius: 2.5,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+  },
+  activeRepeatDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.primary,
+    alignSelf: "center",
+    marginTop: 2,
+  },
+  rightUtilitiesGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+
+  // Spotify-style Connect Device Bottom Sheet
+  connectModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    justifyContent: "flex-end",
+  },
+  connectModalSheet: {
+    backgroundColor: "#16161A",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === "ios" ? 40 : 28,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  connectDragHandle: {
+    width: 38,
+    height: 4.5,
+    borderRadius: 3,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    alignSelf: "center",
+    marginBottom: 16,
+  },
+  connectModalTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 22,
+    color: "#FFFFFF",
+    letterSpacing: -0.3,
+    marginBottom: 16,
+  },
+  connectCurrentDeviceCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#222226",
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.06)",
+  },
+  connectDeviceInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  connectDeviceNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
+  connectDeviceName: {
+    fontFamily: fonts.bold,
+    fontSize: 17,
+    color: "#FFFFFF",
+  },
+  connectNormalBadge: {
+    backgroundColor: "#333338",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  connectNormalBadgeText: {
+    fontFamily: fonts.medium,
+    fontSize: 10.5,
+    color: "#CCCCCC",
+  },
+  connectSongSubtitle: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "#1DB954",
+  },
+  connectDeviceIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: "rgba(29, 185, 84, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  connectHelpCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#222226",
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  connectHelpLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  connectHelpTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14.5,
+    color: "#FFFFFF",
+  },
+  connectHelpBody: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  connectHelpBodyText: {
+    fontFamily: fonts.regular,
+    fontSize: 12.5,
+    color: "#8E8E93",
+    lineHeight: 18,
+  },
+  connectNoDevicesText: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: "#8E8E93",
+    marginTop: 10,
+    marginBottom: 20,
+    marginLeft: 4,
+  },
+  connectAirplayButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#2C2C32",
+    borderRadius: 24,
+    paddingVertical: 13,
+    marginTop: 12,
+  },
+  connectAirplayButtonText: {
+    fontFamily: fonts.bold,
+    fontSize: 13.5,
+    color: "#FFFFFF",
+    letterSpacing: 0.2,
   },
 });
