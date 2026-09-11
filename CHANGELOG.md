@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.4] - 2026-09-12
+
+### Added
+- **🎧 Listening Party — Without Chat**:
+  - Real-time listening rooms powered by Firebase Realtime Database with live synchronized playback.
+  - Public discovery rooms and private rooms with 4-digit passcode protection.
+  - Host master playback controls with listener drift correction (~200ms threshold) and synchronized seeks.
+  - Collaborative room queue with real-time song searching and instant add-to-queue sheet.
+  - Democratic track upvoting (`▲ count`) dynamically ordering upcoming queue playback.
+  - Vote-to-skip functionality (`⏭ Vote Skip (x/threshold)`) requiring >50% consensus to advance tracks.
+  - GPU-accelerated floating reaction bursts (❤️ 🔥 😂 😮 👏) with zero-chat design for pure music listening.
+  - Universal deep link support for `staytup.app/room/{id}` for 1-click room joining and listening sync.
+  - Dedicated "Parties" discovery tab & live party banner in `FriendsScreen`, plus quick action in FullPlayerModal 3-dot options menu.
+
+### Fixed
+- Fixed `TypeError: (0 , w.useResponsive) is not a function` in `DevModal` by decoupling from external responsive hooks and utilizing direct viewport and device info checks.
+- Fixed `GET /api/index.php/search/trending` 400 Bad Request error by adding dedicated trending routing and parameter bypass.
+- Configured Service Worker network-first caching strategy on application bundles to eliminate stale bundle issues.
+
+---
+
 ## [2.8.3] - 2026-09-12
 
 ### Added

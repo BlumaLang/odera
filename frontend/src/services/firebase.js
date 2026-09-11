@@ -3558,3 +3558,298 @@ export function subscribeFollowedArtists(uid, callback) {
   });
   return () => off(artistsRef, "value", listener);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🎧 LISTENING PARTIES (SYNCHRONIZED SOCIAL PLAYBACK WITHOUT CHAT)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Generate a unique, url-friendly party ID
+ */
+export function generatePartyId() {
+  return "party_" + Math.random().toString(36).substring(2, 9) + "_" + Date.now().toString(36);
+}
+
+/**
+ * Create a new listening party room
+ */
+export async function createListeningParty({
+  name,
+  hostUid,
+  hostName,
+  hostPhoto,
+  isPrivate = false,
+  passcode = "",
+  initialTrack = null,
+}) {
+  if (!hostUid) throw new Error("Host UID is required to create a party");
+  const partyId = generatePartyId();
+  const partyRef = ref(db, `listening_parties/${partyId}`);
+
+  const partyData = {
+    id: partyId,
+    name: name || `${hostName || "Host"}'s Listening Room`,
+    hostUid,
+    hostName: hostName || "Host",
+    hostPhoto: hostPhoto || "",
+    isPrivate: !!isPrivate,
+    passcode: passcode || "",
+    createdAt: Date.now(),
+    currentTrack: initialTrack || null,
+    playbackState: {
+      isPlaying: !!initialTrack,
+      positionMillis: 0,
+      timestamp: Date.now(),
+      updatedBy: hostUid,
+    },
+    members: {
+      [hostUid]: {
+        uid: hostUid,
+        name: hostName || "Host",
+        avatar: hostPhoto || "",
+        isHost: true,
+        joinedAt: Date.now(),
+        isOnline: true,
+      },
+    },
+    queue: {},
+    skipVotes: {},
+    lastReaction: null,
+  };
+
+  await set(partyRef, partyData);
+
+  // Set disconnect cleanup for host
+  try {
+    const memberRef = ref(db, `listening_parties/${partyId}/members/${hostUid}`);
+    onDisconnect(memberRef).remove();
+  } catch (_) {}
+
+  return partyId;
+}
+
+/**
+ * Join an existing listening party
+ */
+export async function joinListeningParty(partyId, user) {
+  if (!partyId || !user?.uid) return false;
+  const memberRef = ref(db, `listening_parties/${partyId}/members/${user.uid}`);
+  const memberData = {
+    uid: user.uid,
+    name: user.displayName || user.username || "Listener",
+    avatar: user.photoURL || user.avatar || "",
+    isHost: false,
+    joinedAt: Date.now(),
+    isOnline: true,
+  };
+
+  await set(memberRef, memberData);
+  try {
+    onDisconnect(memberRef).remove();
+  } catch (_) {}
+  return true;
+}
+
+/**
+ * Leave a listening party
+ */
+export async function leaveListeningParty(partyId, uid) {
+  if (!partyId || !uid) return;
+  try {
+    const memberRef = ref(db, `listening_parties/${partyId}/members/${uid}`);
+    await remove(memberRef);
+  } catch (err) {
+    console.warn("leaveListeningParty error:", err.message);
+  }
+}
+
+/**
+ * Host updates playback state (play/pause/seek)
+ */
+export async function updatePartyPlayback(partyId, { isPlaying, positionMillis, track, hostUid }) {
+  if (!partyId) return;
+  const updates = {
+    "playbackState/isPlaying": isPlaying,
+    "playbackState/positionMillis": Math.max(0, positionMillis || 0),
+    "playbackState/timestamp": Date.now(),
+    "playbackState/updatedBy": hostUid || "",
+  };
+  if (track) {
+    updates["currentTrack"] = track;
+    updates["skipVotes"] = null; // reset skip votes when track changes
+  }
+  try {
+    await update(ref(db, `listening_parties/${partyId}`), updates);
+  } catch (err) {
+    console.warn("updatePartyPlayback error:", err.message);
+  }
+}
+
+/**
+ * Subscribe to a listening party in real-time
+ */
+export function subscribeListeningParty(partyId, callback) {
+  if (!partyId || !callback) return () => {};
+  const partyRef = ref(db, `listening_parties/${partyId}`);
+  const listener = onValue(partyRef, (snapshot) => {
+    try {
+      const data = snapshot.val();
+      callback(data || null);
+    } catch (err) {
+      console.warn("subscribeListeningParty error:", err.message);
+      callback(null);
+    }
+  });
+  return () => off(partyRef, "value", listener);
+}
+
+/**
+ * Subscribe to all public listening parties
+ */
+export function subscribePublicParties(callback) {
+  if (!callback) return () => {};
+  const partiesRef = ref(db, "listening_parties");
+  const listener = onValue(partiesRef, (snapshot) => {
+    try {
+      const val = snapshot.val();
+      if (!val) {
+        callback([]);
+        return;
+      }
+      const now = Date.now();
+      const list = Object.keys(val)
+        .map((k) => ({ ...val[k], id: k }))
+        .filter((p) => {
+          if (p.isPrivate) return false;
+          // Filter out empty or dead rooms older than 12 hours
+          const members = p.members || {};
+          const hasOnline = Object.values(members).some((m) => m?.isOnline);
+          if (!hasOnline && now - (p.createdAt || 0) > 12 * 3600 * 1000) return false;
+          return true;
+        });
+      // Sort newest or most populated first
+      list.sort((a, b) => {
+        const aCount = Object.keys(a.members || {}).length;
+        const bCount = Object.keys(b.members || {}).length;
+        return bCount !== aCount ? bCount - aCount : (b.createdAt || 0) - (a.createdAt || 0);
+      });
+      callback(list);
+    } catch (err) {
+      console.warn("subscribePublicParties error:", err.message);
+      callback([]);
+    }
+  });
+  return () => off(partiesRef, "value", listener);
+}
+
+/**
+ * Add a suggested track to the party queue
+ */
+export async function addSongToPartyQueue(partyId, track, user) {
+  if (!partyId || !track) return;
+  const queueRef = ref(db, `listening_parties/${partyId}/queue`);
+  const newQueueRef = push(queueRef);
+  const queueItem = {
+    id: newQueueRef.key,
+    track,
+    suggestedBy: user?.uid || "",
+    suggestedByName: user?.displayName || user?.username || "Guest",
+    suggestedByAvatar: user?.photoURL || user?.avatar || "",
+    suggestedAt: Date.now(),
+    votes: { [user?.uid || "creator"]: true },
+    voteCount: 1,
+  };
+  await set(newQueueRef, queueItem);
+}
+
+/**
+ * Upvote/toggle vote for a song in the queue
+ */
+export async function votePartyQueueSong(partyId, queueItemId, uid) {
+  if (!partyId || !queueItemId || !uid) return;
+  const voteRef = ref(db, `listening_parties/${partyId}/queue/${queueItemId}`);
+  try {
+    await runTransaction(voteRef, (item) => {
+      if (!item) return item;
+      const votes = item.votes || {};
+      if (votes[uid]) {
+        delete votes[uid];
+      } else {
+        votes[uid] = true;
+      }
+      item.votes = votes;
+      item.voteCount = Object.keys(votes).length;
+      return item;
+    });
+  } catch (err) {
+    console.warn("votePartyQueueSong error:", err.message);
+  }
+}
+
+/**
+ * Vote to skip the current track
+ */
+export async function voteToSkipParty(partyId, uid) {
+  if (!partyId || !uid) return;
+  const partyRef = ref(db, `listening_parties/${partyId}`);
+  try {
+    await runTransaction(partyRef, (party) => {
+      if (!party) return party;
+      const skipVotes = party.skipVotes || {};
+      if (skipVotes[uid]) {
+        delete skipVotes[uid];
+      } else {
+        skipVotes[uid] = true;
+      }
+      party.skipVotes = skipVotes;
+
+      // Check if threshold reached
+      const memberCount = Object.keys(party.members || {}).length || 1;
+      const voteCount = Object.keys(skipVotes).length;
+      const threshold = Math.max(1, Math.ceil(memberCount / 2));
+
+      if (voteCount >= threshold) {
+        // Auto advance queue
+        const queueObj = party.queue || {};
+        const queueList = Object.keys(queueObj).map((k) => queueObj[k]);
+        queueList.sort((a, b) => (b.voteCount || 0) - (a.voteCount || 0) || (a.suggestedAt || 0) - (b.suggestedAt || 0));
+
+        if (queueList.length > 0) {
+          const nextSong = queueList[0];
+          party.currentTrack = nextSong.track;
+          delete party.queue[nextSong.id];
+        }
+        party.skipVotes = {};
+        party.playbackState = {
+          isPlaying: true,
+          positionMillis: 0,
+          timestamp: Date.now(),
+          updatedBy: "skip_vote_consensus",
+        };
+      }
+      return party;
+    });
+  } catch (err) {
+    console.warn("voteToSkipParty error:", err.message);
+  }
+}
+
+/**
+ * Trigger floating emoji reaction burst in party (no chat)
+ */
+export async function triggerPartyReaction(partyId, { emoji, uid, username }) {
+  if (!partyId || !emoji) return;
+  const reactionRef = ref(db, `listening_parties/${partyId}/lastReaction`);
+  try {
+    await set(reactionRef, {
+      id: Math.random().toString(36).substring(2, 9),
+      emoji,
+      uid: uid || "",
+      username: username || "Listener",
+      timestamp: Date.now(),
+    });
+  } catch (err) {
+    console.warn("triggerPartyReaction error:", err.message);
+  }
+}
+

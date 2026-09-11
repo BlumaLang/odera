@@ -1,18 +1,27 @@
 # Staytup - Real-Time Music Streaming & Social Listening Platform
 
-[![Staytup](https://img.shields.io/badge/Staytup-PWA%20v2.8.3-1DB954?style=for-the-badge&logo=music)](https://staytup.odireca.com)
+[![Staytup](https://img.shields.io/badge/Staytup-PWA%20v2.8.4-1DB954?style=for-the-badge&logo=music)](https://staytup.odireca.com)
 [![React Native](https://img.shields.io/badge/React_Native-Expo%20SDK%2057-61DAFB?style=for-the-badge&logo=react)](https://reactnative.dev)
 [![PHP](https://img.shields.io/badge/PHP-8.x%20Backend-777BB4?style=for-the-badge&logo=php)](https://php.net)
 [![Firebase](https://img.shields.io/badge/Firebase-Realtime%20Database-FFCA28?style=for-the-badge&logo=firebase)](https://firebase.google.com)
-[![Service Worker](https://img.shields.io/badge/Service_Worker-staytup--pwa--v35-blue?style=for-the-badge)](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API)
+[![Service Worker](https://img.shields.io/badge/Service_Worker-staytup--pwa--v36-blue?style=for-the-badge)](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API)
 
-**Staytup** is a modern, high-performance music streaming and collaborative listening Progressive Web App (PWA) built with **React Native for Web (Expo SDK 57)**, a lightweight **PHP 8.x backend**, and **Firebase Realtime Database**. It pairs studio-grade audio streaming with real-time social presence, collaborative and blend playlists, friend listening sync, live synchronized karaoke lyrics, multi-device hardware management, advanced typo-tolerant search, and universal deep links.
+**Staytup** is a modern, high-performance music streaming and collaborative listening Progressive Web App (PWA) built with **React Native for Web (Expo SDK 57)**, a lightweight **PHP 8.x backend**, and **Firebase Realtime Database**. It pairs studio-grade audio streaming with synchronized listening parties (without chat), real-time social presence, collaborative and blend playlists, friend listening sync, live synchronized karaoke lyrics, multi-device hardware management, advanced typo-tolerant search, and universal deep links.
 
 ---
 
 ## Key Features & Capabilities
 
-### 1. Much Smarter Search & Voice Search
+### 1. 🎧 Listening Party — Without Chat
+- **Synchronized Group Listening**: Create public discovery rooms or private rooms with 4-digit passcodes. Host playback controls are broadcasted live to all listeners with millisecond-level drift correction (~200ms) and automatic seek syncing.
+- **Collaborative Room Queue**: Anyone in the room can search and suggest songs to the party queue.
+- **Democratic Queue Upvoting**: Listeners can upvote queued tracks (`▲ count`); higher-voted tracks bubble up to play next automatically.
+- **Democratic Vote-to-Skip**: If a track isn't vibing, listeners can vote to skip (`⏭ Vote Skip (x/threshold)`). When votes exceed 50% of active participants, the track advances automatically.
+- **Zero-Chat Emoji Reaction Bursts**: Float real-time reaction bursts (❤️ 🔥 😂 😮 👏) across all listeners' screens without conversational text chatter, keeping the experience 100% focused on music.
+- **Room Deep Links**: Instant sharing via `staytup.app/room/{id}` for one-tap entrance directly into the party.
+- **Discovery Hub**: Dedicated "Parties" tab and live party discovery banner in the Friends screen.
+
+### 2. Much Smarter Search & Voice Search
 - **Search Operators**: Direct support for query operators (`artist:Arijit`, `genre:romantic`, `mood:chill`, `lyrics:phrase`, `year:2024`, `lang:hindi`) with one-tap quick operator chips.
 - **Natural Language Discovery**: Search by lyrics, mood, genre, language, year, or artist + genre combinations.
 - **Category Filter Tabs**: Switch instantly between `All`, `Songs`, `Artists`, `Albums`, and `Playlists`.

@@ -36,6 +36,8 @@ import LiveReactionOverlay from "./src/components/LiveReactionOverlay";
 import ActiveDevicesModal from "./src/components/ActiveDevicesModal";
 import DeepLinkPreviewModal from "./src/components/DeepLinkPreviewModal";
 import ShareSheetModal from "./src/components/ShareSheetModal";
+import ListeningPartyModal from "./src/components/ListeningPartyModal";
+import CreatePartyModal from "./src/components/CreatePartyModal";
 import { api } from "./src/api/client";
 import { useAudio } from "./src/context/AudioContext";
 import { BUILD_NUMBER, APP_VERSION } from "./src/config/version";
@@ -377,9 +379,15 @@ function AppContent() {
   const [deepLinkType, setDeepLinkType] = useState("song");
   const [showDeepLinkModal, setShowDeepLinkModal] = useState(false);
   const [shareSheetConfig, setShareSheetConfig] = useState(null);
+
+  // Synchronized Listening Party State
+  const [activePartyId, setActivePartyId] = useState(null);
+  const [showPartyModal, setShowPartyModal] = useState(false);
+  const [showCreatePartyModal, setShowCreatePartyModal] = useState(false);
+
   const { playTrack } = useAudio();
 
-  // Listen for global share requests
+  // Listen for global share and party requests
   useEffect(() => {
     if (typeof window !== "undefined") {
       const handleOpenShare = (e) => {
@@ -387,8 +395,31 @@ function AppContent() {
           setShareSheetConfig(e.detail);
         }
       };
+      const handleOpenParty = (e) => {
+        const id = e?.detail?.partyId || e?.detail;
+        if (id) {
+          setActivePartyId(id);
+          setShowPartyModal(true);
+        }
+      };
+      const handleCreateParty = () => {
+        setShowCreatePartyModal(true);
+      };
+
       window.addEventListener("staytup-open-share", handleOpenShare);
-      return () => window.removeEventListener("staytup-open-share", handleOpenShare);
+      window.addEventListener("staytup-open-party", handleOpenParty);
+      window.addEventListener("staytup-create-party", handleCreateParty);
+      window.staytupOpenParty = (id) => {
+        setActivePartyId(id);
+        setShowPartyModal(true);
+      };
+      window.staytupCreateParty = () => setShowCreatePartyModal(true);
+
+      return () => {
+        window.removeEventListener("staytup-open-share", handleOpenShare);
+        window.removeEventListener("staytup-open-party", handleOpenParty);
+        window.removeEventListener("staytup-create-party", handleCreateParty);
+      };
     }
   }, []);
 
@@ -423,8 +454,8 @@ function AppContent() {
           setDeepLinkData({ title: decodeURIComponent(entityId), subtitle: "Playlist on Staytup", id: entityId });
           setShowDeepLinkModal(true);
         } else if (section === "room") {
-          setDeepLinkData({ title: `Room #${entityId}`, subtitle: "Listening Party", id: entityId });
-          setShowDeepLinkModal(true);
+          setActivePartyId(entityId);
+          setShowPartyModal(true);
         } else if (section === "user") {
           setDeepLinkData({ username: entityId, subtitle: `@${entityId} on Staytup` });
           setShowDeepLinkModal(true);
@@ -574,6 +605,24 @@ function AppContent() {
         type={shareSheetConfig?.type || "song"}
         data={shareSheetConfig?.data || {}}
         onClose={() => setShareSheetConfig(null)}
+      />
+      {/* Synchronized Listening Party Room Modal */}
+      <ListeningPartyModal
+        partyId={activePartyId}
+        visible={showPartyModal}
+        onClose={() => {
+          setShowPartyModal(false);
+          setActivePartyId(null);
+        }}
+      />
+      {/* Create Listening Party Modal */}
+      <CreatePartyModal
+        visible={showCreatePartyModal}
+        onClose={() => setShowCreatePartyModal(false)}
+        onCreated={(newPartyId) => {
+          setActivePartyId(newPartyId);
+          setShowPartyModal(true);
+        }}
       />
     </NavigationContainer>
   );

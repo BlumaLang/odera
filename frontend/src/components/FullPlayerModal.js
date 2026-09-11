@@ -2151,6 +2151,27 @@ export default function FullPlayerModal() {
 
               {/* Action List */}
               <ScrollView style={styles.optionsListScroll} bounces={false} showsVerticalScrollIndicator={false}>
+                {/* Start Listening Party Action */}
+                <TouchableOpacity
+                  style={styles.optionsActionRow}
+                  onPress={() => {
+                    setShowTrackOptionsModal(false);
+                    if (typeof window !== "undefined") {
+                      window.dispatchEvent(new CustomEvent("staytup-create-party"));
+                    }
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.optionsActionIconWrap, { backgroundColor: "rgba(29, 185, 84, 0.15)" }]}>
+                    <Ionicons name="headset" size={22} color="#1DB954" />
+                  </View>
+                  <View style={styles.optionsActionTextWrap}>
+                    <Text style={[styles.optionsActionTitle, { color: "#1DB954" }]}>Start Listening Party</Text>
+                    <Text style={styles.optionsActionSub}>Sync this song live with friends • Zero chat</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#666666" />
+                </TouchableOpacity>
+
                 {/* Share Song Action */}
                 <TouchableOpacity
                   style={styles.optionsActionRow}

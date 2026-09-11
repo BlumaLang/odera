@@ -24,6 +24,7 @@ import {
   getUserData,
   getUserStreamCount,
   getLikedSongs,
+  subscribePublicParties,
 } from "../services/firebase";
 import { triggerLocalReactionBurst } from "../components/LiveReactionOverlay";
 import PlaylistModal from "../components/PlaylistModal";
@@ -277,6 +278,25 @@ export default function FriendsScreen({ onNavigate }) {
 
   // Dismissed suggested users in this session
   const [dismissedUids, setDismissedUids] = useState(new Set());
+
+  // Listening Parties Realtime Subscription
+  const [publicParties, setPublicParties] = useState([]);
+  useEffect(() => {
+    const unsub = subscribePublicParties((list) => setPublicParties(list || []));
+    return () => unsub();
+  }, []);
+
+  const handleOpenParty = (partyId) => {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("staytup-open-party", { detail: { partyId } }));
+    }
+  };
+
+  const handleCreateParty = () => {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("staytup-create-party"));
+    }
+  };
 
   // Discoverable users & global search results
   const [discoverUsers, setDiscoverUsers] = useState([]);
@@ -1164,6 +1184,31 @@ export default function FriendsScreen({ onNavigate }) {
             </TouchableOpacity>
 
             <TouchableOpacity
+              style={[styles.tabButton, activeTab === "parties" && styles.activeTabButton]}
+              onPress={() => setActiveTab("parties")}
+              activeOpacity={0.8}
+            >
+              <View style={styles.tabPillLabelRow}>
+                <Ionicons
+                  name="headset"
+                  size={14}
+                  color={activeTab === "parties" ? "#000000" : "#1DB954"}
+                  style={{ marginRight: 4 }}
+                />
+                <Text style={[styles.tabText, activeTab === "parties" && styles.activeTabText]}>
+                  Parties
+                </Text>
+                {publicParties?.length > 0 && (
+                  <View style={[styles.tabPillBadge, activeTab === "parties" && styles.tabPillBadgeActive]}>
+                    <Text style={[styles.tabPillBadgeText, activeTab === "parties" && styles.tabPillBadgeTextActive]}>
+                      {publicParties.length}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
               style={[styles.tabButton, activeTab === "blend" && styles.activeTabButton]}
               onPress={() => setActiveTab("blend")}
               activeOpacity={0.8}
@@ -1406,6 +1451,77 @@ export default function FriendsScreen({ onNavigate }) {
               ) : activeTab === "friends" ? (
                 /* ── FRIENDS TAB ── */
                 <View style={styles.sectionBlock}>
+                  {/* Listening Party Spotlight Card */}
+                  <View style={styles.partyBannerCard}>
+                    <View style={styles.partyBannerLeft}>
+                      <View style={styles.partyBannerIcon}>
+                        <Ionicons name="headset" size={20} color="#1DB954" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                          <Text style={styles.partyBannerTitle}>Listening Party</Text>
+                          <View style={styles.partyLiveBadge}>
+                            <Text style={styles.partyLiveBadgeText}>ZERO CHAT</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.partyBannerSub}>
+                          {publicParties.length > 0
+                            ? `${publicParties.length} active room${publicParties.length > 1 ? "s" : ""} • Synchronized playback`
+                            : "Sync playback in real-time with friends"}
+                        </Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.partyBannerActionBtn}
+                      onPress={handleCreateParty}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="add" size={16} color="#000000" style={{ marginRight: 4 }} />
+                      <Text style={styles.partyBannerActionText}>Start Room</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Active Public Rooms Horizontal Carousel */}
+                  {publicParties.length > 0 && (
+                    <View style={styles.partyCarouselWrap}>
+                      <Text style={styles.partySectionMiniHeading}>Active Parties</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.partyCarouselList}>
+                        {publicParties.map((p) => {
+                          const mCount = Object.keys(p.members || {}).length || 1;
+                          const currentTrk = p.currentTrack;
+                          return (
+                            <TouchableOpacity
+                              key={p.id}
+                              style={styles.partyRoomCard}
+                              onPress={() => handleOpenParty(p.id)}
+                              activeOpacity={0.8}
+                            >
+                              <View style={styles.partyRoomHeader}>
+                                <View style={styles.partyRoomLiveDot} />
+                                <Text style={styles.partyRoomListenersCount}>{mCount} listening</Text>
+                              </View>
+                              <Text style={styles.partyRoomName} numberOfLines={1}>{p.name}</Text>
+                              <Text style={styles.partyRoomHost} numberOfLines={1}>Host: {p.hostName}</Text>
+                              {currentTrk ? (
+                                <View style={styles.partyRoomTrackRow}>
+                                  <Image source={{ uri: currentTrk.image || currentTrk.thumbnail }} style={styles.partyRoomTrackImg} />
+                                  <Text style={styles.partyRoomTrackTitle} numberOfLines={1}>{currentTrk.title}</Text>
+                                </View>
+                              ) : null}
+                              <TouchableOpacity
+                                style={styles.partyRoomJoinBtn}
+                                onPress={() => handleOpenParty(p.id)}
+                                activeOpacity={0.8}
+                              >
+                                <Text style={styles.partyRoomJoinText}>Join Room</Text>
+                              </TouchableOpacity>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+                  )}
+
                   {sortedFriends.length > 0 ? (
                     <View style={styles.unifiedUserList}>
                       {sortedFriends.map((friend) => {
@@ -1556,6 +1672,77 @@ export default function FriendsScreen({ onNavigate }) {
                       <Text style={styles.emptyCenterSub}>
                         Add people you know and start building your Staytup network.
                       </Text>
+                    </View>
+                  )}
+                </View>
+              ) : activeTab === "parties" ? (
+                /* ── LISTENING PARTIES TAB ── */
+                <View style={styles.sectionBlock}>
+                  <View style={styles.partiesHeroCard}>
+                    <View style={styles.partiesHeroIconWrap}>
+                      <Ionicons name="headset" size={28} color="#1DB954" />
+                    </View>
+                    <Text style={styles.partiesHeroTitle}>Listening Parties</Text>
+                    <Text style={styles.partiesHeroSub}>
+                      Listen together in real-time. Host controls playback & seek sync (~200ms), members suggest songs, vote-to-skip, and burst floating reactions. Strictly zero chat.
+                    </Text>
+                    <TouchableOpacity style={styles.partiesHeroCreateBtn} onPress={handleCreateParty} activeOpacity={0.85}>
+                      <Ionicons name="radio" size={17} color="#000000" style={{ marginRight: 8 }} />
+                      <Text style={styles.partiesHeroCreateBtnText}>Start New Party</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.sectionHeaderRow}>
+                    <Text style={styles.sectionHeaderTitle}>Public Rooms ({publicParties.length})</Text>
+                  </View>
+
+                  {publicParties.length === 0 ? (
+                    <View style={styles.emptyCenterState}>
+                      <Ionicons name="disc-outline" size={48} color="#444444" style={styles.emptyCenterIcon} />
+                      <Text style={styles.emptyCenterTitle}>No active parties right now</Text>
+                      <Text style={styles.emptyCenterSub}>
+                        Be the first to start a listening party and invite your friends to tune in!
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.partiesGrid}>
+                      {publicParties.map((p) => {
+                        const mCount = Object.keys(p.members || {}).length || 1;
+                        const currentTrk = p.currentTrack;
+                        return (
+                          <TouchableOpacity
+                            key={p.id}
+                            style={styles.partyFullCard}
+                            onPress={() => handleOpenParty(p.id)}
+                            activeOpacity={0.8}
+                          >
+                            <View style={styles.partyFullCardLeft}>
+                              {currentTrk ? (
+                                <Image source={{ uri: currentTrk.image || currentTrk.thumbnail }} style={styles.partyFullCardImg} />
+                              ) : (
+                                <View style={[styles.partyFullCardImg, { backgroundColor: "#222222", alignItems: "center", justifyContent: "center" }]}>
+                                  <Ionicons name="musical-notes" size={24} color="#1DB954" />
+                                </View>
+                              )}
+                              <View style={styles.partyFullCardMeta}>
+                                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                  <View style={styles.partyRoomLiveDot} />
+                                  <Text style={styles.partyRoomListenersCount}>{mCount} listening</Text>
+                                </View>
+                                <Text style={styles.partyFullCardName} numberOfLines={1}>{p.name}</Text>
+                                <Text style={styles.partyFullCardHost} numberOfLines={1}>Host: {p.hostName} {currentTrk ? `• ${currentTrk.title}` : ""}</Text>
+                              </View>
+                            </View>
+                            <TouchableOpacity
+                              style={styles.partyRoomJoinBtn}
+                              onPress={() => handleOpenParty(p.id)}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={styles.partyRoomJoinText}>Join</Text>
+                            </TouchableOpacity>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
                   )}
                 </View>
@@ -4485,5 +4672,242 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 6,
     marginTop: 6,
+  },
+
+  // Listening Party Styles
+  partyBannerCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "rgba(29, 185, 84, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.22)",
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 16,
+  },
+  partyBannerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    marginRight: 12,
+  },
+  partyBannerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(29, 185, 84, 0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  partyBannerTitle: {
+    fontFamily: fonts.bold || "System",
+    fontSize: 14.5,
+    color: "#FFFFFF",
+  },
+  partyLiveBadge: {
+    backgroundColor: "#1DB954",
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  partyLiveBadgeText: {
+    fontFamily: fonts.bold || "System",
+    fontSize: 8.5,
+    color: "#000000",
+  },
+  partyBannerSub: {
+    fontFamily: fonts.regular || "System",
+    fontSize: 11.5,
+    color: "#888888",
+    marginTop: 2,
+  },
+  partyBannerActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1DB954",
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    borderRadius: 18,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  partyBannerActionText: {
+    fontFamily: fonts.bold || "System",
+    fontSize: 12,
+    color: "#000000",
+  },
+
+  partyCarouselWrap: {
+    marginBottom: 20,
+  },
+  partySectionMiniHeading: {
+    fontFamily: fonts.semiBold || "System",
+    fontSize: 13,
+    color: "#FFFFFF",
+    marginBottom: 10,
+  },
+  partyCarouselList: {
+    gap: 12,
+  },
+  partyRoomCard: {
+    width: 170,
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.07)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  partyRoomHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginBottom: 6,
+  },
+  partyRoomLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#1DB954",
+  },
+  partyRoomListenersCount: {
+    fontFamily: fonts.medium || "System",
+    fontSize: 10.5,
+    color: "#1DB954",
+  },
+  partyRoomName: {
+    fontFamily: fonts.bold || "System",
+    fontSize: 13,
+    color: "#FFFFFF",
+  },
+  partyRoomHost: {
+    fontFamily: fonts.regular || "System",
+    fontSize: 11,
+    color: "#777777",
+    marginTop: 1,
+    marginBottom: 8,
+  },
+  partyRoomTrackRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.4)",
+    borderRadius: 8,
+    padding: 5,
+    marginBottom: 8,
+  },
+  partyRoomTrackImg: {
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  partyRoomTrackTitle: {
+    fontFamily: fonts.medium || "System",
+    fontSize: 10.5,
+    color: "#FFFFFF",
+    flex: 1,
+  },
+  partyRoomJoinBtn: {
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    borderRadius: 12,
+    paddingVertical: 6,
+    alignItems: "center",
+  },
+  partyRoomJoinText: {
+    fontFamily: fonts.semiBold || "System",
+    fontSize: 11.5,
+    color: "#FFFFFF",
+  },
+
+  // Full Parties tab styles
+  partiesHeroCard: {
+    backgroundColor: "rgba(29, 185, 84, 0.06)",
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.2)",
+    padding: 22,
+    alignItems: "center",
+    marginBottom: 24,
+  },
+  partiesHeroIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "rgba(29, 185, 84, 0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  partiesHeroTitle: {
+    fontFamily: fonts.bold || "System",
+    fontSize: 18,
+    color: "#FFFFFF",
+    marginBottom: 6,
+  },
+  partiesHeroSub: {
+    fontFamily: fonts.regular || "System",
+    fontSize: 12.5,
+    color: "#888888",
+    textAlign: "center",
+    lineHeight: 18,
+    maxWidth: 420,
+    marginBottom: 16,
+  },
+  partiesHeroCreateBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1DB954",
+    borderRadius: 22,
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  partiesHeroCreateBtnText: {
+    fontFamily: fonts.bold || "System",
+    fontSize: 13.5,
+    color: "#000000",
+  },
+  partiesGrid: {
+    gap: 10,
+  },
+  partyFullCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "rgba(255, 255, 255, 0.03)",
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.06)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  partyFullCardLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    marginRight: 12,
+  },
+  partyFullCardImg: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    marginRight: 12,
+    backgroundColor: "#222222",
+  },
+  partyFullCardMeta: {
+    flex: 1,
+  },
+  partyFullCardName: {
+    fontFamily: fonts.bold || "System",
+    fontSize: 14,
+    color: "#FFFFFF",
+    marginTop: 2,
+  },
+  partyFullCardHost: {
+    fontFamily: fonts.regular || "System",
+    fontSize: 11.5,
+    color: "#777777",
+    marginTop: 1,
   },
 });
