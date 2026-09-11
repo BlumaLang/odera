@@ -45,6 +45,18 @@ class UserRoutes {
                 return self::addTrackToPlaylist($params['id'] ?? null, $method);
             case 'playlists_remove_track':
                 return self::removeTrackFromPlaylist($params['id'] ?? null, $params['videoId'] ?? null);
+            case 'playlists_bulk_delete_tracks':
+                return self::bulkDeleteTracks($params['id'] ?? null, $method);
+            case 'playlists_import_json':
+                return self::importPlaylistJson($method);
+
+            // Albums
+            case 'albums':
+                return self::handleAlbums($method);
+
+            // Folders
+            case 'folders':
+                return self::handleFolders($method);
             
             // Premium
             case 'premium_save':
@@ -269,6 +281,112 @@ class UserRoutes {
         sendSuccess();
     }
     
+    private static function bulkDeleteTracks($id, $method) {
+        if ($method !== 'POST') sendError('Method not allowed', 405);
+        if (!$id) sendError('Playlist ID is required');
+
+        $userId = getQueryParam('user_id');
+        if (!$userId) sendError('user_id is required');
+
+        $body = getRequestBody();
+        $videoIds = $body['video_ids'] ?? $body['videoIds'] ?? [];
+        if (!is_array($videoIds) || empty($videoIds)) {
+            sendError('video_ids array is required');
+        }
+
+        Storage::bulkRemoveTracksFromPlaylist($userId, $id, $videoIds);
+        sendSuccess();
+    }
+
+    private static function importPlaylistJson($method) {
+        if ($method !== 'POST') sendError('Method not allowed', 405);
+
+        $userId = getQueryParam('user_id');
+        if (!$userId) sendError('user_id is required');
+
+        $body = getRequestBody();
+        $name = $body['name'] ?? 'Imported Playlist';
+        $tracks = $body['tracks'] ?? [];
+        $description = $body['description'] ?? 'Imported from backup';
+        $coverUrl = $body['cover_url'] ?? '';
+
+        $playlist = [
+            'id'          => 'pl_' . time() . '_' . bin2hex(random_bytes(4)),
+            'name'        => $name,
+            'description' => $description,
+            'cover_url'   => $coverUrl,
+            'tracks'      => $tracks,
+            'track_count' => count($tracks),
+            'created_at'  => date('c'),
+            'imported_at' => date('c'),
+        ];
+
+        Storage::createPlaylist($userId, $playlist);
+        sendJson(['playlist' => $playlist]);
+    }
+
+    // ==================== ALBUMS ====================
+
+    private static function handleAlbums($method) {
+        $userId = getQueryParam('user_id');
+        if (!$userId) {
+            $body = getRequestBody();
+            $userId = $body['user_id'] ?? null;
+        }
+        if (!$userId) sendError('user_id is required');
+
+        if ($method === 'GET') {
+            $albums = Storage::getSavedAlbums($userId);
+            sendJson(['albums' => $albums]);
+        } else if ($method === 'POST') {
+            $body = getRequestBody();
+            $albumId = $body['album_id'] ?? $body['id'] ?? null;
+            if (!$albumId) sendError('album_id is required');
+
+            $albumData = [
+                'id'          => $albumId,
+                'album_id'    => $albumId,
+                'title'       => $body['title'] ?? $body['name'] ?? '',
+                'name'        => $body['title'] ?? $body['name'] ?? '',
+                'artist'      => $body['artist'] ?? '',
+                'image'       => $body['image'] ?? $body['artwork_url'] ?? '',
+                'artwork_url' => $body['image'] ?? $body['artwork_url'] ?? '',
+                'year'        => $body['year'] ?? '',
+                'track_count' => $body['track_count'] ?? count($body['tracks'] ?? []),
+                'tracks'      => $body['tracks'] ?? [],
+                'saved_at'    => date('c'),
+            ];
+
+            $isSaved = Storage::toggleSavedAlbum($userId, $albumId, $albumData);
+            sendJson(['saved' => $isSaved]);
+        } else {
+            sendError('Method not allowed', 405);
+        }
+    }
+
+    // ==================== FOLDERS ====================
+
+    private static function handleFolders($method) {
+        $userId = getQueryParam('user_id');
+        if (!$userId) {
+            $body = getRequestBody();
+            $userId = $body['user_id'] ?? null;
+        }
+        if (!$userId) sendError('user_id is required');
+
+        if ($method === 'GET') {
+            $folders = Storage::getPlaylistFolders($userId);
+            sendJson(['folders' => $folders]);
+        } else if ($method === 'POST' || $method === 'PUT') {
+            $body = getRequestBody();
+            $folders = $body['folders'] ?? [];
+            Storage::savePlaylistFolders($userId, $folders);
+            sendSuccess();
+        } else {
+            sendError('Method not allowed', 405);
+        }
+    }
+
     // ==================== PREMIUM ====================
     
     private static function savePremium($method) {

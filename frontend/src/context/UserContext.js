@@ -149,6 +149,24 @@ export const UserProvider = ({ children }) => {
   const [premiumPlan, setPremiumPlan] = useState("Free");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [userArtistMovements, setUserArtistMovements] = useState({});
+  const [savedAlbums, setSavedAlbums] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage?.getItem("@staytup_saved_albums");
+        return raw ? JSON.parse(raw) : [];
+      } catch (_) {}
+    }
+    return [];
+  });
+  const [playlistFolders, setPlaylistFolders] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage?.getItem("@staytup_playlist_folders");
+        return raw ? JSON.parse(raw) : [];
+      } catch (_) {}
+    }
+    return [];
+  });
 
   // Subscribe to Firebase Auth state
   useEffect(() => {
@@ -833,6 +851,148 @@ export const UserProvider = ({ children }) => {
     });
   }, []);
 
+  // Saved Albums management
+  const toggleSaveAlbum = useCallback(async (album) => {
+    if (!album) return false;
+    const albumId = String(album.id || album.album_id || "");
+    if (!albumId) return false;
+
+    let isSaved = false;
+    setSavedAlbums((prev) => {
+      const exists = prev.some((a) => String(a.id || a.album_id) === albumId);
+      let next;
+      if (exists) {
+        next = prev.filter((a) => String(a.id || a.album_id) !== albumId);
+        isSaved = false;
+      } else {
+        const record = {
+          id: albumId,
+          album_id: albumId,
+          title: album.title || album.name || "Unknown Album",
+          name: album.title || album.name || "Unknown Album",
+          artist: album.artist || album.subtitle || "Various Artists",
+          image: album.image || album.artwork_url || "",
+          artwork_url: album.image || album.artwork_url || "",
+          year: album.year || "",
+          track_count: album.track_count || album.tracks?.length || 0,
+          tracks: album.tracks || [],
+          savedAt: new Date().toISOString(),
+        };
+        next = [record, ...prev];
+        isSaved = true;
+      }
+      if (typeof window !== "undefined") {
+        window.localStorage?.setItem("@staytup_saved_albums", JSON.stringify(next));
+      }
+      return next;
+    });
+
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    api.toggleSavedAlbum(album, uid).catch(() => {});
+    return isSaved;
+  }, [currentUser]);
+
+  const isAlbumSaved = useCallback((albumId) => {
+    if (!albumId) return false;
+    return savedAlbums.some((a) => String(a.id || a.album_id) === String(albumId));
+  }, [savedAlbums]);
+
+  // Playlist Folders management
+  const createFolder = useCallback(async (name, color = "#1DB954") => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return null;
+    const folder = {
+      id: "folder_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+      name: trimmed,
+      color: color || "#1DB954",
+      playlistIds: [],
+      createdAt: new Date().toISOString(),
+    };
+    setPlaylistFolders((prev) => {
+      const next = [...prev, folder];
+      if (typeof window !== "undefined") {
+        window.localStorage?.setItem("@staytup_playlist_folders", JSON.stringify(next));
+      }
+      return next;
+    });
+    const uid = currentUser?.uid || DEFAULT_USER_ID;
+    api.savePlaylistFolders([...playlistFolders, folder], uid).catch(() => {});
+    return folder;
+  }, [currentUser, playlistFolders]);
+
+  const renameFolder = useCallback(async (folderId, newName, newColor) => {
+    if (!folderId) return;
+    setPlaylistFolders((prev) => {
+      const next = prev.map((f) => {
+        if (f.id === folderId) {
+          return {
+            ...f,
+            name: (newName || f.name).trim(),
+            color: newColor || f.color,
+          };
+        }
+        return f;
+      });
+      if (typeof window !== "undefined") {
+        window.localStorage?.setItem("@staytup_playlist_folders", JSON.stringify(next));
+      }
+      const uid = currentUser?.uid || DEFAULT_USER_ID;
+      api.savePlaylistFolders(next, uid).catch(() => {});
+      return next;
+    });
+  }, [currentUser]);
+
+  const deleteFolder = useCallback(async (folderId) => {
+    if (!folderId) return;
+    setPlaylistFolders((prev) => {
+      const next = prev.filter((f) => f.id !== folderId);
+      if (typeof window !== "undefined") {
+        window.localStorage?.setItem("@staytup_playlist_folders", JSON.stringify(next));
+      }
+      const uid = currentUser?.uid || DEFAULT_USER_ID;
+      api.savePlaylistFolders(next, uid).catch(() => {});
+      return next;
+    });
+  }, [currentUser]);
+
+  const addPlaylistToFolder = useCallback(async (folderId, playlistId) => {
+    if (!folderId || !playlistId) return;
+    setPlaylistFolders((prev) => {
+      const next = prev.map((f) => {
+        if (f.id === folderId) {
+          const currentIds = new Set(f.playlistIds || []);
+          currentIds.add(String(playlistId));
+          return { ...f, playlistIds: Array.from(currentIds) };
+        }
+        return f;
+      });
+      if (typeof window !== "undefined") {
+        window.localStorage?.setItem("@staytup_playlist_folders", JSON.stringify(next));
+      }
+      const uid = currentUser?.uid || DEFAULT_USER_ID;
+      api.savePlaylistFolders(next, uid).catch(() => {});
+      return next;
+    });
+  }, [currentUser]);
+
+  const removePlaylistFromFolder = useCallback(async (folderId, playlistId) => {
+    if (!folderId || !playlistId) return;
+    setPlaylistFolders((prev) => {
+      const next = prev.map((f) => {
+        if (f.id === folderId) {
+          return { ...f, playlistIds: (f.playlistIds || []).filter((id) => String(id) !== String(playlistId)) };
+        }
+        return f;
+      });
+      if (typeof window !== "undefined") {
+        window.localStorage?.setItem("@staytup_playlist_folders", JSON.stringify(next));
+      }
+      const uid = currentUser?.uid || DEFAULT_USER_ID;
+      api.savePlaylistFolders(next, uid).catch(() => {});
+      return next;
+    });
+  }, [currentUser]);
+
   // Open and close profile page
   const openProfile = () => setIsProfileOpen(true);
   const closeProfile = () => setIsProfileOpen(false);
@@ -1298,6 +1458,16 @@ export const UserProvider = ({ children }) => {
         getFriendBlend,
         // Auto Playlist Generation
         generateAutoPlaylist: fbGenerateAutoPlaylist,
+        // Albums & Folders
+        savedAlbums,
+        toggleSaveAlbum,
+        isAlbumSaved,
+        playlistFolders,
+        createFolder,
+        renameFolder,
+        deleteFolder,
+        addPlaylistToFolder,
+        removePlaylistFromFolder,
       }}
     >
       {children}
@@ -1351,6 +1521,15 @@ const defaultUserContext = {
   loginUser: () => {},
   logoutUser: () => {},
   updateUsername: () => {},
+  savedAlbums: [],
+  toggleSaveAlbum: () => Promise.resolve(false),
+  isAlbumSaved: () => false,
+  playlistFolders: [],
+  createFolder: () => Promise.resolve(null),
+  renameFolder: () => Promise.resolve(),
+  deleteFolder: () => Promise.resolve(),
+  addPlaylistToFolder: () => Promise.resolve(),
+  removePlaylistFromFolder: () => Promise.resolve(),
 };
 
 export const useUser = () => {

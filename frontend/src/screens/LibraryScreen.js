@@ -8,12 +8,12 @@ import {
   StyleSheet,
   ActivityIndicator,
   TextInput,
-  Alert,
   Platform,
   Image,
   Modal,
   Animated,
   Easing,
+  StatusBar,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
@@ -22,13 +22,21 @@ import AddToPlaylistModal from "../components/AddToPlaylistModal";
 import ArtistModal from "../components/ArtistModal";
 import PlaylistModal from "../components/PlaylistModal";
 import CreatePlaylistModal from "../components/CreatePlaylistModal";
+import AlbumModal from "../components/AlbumModal";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
 import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { auth, getRecentlyPlayed, subscribeRecentlyPlayed, removeRecentlyPlayed } from "../services/firebase";
-import { getHighResArtwork } from "../utils/imageUtils";
+import { getHighResArtwork, decodeHtml } from "../utils/imageUtils";
+import {
+  getDownloadedTracks,
+  getOfflineStorageFormatted,
+  clearAllDownloads,
+  removeDownloadedTrack,
+  downloadTrack,
+} from "../services/offlineStorage";
 
 function LibrarySkeleton({ type }) {
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
@@ -54,7 +62,7 @@ function LibrarySkeleton({ type }) {
     return () => loop.stop();
   }, [pulseAnim]);
 
-  if (type === "playlists") {
+  if (type === "playlists" || type === "folders") {
     return (
       <View style={styles.skeletonWrap}>
         {[1, 2, 3, 4, 5].map((i) => (
@@ -71,40 +79,28 @@ function LibrarySkeleton({ type }) {
     );
   }
 
-  if (type === "history") {
+  if (type === "artists") {
     return (
       <View style={styles.skeletonWrap}>
-        <View style={styles.skeletonHistoryHeader}>
-          <View>
-            <Animated.View style={[styles.skeletonLine, { width: 140, height: 16, opacity: pulseAnim }]} />
-            <Animated.View style={[styles.skeletonLine, { width: 80, height: 11, marginTop: 4, opacity: pulseAnim }]} />
-          </View>
-          <View style={styles.skeletonHistoryButtons}>
-            <Animated.View style={[styles.skeletonPillBtn, { opacity: pulseAnim }]} />
-            <Animated.View style={[styles.skeletonCircleBtn, { opacity: pulseAnim }]} />
-          </View>
-        </View>
-        {[1, 2, 3, 4, 5, 6].map((i) => (
-          <View key={i} style={styles.skeletonSongRow}>
-            <Animated.View style={[styles.skeletonSongThumb, { opacity: pulseAnim }]} />
-            <View style={styles.skeletonSongInfo}>
-              <Animated.View style={[styles.skeletonLine, { width: 160 + (i % 3) * 30, height: 13, opacity: pulseAnim }]} />
-              <Animated.View style={[styles.skeletonLine, { width: 110 + (i % 2) * 20, height: 10, marginTop: 5, opacity: pulseAnim }]} />
+        {[1, 2, 3, 4, 5].map((i) => (
+          <View key={i} style={styles.skeletonPlaylistRow}>
+            <Animated.View style={[styles.skeletonPlaylistThumb, { borderRadius: 26, opacity: pulseAnim }]} />
+            <View style={styles.skeletonPlaylistInfo}>
+              <Animated.View style={[styles.skeletonLine, { width: 120 + (i % 3) * 20, height: 14, opacity: pulseAnim }]} />
+              <Animated.View style={[styles.skeletonLine, { width: 60, height: 10, marginTop: 6, opacity: pulseAnim }]} />
             </View>
-            <Animated.View style={[styles.skeletonDots, { opacity: pulseAnim }]} />
           </View>
         ))}
       </View>
     );
   }
 
-  // favorites
   return (
     <View style={styles.skeletonWrap}>
       <View style={styles.skeletonHistoryHeader}>
         <View>
-          <Animated.View style={[styles.skeletonLine, { width: 120, height: 16, opacity: pulseAnim }]} />
-          <Animated.View style={[styles.skeletonLine, { width: 60, height: 11, marginTop: 4, opacity: pulseAnim }]} />
+          <Animated.View style={[styles.skeletonLine, { width: 130, height: 16, opacity: pulseAnim }]} />
+          <Animated.View style={[styles.skeletonLine, { width: 70, height: 11, marginTop: 4, opacity: pulseAnim }]} />
         </View>
         <View style={styles.skeletonHistoryButtons}>
           <Animated.View style={[styles.skeletonPillBtn, { opacity: pulseAnim }]} />
@@ -125,9 +121,11 @@ function LibrarySkeleton({ type }) {
   );
 }
 
+const FOLDER_COLORS = ["#1DB954", "#8B5CF6", "#3B82F6", "#EC4899", "#F59E0B", "#10B981", "#6366F1"];
+
 export default function LibraryScreen() {
   const navigation = useNavigation();
-  const { isDesktop, isTablet, isPhone } = useResponsive();
+  const { isDesktop, isTablet } = useResponsive();
   const {
     currentUser,
     userProfile,
@@ -141,17 +139,40 @@ export default function LibraryScreen() {
     createPlaylist,
     deletePlaylist,
     removeTrackFromPlaylist,
+    savedAlbums = [],
+    toggleSaveAlbum,
+    isAlbumSaved,
+    playlistFolders = [],
+    createFolder,
+    deleteFolder,
   } = useUser();
 
-  const [activeTab, setActiveTab] = useState("playlists"); // "playlists" | "favorites" | "history"
+  const [activeTab, setActiveTab] = useState("playlists");
+  // "playlists" | "favorites" | "albums" | "artists" | "history" | "recent_added" | "downloaded" | "folders"
   const [selectedPlaylist, setSelectedPlaylist] = useState(null);
-  const [loadingPlaylistDetails, setLoadingPlaylistDetails] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showCreateMenu, setShowCreateMenu] = useState(false);
+  const [showFolderModal, setShowFolderModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [showSortModal, setShowSortModal] = useState(false);
+  const [sortBy, setSortBy] = useState("recent_added"); // "recent_added" | "alpha_asc" | "alpha_desc" | "track_count"
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeFolder, setActiveFolder] = useState(null);
+
+  const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderColor, setNewFolderColor] = useState(FOLDER_COLORS[0]);
+  const [importJsonText, setImportJsonText] = useState("");
+  const [importLoading, setImportLoading] = useState(false);
+
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
+  const [selectedAlbumForModal, setSelectedAlbumForModal] = useState(null);
   const [localRecentlyPlayed, setLocalRecentlyPlayed] = useState([]);
+  const [downloadedTracks, setDownloadedTracks] = useState([]);
   const [contextLoaded, setContextLoaded] = useState(false);
   const [tabLoading, setTabLoading] = useState(true);
+
+  const { currentTrack, playTrack, setShuffle } = useAudioPlayback();
 
   useEffect(() => {
     if (rtdbPlaylists !== undefined || likedSongs !== undefined) {
@@ -162,11 +183,11 @@ export default function LibraryScreen() {
   useEffect(() => {
     if (!contextLoaded) return;
     setTabLoading(true);
-    const timer = setTimeout(() => setTabLoading(false), 300);
+    const timer = setTimeout(() => setTabLoading(false), 200);
     return () => clearTimeout(timer);
   }, [activeTab, contextLoaded]);
 
-  // Subscribe to real-time listening history from Firebase Realtime Database
+  // Subscribe to listening history from Firebase RTDB
   useEffect(() => {
     const uid = currentUser?.uid || auth.currentUser?.uid || "guest";
     getRecentlyPlayed(uid).then((items) => {
@@ -184,37 +205,39 @@ export default function LibraryScreen() {
     return () => unsub();
   }, [currentUser]);
 
-  const playlists = useMemo(() => {
+  // Load and subscribe to downloaded offline songs
+  useEffect(() => {
+    setDownloadedTracks(getDownloadedTracks());
+    const onDownloadsChanged = () => {
+      setDownloadedTracks(getDownloadedTracks());
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("staytup-downloads-changed", onDownloadsChanged);
+      return () => window.removeEventListener("staytup-downloads-changed", onDownloadsChanged);
+    }
+  }, []);
+
+  // Merge regular and collab playlists
+  const rawPlaylists = useMemo(() => {
     const seen = new Set();
     const collabOriginalIds = new Set();
     const collabNames = new Set();
     const result = [];
 
-    // Add collaborative playlists first
     for (const cp of collabPlaylists || []) {
       const id = String(cp.id || cp.collabId || "");
       if (id && !seen.has(id)) {
         seen.add(id);
-        if (cp.originalPlaylistId) {
-          collabOriginalIds.add(String(cp.originalPlaylistId));
-        }
-        if (cp.name) {
-          collabNames.add(String(cp.name).trim().toLowerCase());
-        }
+        if (cp.originalPlaylistId) collabOriginalIds.add(String(cp.originalPlaylistId));
+        if (cp.name) collabNames.add(String(cp.name).trim().toLowerCase());
         result.push({ ...cp, isCollab: true });
       }
     }
 
-    // Add regular playlists without duplicate IDs or converted collab duplicates
     for (const p of rtdbPlaylists || []) {
       const id = String(p.id || p.collabId || "");
       const nameKey = String(p.name || "").trim().toLowerCase();
-      if (
-        id &&
-        !seen.has(id) &&
-        !collabOriginalIds.has(id) &&
-        (!nameKey || !collabNames.has(nameKey))
-      ) {
+      if (id && !seen.has(id) && !collabOriginalIds.has(id) && (!nameKey || !collabNames.has(nameKey))) {
         seen.add(id);
         result.push(p);
       }
@@ -222,23 +245,188 @@ export default function LibraryScreen() {
 
     return result;
   }, [rtdbPlaylists, collabPlaylists]);
-  const favorites = likedSongs || [];
-  const rawHistory = localRecentlyPlayed.length > 0 ? localRecentlyPlayed : (rtdbRecentlyPlayed || []);
-  const isLoading = false;
 
-  const { currentTrack, playTrack, setShuffle } = useAudioPlayback();
+  // Filtered & Sorted Playlists
+  const playlists = useMemo(() => {
+    let list = [...rawPlaylists];
 
-  const removeFromHistory = useCallback(async (track) => {
-    const uid = currentUser?.uid || auth.currentUser?.uid || "guest";
-    const vid = track.video_id || track.videoId;
-    if (!vid) return;
-    setLocalRecentlyPlayed((prev) => prev.filter((t) => (t.video_id || t.videoId) !== vid));
-    try {
-      await removeRecentlyPlayed(uid, vid);
-    } catch (err) {
-      console.warn("Failed to remove from history:", err);
+    if (activeFolder) {
+      const idSet = new Set(activeFolder.playlistIds || []);
+      list = list.filter((p) => idSet.has(String(p.id || p.collabId)));
     }
-  }, [currentUser]);
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(
+        (p) =>
+          (p.name && p.name.toLowerCase().includes(q)) ||
+          (p.description && p.description.toLowerCase().includes(q))
+      );
+    }
+
+    if (sortBy === "alpha_asc") {
+      list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    } else if (sortBy === "alpha_desc") {
+      list.sort((a, b) => (b.name || "").localeCompare(a.name || ""));
+    } else if (sortBy === "track_count") {
+      list.sort(
+        (a, b) =>
+          (b.tracks?.length || b.track_count || 0) -
+          (a.tracks?.length || a.track_count || 0)
+      );
+    }
+
+    return list;
+  }, [rawPlaylists, activeFolder, searchQuery, sortBy]);
+
+  // Liked Songs
+  const favorites = useMemo(() => {
+    let list = [...(likedSongs || [])];
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(
+        (s) =>
+          (s.title && s.title.toLowerCase().includes(q)) ||
+          (s.artist && s.artist.toLowerCase().includes(q)) ||
+          (s.album && s.album.toLowerCase().includes(q))
+      );
+    }
+    if (sortBy === "alpha_asc") {
+      list.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+    } else if (sortBy === "alpha_desc") {
+      list.sort((a, b) => (b.title || "").localeCompare(a.title || ""));
+    }
+    return list;
+  }, [likedSongs, searchQuery, sortBy]);
+
+  // Saved Albums
+  const albums = useMemo(() => {
+    let list = [...(savedAlbums || [])];
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(
+        (al) =>
+          (al.title && al.title.toLowerCase().includes(q)) ||
+          (al.name && al.name.toLowerCase().includes(q)) ||
+          (al.artist && al.artist.toLowerCase().includes(q))
+      );
+    }
+    if (sortBy === "alpha_asc") {
+      list.sort((a, b) => (a.title || a.name || "").localeCompare(b.title || b.name || ""));
+    } else if (sortBy === "alpha_desc") {
+      list.sort((a, b) => (b.title || b.name || "").localeCompare(a.title || a.name || ""));
+    }
+    return list;
+  }, [savedAlbums, searchQuery, sortBy]);
+
+  // Followed Artists
+  const followedArtists = useMemo(() => {
+    const raw = userProfile?.favoriteArtists || [];
+    let list = raw.map((item) => {
+      const name = typeof item === "string" ? item : item?.name || "";
+      const avatar = typeof item === "object" ? item?.image || item?.avatar || "" : "";
+      return { name, avatar };
+    }).filter((a) => a.name);
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter((a) => a.name.toLowerCase().includes(q));
+    }
+    list.sort((a, b) => a.name.localeCompare(b.name));
+    return list;
+  }, [userProfile?.favoriteArtists, searchQuery]);
+
+  // History
+  const rawHistory = localRecentlyPlayed.length > 0 ? localRecentlyPlayed : (rtdbRecentlyPlayed || []);
+  const mergedHistory = useMemo(() => {
+    const map = new Map();
+    for (const item of rawHistory) {
+      const id = item.video_id || item.videoId;
+      if (!id) continue;
+      if (!map.has(id)) {
+        map.set(id, {
+          ...item,
+          videoId: id,
+          video_id: id,
+          play_count: item.play_count || 1,
+          last_played: item.playedAt || item.played_at || item.timestamp || 0,
+        });
+      } else {
+        const existing = map.get(id);
+        existing.play_count = (existing.play_count || 1) + 1;
+        const itemTime = item.playedAt || item.played_at || item.timestamp;
+        if (itemTime && (!existing.last_played || itemTime > existing.last_played)) {
+          existing.last_played = itemTime;
+        }
+      }
+    }
+    let list = Array.from(map.values()).sort((a, b) => {
+      return new Date(b.last_played || 0).getTime() - new Date(a.last_played || 0).getTime();
+    });
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(
+        (item) =>
+          (item.title && item.title.toLowerCase().includes(q)) ||
+          (item.artist && item.artist.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [rawHistory, searchQuery]);
+
+  // Recently Added Tracks (Across Liked Songs and Playlists)
+  const recentlyAddedTracks = useMemo(() => {
+    const list = [...(likedSongs || [])];
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      return list.filter(
+        (s) =>
+          (s.title && s.title.toLowerCase().includes(q)) ||
+          (s.artist && s.artist.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [likedSongs, searchQuery]);
+
+  // Filtered Downloaded Songs
+  const filteredDownloaded = useMemo(() => {
+    let list = [...downloadedTracks];
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(
+        (t) =>
+          (t.title && t.title.toLowerCase().includes(q)) ||
+          (t.artist && t.artist.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [downloadedTracks, searchQuery]);
+
+  // Filtered Folders
+  const folders = useMemo(() => {
+    let list = [...(playlistFolders || [])];
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter((f) => f.name && f.name.toLowerCase().includes(q));
+    }
+    return list;
+  }, [playlistFolders, searchQuery]);
+
+  const removeFromHistory = useCallback(
+    async (track) => {
+      const uid = currentUser?.uid || auth.currentUser?.uid || "guest";
+      const vid = track.video_id || track.videoId;
+      if (!vid) return;
+      setLocalRecentlyPlayed((prev) => prev.filter((t) => (t.video_id || t.videoId) !== vid));
+      try {
+        await removeRecentlyPlayed(uid, vid);
+      } catch (err) {
+        console.warn("Failed to remove from history:", err);
+      }
+    },
+    [currentUser]
+  );
 
   const openPlaylist = (playlist) => {
     setSelectedPlaylist(playlist);
@@ -258,11 +446,44 @@ export default function LibraryScreen() {
     }
   };
 
+  const handleCreateFolder = async () => {
+    const trimmed = (newFolderName || "").trim();
+    if (!trimmed) return;
+    try {
+      await createFolder(trimmed, newFolderColor);
+      setNewFolderName("");
+      setShowFolderModal(false);
+    } catch (err) {
+      console.warn("Failed to create folder:", err);
+    }
+  };
+
+  const handleImportBackup = async () => {
+    if (!importJsonText.trim()) return;
+    setImportLoading(true);
+    try {
+      const parsed = JSON.parse(importJsonText.trim());
+      const name = parsed.name || "Restored Playlist";
+      const tracks = parsed.tracks || [];
+      const description = parsed.description || "Restored from backup";
+      const coverUrl = parsed.cover_url || "";
+
+      const res = await createPlaylist(name, description, tracks, coverUrl);
+      if (res) {
+        setImportJsonText("");
+        setShowImportModal(false);
+        openPlaylist(res);
+      }
+    } catch (err) {
+      alert("Invalid JSON playlist backup. Please verify your file contents.");
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
   const handleDeletePlaylist = async (playlistId) => {
     try {
-      if (deletePlaylist) {
-        await deletePlaylist(playlistId);
-      }
+      if (deletePlaylist) await deletePlaylist(playlistId);
       setSelectedPlaylist(null);
     } catch (err) {
       console.warn("Failed to delete playlist:", err);
@@ -277,11 +498,7 @@ export default function LibraryScreen() {
         const updatedTracks = (prev.tracks || []).filter(
           (t) => (t.video_id || t.videoId) !== videoId
         );
-        return {
-          ...prev,
-          tracks: updatedTracks,
-          track_count: updatedTracks.length,
-        };
+        return { ...prev, tracks: updatedTracks, track_count: updatedTracks.length };
       });
     } catch (err) {
       console.warn("Failed to remove track:", err);
@@ -308,62 +525,28 @@ export default function LibraryScreen() {
     playTrack(shuffled[0], shuffled, 0);
   };
 
-  // Merged listening history removing duplicate plays and sorting by Latest
-  const mergedHistory = useMemo(() => {
-    const raw = rawHistory;
-    const map = new Map();
-
-    for (const item of raw) {
-      const id = item.video_id || item.videoId;
-      if (!id) continue;
-
-      if (!map.has(id)) {
-        map.set(id, {
-          ...item,
-          videoId: id,
-          video_id: id,
-          play_count: item.play_count || 1,
-          last_played: item.playedAt || item.played_at || item.timestamp || 0,
-        });
-      } else {
-        const existing = map.get(id);
-        existing.play_count = (existing.play_count || 1) + 1;
-        const itemTime = item.playedAt || item.played_at || item.timestamp;
-        if (itemTime && (!existing.last_played || itemTime > existing.last_played)) {
-          existing.last_played = itemTime;
-        }
-      }
-    }
-
-    const list = Array.from(map.values());
-    return list.sort((a, b) => {
-      const timeA = new Date(a.last_played || 0).getTime();
-      const timeB = new Date(b.last_played || 0).getTime();
-      return timeB - timeA;
-    });
-  }, [rawHistory]);
-
   return (
     <View style={styles.container}>
+      <StatusBar translucent backgroundColor="#000000" barStyle="light-content" />
+
       {/* Header Profile Row */}
       <View style={styles.header}>
         <View style={[styles.headerInner, (isDesktop || isTablet) && styles.desktopHeaderInner]}>
           <View style={styles.profileRow}>
             <Text style={styles.profileName}>Your Library</Text>
 
-            {/* Top Right Header Controls */}
             <View style={styles.headerRightGroup}>
+              {/* + Create Options Dropdown */}
               <TouchableOpacity
                 style={styles.headerAddBtn}
-                onPress={() => setShowCreateModal(true)}
+                onPress={() => setShowCreateMenu(true)}
                 activeOpacity={0.75}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityLabel="Create Playlist"
+                accessibilityLabel="Create"
               >
                 <Ionicons name="add" size={20} color="#FFFFFF" />
               </TouchableOpacity>
 
-              {/* User profile icon on right side */}
+              {/* User Avatar */}
               <TouchableOpacity
                 style={[
                   styles.avatarContainer,
@@ -371,7 +554,6 @@ export default function LibraryScreen() {
                 ]}
                 onPress={() => openProfile && openProfile()}
                 activeOpacity={0.75}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 {(() => {
                   const av = userProfile?.avatar;
@@ -403,275 +585,862 @@ export default function LibraryScreen() {
       </View>
 
       <View style={[styles.libraryInner, (isDesktop || isTablet) && styles.desktopLibraryInner]}>
-        {/* Spotify Pills */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsRow} style={styles.tabsRowContainer}>
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === "playlists" && styles.activeTabButton]}
-          onPress={() => setActiveTab("playlists")}
+        {/* Navigation Tabs Bar */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabsRow}
+          style={styles.tabsRowContainer}
         >
-          <Text style={[styles.tabText, activeTab === "playlists" && styles.activeTabText]}>
-            Playlists ({playlists.length})
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === "playlists" && styles.activeTabButton]}
+            onPress={() => {
+              setActiveTab("playlists");
+              setActiveFolder(null);
+            }}
+          >
+            <Text style={[styles.tabText, activeTab === "playlists" && styles.activeTabText]}>
+              Playlists ({rawPlaylists.length})
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === "favorites" && styles.activeTabButton]}
-          onPress={() => {
-            setActiveTab("favorites");
-            setSelectedPlaylist(null);
-          }}
-        >
-          <Text style={[styles.tabText, activeTab === "favorites" && styles.activeTabText]}>
-            Liked Songs ({favorites.length})
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === "favorites" && styles.activeTabButton]}
+            onPress={() => {
+              setActiveTab("favorites");
+              setActiveFolder(null);
+            }}
+          >
+            <Text style={[styles.tabText, activeTab === "favorites" && styles.activeTabText]}>
+              Liked Songs ({likedSongs?.length || 0})
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === "history" && styles.activeTabButton]}
-          onPress={() => {
-            setActiveTab("history");
-            setSelectedPlaylist(null);
-          }}
-        >
-          <Text style={[styles.tabText, activeTab === "history" && styles.activeTabText]}>
-            Recently Played
-          </Text>
-        </TouchableOpacity>
-      </ScrollView>
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === "albums" && styles.activeTabButton]}
+            onPress={() => {
+              setActiveTab("albums");
+              setActiveFolder(null);
+            }}
+          >
+            <Text style={[styles.tabText, activeTab === "albums" && styles.activeTabText]}>
+              Albums ({savedAlbums.length})
+            </Text>
+          </TouchableOpacity>
 
-      {/* Content */}
-      <View style={{ flex: 1, justifyContent: "flex-start" }}>
-      {tabLoading ? (
-        <LibrarySkeleton type={activeTab} />
-      ) : activeTab === "playlists" ? (
-        /* Playlists List View */
-        <FlatList
-          data={playlists}
-          keyExtractor={(item, index) => `${item.id || item.collabId || "pl"}_${index}`}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          renderItem={({ item }) => {
-            const playlistCover =
-              item.cover_url ||
-              item.preview_artwork ||
-              item.tracks?.[0]?.artwork_url ||
-              item.tracks?.[0]?.thumbnail ||
-              "";
-            const trackCount = Array.isArray(item.tracks) ? item.tracks.length : (item.track_count || 0);
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === "artists" && styles.activeTabButton]}
+            onPress={() => {
+              setActiveTab("artists");
+              setActiveFolder(null);
+            }}
+          >
+            <Text style={[styles.tabText, activeTab === "artists" && styles.activeTabText]}>
+              Artists ({followedArtists.length})
+            </Text>
+          </TouchableOpacity>
 
-            return (
-              <TouchableOpacity
-                style={styles.playlistCardRow}
-                onPress={() => openPlaylist(item)}
-                activeOpacity={0.7}
-              >
-                {playlistCover ? (
-                  <Image
-                    source={{ uri: getHighResArtwork(playlistCover) || playlistCover }}
-                    style={styles.playlistRowThumb}
-                  />
-                ) : (
-                  <View style={[styles.playlistRowThumb, styles.playlistRowThumbFallback]}>
-                    <Ionicons name="musical-notes" size={24} color={colors.primary} />
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === "history" && styles.activeTabButton]}
+            onPress={() => {
+              setActiveTab("history");
+              setActiveFolder(null);
+            }}
+          >
+            <Text style={[styles.tabText, activeTab === "history" && styles.activeTabText]}>
+              Recently Played
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === "recent_added" && styles.activeTabButton]}
+            onPress={() => {
+              setActiveTab("recent_added");
+              setActiveFolder(null);
+            }}
+          >
+            <Text style={[styles.tabText, activeTab === "recent_added" && styles.activeTabText]}>
+              Recently Added
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === "downloaded" && styles.activeTabButton]}
+            onPress={() => {
+              setActiveTab("downloaded");
+              setActiveFolder(null);
+            }}
+          >
+            <Text style={[styles.tabText, activeTab === "downloaded" && styles.activeTabText]}>
+              Downloaded ({downloadedTracks.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === "folders" && styles.activeTabButton]}
+            onPress={() => {
+              setActiveTab("folders");
+              setActiveFolder(null);
+            }}
+          >
+            <Text style={[styles.tabText, activeTab === "folders" && styles.activeTabText]}>
+              Folders ({playlistFolders.length})
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        {/* Search & Sort Toolbar */}
+        <View style={styles.toolbarRow}>
+          <View style={styles.searchBarWrap}>
+            <Ionicons name="search" size={15} color={colors.textMuted} style={styles.searchIcon} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder={`Search ${
+                activeTab === "favorites"
+                  ? "liked songs"
+                  : activeTab === "playlists"
+                  ? "playlists"
+                  : activeTab === "albums"
+                  ? "albums"
+                  : activeTab === "artists"
+                  ? "artists"
+                  : activeTab === "downloaded"
+                  ? "downloaded songs"
+                  : activeTab === "folders"
+                  ? "folders"
+                  : "library"
+              }...`}
+              placeholderTextColor="rgba(255, 255, 255, 0.4)"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              clearButtonMode="while-editing"
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery("")} style={styles.clearSearchBtn}>
+                <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <TouchableOpacity
+            style={styles.sortBtn}
+            onPress={() => setShowSortModal(true)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="swap-vertical" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+            <Text style={styles.sortBtnText}>
+              {sortBy === "recent_added"
+                ? "Recent"
+                : sortBy === "alpha_asc"
+                ? "A - Z"
+                : sortBy === "alpha_desc"
+                ? "Z - A"
+                : sortBy === "track_count"
+                ? "Tracks"
+                : "Sort"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Active Folder Breadcrumb */}
+        {activeFolder && (
+          <View style={styles.folderBreadcrumb}>
+            <TouchableOpacity
+              style={styles.breadcrumbBackBtn}
+              onPress={() => setActiveFolder(null)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="chevron-back" size={16} color={colors.primary} />
+              <Text style={styles.breadcrumbBackText}>All Playlists</Text>
+            </TouchableOpacity>
+            <Text style={styles.breadcrumbDivider}>/</Text>
+            <View style={[styles.breadcrumbBadge, { backgroundColor: activeFolder.color || "#1DB954" }]}>
+              <Ionicons name="folder" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
+              <Text style={styles.breadcrumbBadgeText}>{activeFolder.name}</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Tab Content */}
+        <View style={{ flex: 1, justifyContent: "flex-start" }}>
+          {tabLoading ? (
+            <LibrarySkeleton type={activeTab} />
+          ) : activeTab === "playlists" ? (
+            /* Playlists List */
+            <FlatList
+              data={playlists}
+              keyExtractor={(item, index) => `${item.id || item.collabId || "pl"}_${index}`}
+              contentContainerStyle={styles.listContent}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => {
+                const playlistCover =
+                  item.cover_url ||
+                  item.preview_artwork ||
+                  item.tracks?.[0]?.artwork_url ||
+                  item.tracks?.[0]?.thumbnail ||
+                  "";
+                const trackCount = Array.isArray(item.tracks) ? item.tracks.length : item.track_count || 0;
+
+                return (
+                  <TouchableOpacity
+                    style={styles.playlistCardRow}
+                    onPress={() => openPlaylist(item)}
+                    activeOpacity={0.7}
+                  >
+                    {playlistCover ? (
+                      <Image
+                        source={{ uri: getHighResArtwork(playlistCover) || playlistCover }}
+                        style={styles.playlistRowThumb}
+                      />
+                    ) : (
+                      <View style={[styles.playlistRowThumb, styles.playlistRowThumbFallback]}>
+                        <Ionicons name="musical-notes" size={24} color={colors.primary} />
+                      </View>
+                    )}
+                    <View style={styles.playlistRowInfo}>
+                      <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+                        <Text style={styles.playlistRowTitle} numberOfLines={1}>
+                          {item.name}
+                        </Text>
+                        {item.isBlend ||
+                        item.type === "blend" ||
+                        String(item.name || "").startsWith("Blend:") ? (
+                          <View style={[styles.collabBadgePill, { borderColor: "rgba(139, 92, 246, 0.4)", backgroundColor: "rgba(139, 92, 246, 0.12)" }]}>
+                            <Ionicons name="flash" size={10} color="#8B5CF6" style={{ marginRight: 3 }} />
+                            <Text style={[styles.collabBadgeText, { color: "#8B5CF6" }]}>Blend</Text>
+                          </View>
+                        ) : item.isCollab ? (
+                          <View style={styles.collabBadgePill}>
+                            <Ionicons name="people" size={10} color="#1DB954" style={{ marginRight: 3 }} />
+                            <Text style={styles.collabBadgeText}>Collab</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <Text style={styles.playlistRowCount}>
+                        {trackCount} {trackCount === 1 ? "track" : "tracks"}
+                        {item.description ? ` • ${item.description}` : ""}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="folder-open-outline" size={44} color={colors.textMuted} />
+                  <Text style={styles.emptyText}>No playlists found</Text>
+                  <Text style={styles.emptySub}>
+                    {searchQuery ? "Try a different search query" : "Tap '+' at the top right to create your first playlist!"}
+                  </Text>
+                </View>
+              }
+              ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
+            />
+          ) : activeTab === "favorites" ? (
+            /* Liked Songs List */
+            <FlatList
+              data={favorites}
+              keyExtractor={(item, index) => `${item.video_id || item.videoId}_${index}`}
+              contentContainerStyle={styles.listContent}
+              showsVerticalScrollIndicator={false}
+              ListHeaderComponent={
+                <View style={styles.playlistsListHeader}>
+                  <View>
+                    <Text style={[styles.sectionHeader, { marginBottom: 2 }]}>Liked Songs</Text>
+                    <Text style={styles.sectionSubHeader}>
+                      {favorites.length} {favorites.length === 1 ? "song" : "songs"}
+                    </Text>
                   </View>
-                )}
-                <View style={styles.playlistRowInfo}>
-                  <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+                  {favorites.length > 0 && (
+                    <View style={styles.headerButtonsRow}>
+                      <TouchableOpacity
+                        style={styles.playAllSmallBtn}
+                        onPress={() => handlePlayWholePlaylist(favorites, 0)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="play" size={16} color="#000000" style={{ marginRight: 4 }} />
+                        <Text style={styles.playAllSmallBtnText}>Play All</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.shuffleSmallBtn}
+                        onPress={() => handleShufflePlaylist(favorites)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="shuffle" size={18} color="#FFFFFF" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              }
+              renderItem={({ item, index }) => (
+                <SongCard
+                  track={{ ...item, videoId: item.video_id || item.videoId }}
+                  layout="row"
+                  showRank={false}
+                  showDuration={false}
+                  style={{ paddingHorizontal: 0 }}
+                  isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
+                  onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                  onPress={() =>
+                    playTrack(
+                      { ...item, videoId: item.video_id || item.videoId },
+                      favorites.map((f) => ({ ...f, videoId: f.video_id || f.videoId })),
+                      index
+                    )
+                  }
+                />
+              )}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="heart-outline" size={44} color={colors.textMuted} />
+                  <Text style={styles.emptyText}>No liked songs found</Text>
+                  <Text style={styles.emptySub}>
+                    Tap the heart icon on any song to save it to your library!
+                  </Text>
+                </View>
+              }
+              ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
+            />
+          ) : activeTab === "albums" ? (
+            /* Saved Albums List */
+            <FlatList
+              data={albums}
+              keyExtractor={(item, index) => `${item.id || item.album_id}_${index}`}
+              contentContainerStyle={styles.listContent}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => {
+                const cover = item.image || item.artwork_url || "";
+                return (
+                  <TouchableOpacity
+                    style={styles.playlistCardRow}
+                    onPress={() => setSelectedAlbumForModal(item)}
+                    activeOpacity={0.7}
+                  >
+                    {cover ? (
+                      <Image source={{ uri: getHighResArtwork(cover) || cover }} style={styles.playlistRowThumb} />
+                    ) : (
+                      <View style={[styles.playlistRowThumb, styles.playlistRowThumbFallback]}>
+                        <Ionicons name="disc" size={24} color={colors.primary} />
+                      </View>
+                    )}
+                    <View style={styles.playlistRowInfo}>
+                      <Text style={styles.playlistRowTitle} numberOfLines={1}>
+                        {item.title || item.name}
+                      </Text>
+                      <Text style={styles.playlistRowCount} numberOfLines={1}>
+                        {item.artist || "Various Artists"}{item.year ? ` • ${item.year}` : ""}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="disc-outline" size={44} color={colors.textMuted} />
+                  <Text style={styles.emptyText}>No saved albums</Text>
+                  <Text style={styles.emptySub}>
+                    Explore search or artist profiles and save albums to your library!
+                  </Text>
+                </View>
+              }
+              ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
+            />
+          ) : activeTab === "artists" ? (
+            /* Followed Artists List */
+            <FlatList
+              data={followedArtists}
+              keyExtractor={(item, index) => `${item.name}_${index}`}
+              contentContainerStyle={styles.listContent}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.playlistCardRow}
+                  onPress={() => setSelectedArtistForModal(item.name)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.playlistRowThumb, { borderRadius: 24, backgroundColor: colors.surface }]}>
+                    <Ionicons name="person" size={22} color={colors.primary} />
+                  </View>
+                  <View style={styles.playlistRowInfo}>
                     <Text style={styles.playlistRowTitle} numberOfLines={1}>
                       {item.name}
                     </Text>
-                    {item.isBlend || item.type === "blend" || String(item.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(item.name || "")) ? (
-                      <View style={[styles.collabBadgePill, { borderColor: "rgba(139, 92, 246, 0.4)", backgroundColor: "rgba(139, 92, 246, 0.12)" }]}>
-                        <Ionicons name="flash" size={10} color="#8B5CF6" style={{ marginRight: 3 }} />
-                        <Text style={[styles.collabBadgeText, { color: "#8B5CF6" }]}>Blend</Text>
-                      </View>
-                    ) : item.isCollab ? (
-                      <View style={styles.collabBadgePill}>
-                        <Ionicons name="people" size={10} color="#1DB954" style={{ marginRight: 3 }} />
-                        <Text style={styles.collabBadgeText}>Collab</Text>
-                      </View>
-                    ) : null}
+                    <Text style={styles.playlistRowCount}>Artist</Text>
                   </View>
-                  <Text style={styles.playlistRowCount}>
-                    {trackCount} {trackCount === 1 ? "track" : "tracks"}
-                    {item.isBlend || item.type === "blend" || String(item.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(item.name || ""))
-                      ? (() => {
-                          const matchPct = item.matchPercentage || (item.description || "").match(/(\d+)%/)?.[1];
-                          return matchPct ? ` • ${matchPct}% Match` : "";
-                        })()
-                      : (item.description ? ` • ${item.description}` : "")}
+                  <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="people-outline" size={44} color={colors.textMuted} />
+                  <Text style={styles.emptyText}>No followed artists</Text>
+                  <Text style={styles.emptySub}>
+                    Follow your favorite artists to stay tuned with their latest releases.
                   </Text>
                 </View>
-                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-              </TouchableOpacity>
-            );
-          }}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Ionicons name="folder-open-outline" size={44} color={colors.textMuted} />
-              <Text style={styles.emptyText}>No playlists created yet</Text>
-              <Text style={styles.emptySub}>
-                Create custom playlists to group and save your favorite tracks!
-              </Text>
-            </View>
-          }
-          ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
-        />
-      ) : activeTab === "history" ? (
-        <FlatList
-          data={mergedHistory}
-          keyExtractor={(item, index) => `${item.video_id || item.videoId}_${index}`}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          ListHeaderComponent={
-            <View style={styles.playlistsListHeader}>
-              <View>
-                <Text style={[styles.sectionHeader, { marginBottom: 2 }]}>Recently Played</Text>
-                <Text style={styles.sectionSubHeader}>
-                  {mergedHistory.length} {mergedHistory.length === 1 ? "track" : "tracks"}
-                </Text>
-              </View>
-              {mergedHistory.length > 0 && (
-                <View style={styles.headerButtonsRow}>
-                  <TouchableOpacity
-                    style={styles.playAllSmallBtn}
-                    onPress={() =>
-                      handlePlayWholePlaylist(
-                        mergedHistory.map((h) => ({ ...h, videoId: h.video_id || h.videoId })),
-                        0
-                      )
-                    }
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="play" size={16} color="#000000" style={{ marginRight: 4 }} />
-                    <Text style={styles.playAllSmallBtnText}>Play All</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.shuffleSmallBtn}
-                    onPress={() =>
-                      handleShufflePlaylist(
-                        mergedHistory.map((h) => ({ ...h, videoId: h.video_id || h.videoId }))
-                      )
-                    }
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="shuffle" size={18} color="#FFFFFF" />
-                  </TouchableOpacity>
+              }
+              ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
+            />
+          ) : activeTab === "history" ? (
+            /* Listening History List */
+            <FlatList
+              data={mergedHistory}
+              keyExtractor={(item, index) => `${item.video_id || item.videoId}_${index}`}
+              contentContainerStyle={styles.listContent}
+              showsVerticalScrollIndicator={false}
+              ListHeaderComponent={
+                <View style={styles.playlistsListHeader}>
+                  <View>
+                    <Text style={[styles.sectionHeader, { marginBottom: 2 }]}>Recently Played</Text>
+                    <Text style={styles.sectionSubHeader}>
+                      {mergedHistory.length} {mergedHistory.length === 1 ? "track" : "tracks"}
+                    </Text>
+                  </View>
+                  {mergedHistory.length > 0 && (
+                    <View style={styles.headerButtonsRow}>
+                      <TouchableOpacity
+                        style={styles.playAllSmallBtn}
+                        onPress={() =>
+                          handlePlayWholePlaylist(
+                            mergedHistory.map((h) => ({ ...h, videoId: h.video_id || h.videoId })),
+                            0
+                          )
+                        }
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="play" size={16} color="#000000" style={{ marginRight: 4 }} />
+                        <Text style={styles.playAllSmallBtnText}>Play All</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.shuffleSmallBtn}
+                        onPress={() =>
+                          handleShufflePlaylist(
+                            mergedHistory.map((h) => ({ ...h, videoId: h.video_id || h.videoId }))
+                          )
+                        }
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="shuffle" size={18} color="#FFFFFF" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
+              }
+              renderItem={({ item, index }) => (
+                <SongCard
+                  track={{
+                    ...item,
+                    videoId: item.video_id || item.videoId,
+                  }}
+                  layout="row"
+                  showRank={false}
+                  showPlayButton={false}
+                  showDuration={false}
+                  style={{ paddingHorizontal: 0 }}
+                  isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
+                  onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                  onRemove={() => removeFromHistory(item)}
+                  onPress={() =>
+                    playTrack(
+                      { ...item, videoId: item.video_id || item.videoId },
+                      mergedHistory.map((h) => ({ ...h, videoId: h.video_id || h.videoId })),
+                      index
+                    )
+                  }
+                />
               )}
-            </View>
-          }
-          renderItem={({ item, index }) => (
-            <SongCard
-              track={{
-                ...item,
-                videoId: item.video_id || item.videoId,
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="time-outline" size={44} color={colors.textMuted} />
+                  <Text style={styles.emptyText}>No listening history</Text>
+                  <Text style={styles.emptySub}>
+                    Tracks you play will appear here and shape your daily feed.
+                  </Text>
+                </View>
+              }
+              ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
+            />
+          ) : activeTab === "recent_added" ? (
+            /* Recently Added List */
+            <FlatList
+              data={recentlyAddedTracks}
+              keyExtractor={(item, index) => `${item.video_id || item.videoId}_${index}`}
+              contentContainerStyle={styles.listContent}
+              showsVerticalScrollIndicator={false}
+              ListHeaderComponent={
+                <View style={styles.playlistsListHeader}>
+                  <View>
+                    <Text style={[styles.sectionHeader, { marginBottom: 2 }]}>Recently Added</Text>
+                    <Text style={styles.sectionSubHeader}>
+                      {recentlyAddedTracks.length} {recentlyAddedTracks.length === 1 ? "track" : "tracks"}
+                    </Text>
+                  </View>
+                  {recentlyAddedTracks.length > 0 && (
+                    <View style={styles.headerButtonsRow}>
+                      <TouchableOpacity
+                        style={styles.playAllSmallBtn}
+                        onPress={() => handlePlayWholePlaylist(recentlyAddedTracks, 0)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="play" size={16} color="#000000" style={{ marginRight: 4 }} />
+                        <Text style={styles.playAllSmallBtnText}>Play All</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              }
+              renderItem={({ item, index }) => (
+                <SongCard
+                  track={{ ...item, videoId: item.video_id || item.videoId }}
+                  layout="row"
+                  showRank={false}
+                  showDuration={false}
+                  style={{ paddingHorizontal: 0 }}
+                  isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
+                  onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                  onPress={() =>
+                    playTrack(
+                      { ...item, videoId: item.video_id || item.videoId },
+                      recentlyAddedTracks.map((r) => ({ ...r, videoId: r.video_id || r.videoId })),
+                      index
+                    )
+                  }
+                />
+              )}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="calendar-outline" size={44} color={colors.textMuted} />
+                  <Text style={styles.emptyText}>No recently added tracks</Text>
+                </View>
+              }
+              ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
+            />
+          ) : activeTab === "downloaded" ? (
+            /* Downloaded Offline Songs List */
+            <FlatList
+              data={filteredDownloaded}
+              keyExtractor={(item, index) => `${item.videoId || item.video_id}_${index}`}
+              contentContainerStyle={styles.listContent}
+              showsVerticalScrollIndicator={false}
+              ListHeaderComponent={
+                <View style={styles.downloadedHeaderCard}>
+                  <View style={styles.downloadedMetaRow}>
+                    <View>
+                      <Text style={styles.downloadedTitle}>Offline Downloads</Text>
+                      <Text style={styles.downloadedSubtitle}>
+                        {downloadedTracks.length} tracks • {getOfflineStorageFormatted()} storage used
+                      </Text>
+                    </View>
+                    {downloadedTracks.length > 0 && (
+                      <TouchableOpacity
+                        style={styles.clearDownloadsBtn}
+                        onPress={() => clearAllDownloads()}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="trash-outline" size={16} color={colors.error} style={{ marginRight: 4 }} />
+                        <Text style={styles.clearDownloadsText}>Clear All</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  {downloadedTracks.length > 0 && (
+                    <View style={[styles.headerButtonsRow, { marginTop: 12 }]}>
+                      <TouchableOpacity
+                        style={styles.playAllSmallBtn}
+                        onPress={() => handlePlayWholePlaylist(downloadedTracks, 0)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="play" size={16} color="#000000" style={{ marginRight: 4 }} />
+                        <Text style={styles.playAllSmallBtnText}>Play All Offline</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.shuffleSmallBtn}
+                        onPress={() => handleShufflePlaylist(downloadedTracks)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="shuffle" size={18} color="#FFFFFF" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              }
+              renderItem={({ item, index }) => (
+                <SongCard
+                  track={{ ...item, videoId: item.videoId || item.video_id }}
+                  layout="row"
+                  showRank={false}
+                  showDuration={false}
+                  style={{ paddingHorizontal: 0 }}
+                  isActive={currentTrack?.videoId === (item.videoId || item.video_id)}
+                  onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                  onPress={() =>
+                    playTrack(
+                      { ...item, videoId: item.videoId || item.video_id },
+                      downloadedTracks.map((d) => ({ ...d, videoId: d.videoId || d.video_id })),
+                      index
+                    )
+                  }
+                />
+              )}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="cloud-offline-outline" size={44} color={colors.textMuted} />
+                  <Text style={styles.emptyText}>No downloaded songs</Text>
+                  <Text style={styles.emptySub}>
+                    Download any song or album to listen offline without internet connectivity!
+                  </Text>
+                </View>
+              }
+              ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
+            />
+          ) : (
+            /* Folders List */
+            <FlatList
+              data={folders}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.listContent}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => {
+                const count = item.playlistIds?.length || 0;
+                return (
+                  <TouchableOpacity
+                    style={styles.playlistCardRow}
+                    onPress={() => {
+                      setActiveFolder(item);
+                      setActiveTab("playlists");
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.playlistRowThumb,
+                        { backgroundColor: item.color || "#1DB954", alignItems: "center", justifyContent: "center" },
+                      ]}
+                    >
+                      <Ionicons name="folder" size={24} color="#FFFFFF" />
+                    </View>
+                    <View style={styles.playlistRowInfo}>
+                      <Text style={styles.playlistRowTitle} numberOfLines={1}>
+                        {item.name}
+                      </Text>
+                      <Text style={styles.playlistRowCount}>
+                        {count} {count === 1 ? "playlist" : "playlists"}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.folderDeleteBtn}
+                      onPress={() => deleteFolder(item.id)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                );
               }}
-              layout="row"
-              showRank={false}
-              showPlayButton={false}
-              showDuration={false}
-              style={{ paddingHorizontal: 0 }}
-              isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
-              onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
-              onRemove={() => removeFromHistory(item)}
-              onPress={() =>
-                playTrack(
-                  { ...item, videoId: item.video_id || item.videoId },
-                  mergedHistory.map((h) => ({ ...h, videoId: h.video_id || h.videoId })),
-                  index
-                )
-              }
-            />
-          )}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Ionicons name="time-outline" size={44} color={colors.textMuted} />
-              <Text style={styles.emptyText}>No listening history yet</Text>
-              <Text style={styles.emptySub}>
-                Tracks you play will appear here and shape your daily recommendations.
-              </Text>
-            </View>
-          }
-          ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
-        />
-      ) : (
-        <FlatList
-          data={favorites}
-          keyExtractor={(item, index) => `${item.video_id}_${index}`}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          ListHeaderComponent={
-            <View style={styles.playlistsListHeader}>
-              <View>
-                <Text style={[styles.sectionHeader, { marginBottom: 2 }]}>Liked Songs</Text>
-                <Text style={styles.sectionSubHeader}>
-                  {favorites.length} {favorites.length === 1 ? "song" : "songs"}
-                </Text>
-              </View>
-              {favorites.length > 0 && (
-                <View style={styles.headerButtonsRow}>
-                  <TouchableOpacity
-                    style={styles.playAllSmallBtn}
-                    onPress={() => handlePlayWholePlaylist(favorites, 0)}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="play" size={16} color="#000000" style={{ marginRight: 4 }} />
-                    <Text style={styles.playAllSmallBtnText}>Play All</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.shuffleSmallBtn}
-                    onPress={() => handleShufflePlaylist(favorites)}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="shuffle" size={18} color="#FFFFFF" />
-                  </TouchableOpacity>
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="folder-outline" size={44} color={colors.textMuted} />
+                  <Text style={styles.emptyText}>No folders created yet</Text>
+                  <Text style={styles.emptySub}>
+                    Create folders to organize your playlists into custom groups.
+                  </Text>
                 </View>
-              )}
-            </View>
-          }
-          renderItem={({ item, index }) => (
-            <SongCard
-              track={{ ...item, videoId: item.video_id }}
-              layout="row"
-              showRank={false}
-              showDuration={false}
-              style={{ paddingHorizontal: 0 }}
-              isActive={currentTrack?.videoId === item.video_id}
-              onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
-              onPress={() =>
-                playTrack(
-                  { ...item, videoId: item.video_id },
-                  favorites.map((f) => ({ ...f, videoId: f.video_id })),
-                  index
-                )
               }
+              ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
             />
           )}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Ionicons name="heart-outline" size={44} color={colors.textMuted} />
-              <Text style={styles.emptyText}>No liked songs yet</Text>
-              <Text style={styles.emptySub}>
-                Tap the heart icon on any song to save it to your liked songs.
-              </Text>
-            </View>
-          }
-          ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
-        />
-      )}
-      </View>
+        </View>
       </View>
 
-      {/* Spotify-style Centered Full-Screen Create Playlist Modal */}
+      {/* Header + Dropdown Modal */}
+      <Modal visible={showCreateMenu} transparent={true} animationType="fade" onRequestClose={() => setShowCreateMenu(false)}>
+        <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setShowCreateMenu(false)}>
+          <View style={[styles.createMenuCard, (isDesktop || isTablet) && styles.desktopCreateMenuCard]}>
+            <Text style={styles.createMenuTitle}>Create / Add</Text>
+            <View style={styles.menuDivider} />
+
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => {
+                setShowCreateMenu(false);
+                setShowCreateModal(true);
+              }}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="musical-notes-outline" size={20} color={colors.primary} style={styles.menuRowIcon} />
+              <View>
+                <Text style={styles.menuRowTitle}>New Playlist</Text>
+                <Text style={styles.menuRowSub}>Create a custom playlist</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => {
+                setShowCreateMenu(false);
+                setShowFolderModal(true);
+              }}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="folder-outline" size={20} color="#3B82F6" style={styles.menuRowIcon} />
+              <View>
+                <Text style={styles.menuRowTitle}>New Folder</Text>
+                <Text style={styles.menuRowSub}>Group playlists together</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => {
+                setShowCreateMenu(false);
+                setShowImportModal(true);
+              }}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="cloud-upload-outline" size={20} color="#EAB308" style={styles.menuRowIcon} />
+              <View>
+                <Text style={styles.menuRowTitle}>Import / Restore Backup</Text>
+                <Text style={styles.menuRowSub}>Restore playlist from .json</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Create Folder Modal */}
+      <Modal visible={showFolderModal} transparent={true} animationType="fade" onRequestClose={() => setShowFolderModal(false)}>
+        <View style={styles.menuOverlay}>
+          <View style={styles.folderModalCard}>
+            <Text style={styles.folderModalTitle}>New Playlist Folder</Text>
+            <TextInput
+              style={styles.folderInput}
+              placeholder="Folder name"
+              placeholderTextColor="rgba(255, 255, 255, 0.4)"
+              value={newFolderName}
+              onChangeText={setNewFolderName}
+              autoFocus={true}
+            />
+
+            <Text style={styles.colorLabel}>Select Color:</Text>
+            <View style={styles.colorPickerRow}>
+              {FOLDER_COLORS.map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  style={[
+                    styles.colorCircle,
+                    { backgroundColor: c },
+                    newFolderColor === c && styles.selectedColorCircle,
+                  ]}
+                  onPress={() => setNewFolderColor(c)}
+                  activeOpacity={0.8}
+                />
+              ))}
+            </View>
+
+            <View style={styles.folderModalButtons}>
+              <TouchableOpacity
+                style={styles.folderCancelBtn}
+                onPress={() => setShowFolderModal(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.folderCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.folderCreateBtn, !newFolderName.trim() && { opacity: 0.5 }]}
+                onPress={handleCreateFolder}
+                disabled={!newFolderName.trim()}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.folderCreateText}>Create</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Sort Options Modal */}
+      <Modal visible={showSortModal} transparent={true} animationType="fade" onRequestClose={() => setShowSortModal(false)}>
+        <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setShowSortModal(false)}>
+          <View style={styles.sortModalCard}>
+            <Text style={styles.sortModalTitle}>Sort By</Text>
+            <View style={styles.menuDivider} />
+
+            {[
+              { id: "recent_added", label: "Recently Added" },
+              { id: "alpha_asc", label: "Alphabetical (A - Z)" },
+              { id: "alpha_desc", label: "Alphabetical (Z - A)" },
+              { id: "track_count", label: "Track Count" },
+            ].map((opt) => (
+              <TouchableOpacity
+                key={opt.id}
+                style={styles.sortRow}
+                onPress={() => {
+                  setSortBy(opt.id);
+                  setShowSortModal(false);
+                }}
+                activeOpacity={0.75}
+              >
+                <Text style={[styles.sortRowText, sortBy === opt.id && { color: colors.primary, fontFamily: fonts.bold }]}>
+                  {opt.label}
+                </Text>
+                {sortBy === opt.id && <Ionicons name="checkmark" size={18} color={colors.primary} />}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Import / Restore Playlist Backup Modal */}
+      <Modal visible={showImportModal} transparent={true} animationType="fade" onRequestClose={() => setShowImportModal(false)}>
+        <View style={styles.menuOverlay}>
+          <View style={styles.importModalCard}>
+            <Text style={styles.folderModalTitle}>Restore Playlist Backup</Text>
+            <Text style={styles.importModalSub}>
+              Paste your exported Staytup playlist JSON backup below to restore all tracks:
+            </Text>
+            <TextInput
+              style={styles.importJsonInput}
+              placeholder='Paste JSON here: {"name": "My Playlist", "tracks": [...]}'
+              placeholderTextColor="rgba(255, 255, 255, 0.3)"
+              multiline={true}
+              numberOfLines={6}
+              value={importJsonText}
+              onChangeText={setImportJsonText}
+            />
+
+            <View style={styles.folderModalButtons}>
+              <TouchableOpacity
+                style={styles.folderCancelBtn}
+                onPress={() => setShowImportModal(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.folderCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.folderCreateBtn, (!importJsonText.trim() || importLoading) && { opacity: 0.5 }]}
+                onPress={handleImportBackup}
+                disabled={!importJsonText.trim() || importLoading}
+                activeOpacity={0.8}
+              >
+                {importLoading ? (
+                  <ActivityIndicator size="small" color="#000000" />
+                ) : (
+                  <Text style={styles.folderCreateText}>Restore</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modals */}
       <CreatePlaylistModal
         visible={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         onSubmit={handleCreatePlaylist}
-        existingPlaylists={playlists}
+        existingPlaylists={rawPlaylists}
       />
 
-      {/* Add To Playlist Modal */}
       <AddToPlaylistModal
         visible={!!addToPlaylistTrack}
         onClose={() => setAddToPlaylistTrack(null)}
@@ -679,38 +1448,33 @@ export default function LibraryScreen() {
         onSuccess={() => {}}
       />
 
-      {/* Artist Profile & Discography Modal */}
       <ArtistModal
         visible={!!selectedArtistForModal}
         onClose={() => setSelectedArtistForModal(null)}
         artistName={selectedArtistForModal}
       />
 
-      {/* Separate Fullscreen Playlist Preview Modal */}
+      <AlbumModal
+        visible={!!selectedAlbumForModal}
+        onClose={() => setSelectedAlbumForModal(null)}
+        album={selectedAlbumForModal}
+      />
+
       <PlaylistModal
         visible={!!selectedPlaylist}
         playlist={selectedPlaylist}
         onClose={() => setSelectedPlaylist(null)}
-        onDeletePlaylist={(playlistId) => {
-          handleDeletePlaylist(playlistId);
-        }}
-        onTrackRemoved={(playlistId, videoId) => {
-          handleRemoveTrack(playlistId, videoId);
-        }}
+        onDeletePlaylist={(playlistId) => handleDeletePlaylist(playlistId)}
+        onTrackRemoved={(playlistId, videoId) => handleRemoveTrack(playlistId, videoId)}
         onPlaylistUpdated={(updated) => {
           if (!updated) return;
           const uId = updated.id || updated.collabId;
-          const matches = (p) => p.id === uId || p.collabId === uId || (updated.id && p.id === updated.id) || (updated.collabId && p.collabId === updated.collabId);
-
+          const matches = (p) => p.id === uId || p.collabId === uId;
           if (setPlaylists) {
-            setPlaylists((prev) =>
-              (prev || []).map((p) => (matches(p) ? { ...p, ...updated } : p))
-            );
+            setPlaylists((prev) => (prev || []).map((p) => (matches(p) ? { ...p, ...updated } : p)));
           }
           if (setCollabPlaylists) {
-            setCollabPlaylists((prev) =>
-              (prev || []).map((p) => (matches(p) ? { ...p, ...updated } : p))
-            );
+            setCollabPlaylists((prev) => (prev || []).map((p) => (matches(p) ? { ...p, ...updated } : p)));
           }
           setSelectedPlaylist((prev) => (prev && matches(prev) ? { ...prev, ...updated } : prev));
         }}
@@ -728,16 +1492,11 @@ const styles = StyleSheet.create({
   libraryInner: {
     flex: 1,
     width: "100%",
-    userSelect: "none",
-  },
-  tabsRowContainer: {
-    flexGrow: 0,
-    flexShrink: 0,
-    height: 50,
-    maxHeight: 50,
   },
   desktopLibraryInner: {
+    maxWidth: 960,
     width: "100%",
+    alignSelf: "center",
     paddingHorizontal: 16,
   },
   header: {
@@ -750,8 +1509,9 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   desktopHeaderInner: {
+    maxWidth: 960,
     width: "100%",
-    paddingHorizontal: 16,
+    alignSelf: "center",
   },
   profileRow: {
     height: 38,
@@ -800,251 +1560,233 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     letterSpacing: -0.4,
   },
-  statsRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  statNumber: {
-    fontFamily: fonts.bold,
-    fontSize: 16,
-    color: colors.text,
-  },
-  statLabel: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: colors.textSecondary,
-    marginTop: 2,
+  tabsRowContainer: {
+    flexGrow: 0,
+    flexShrink: 0,
+    height: 48,
   },
   tabsRow: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
     alignItems: "center",
     gap: 8,
   },
   tabButton: {
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 16,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 18,
     backgroundColor: "rgba(255, 255, 255, 0.08)",
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.06)",
-    flexShrink: 0,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   activeTabButton: {
     backgroundColor: colors.primary,
     borderColor: colors.primary,
   },
   tabText: {
-    fontFamily: fonts.medium,
+    fontFamily: fonts.semiBold,
     fontSize: 13,
-    color: "#FFFFFF",
+    color: colors.textSecondary,
   },
   activeTabText: {
-    fontFamily: fonts.bold,
     color: "#000000",
+    fontFamily: fonts.bold,
+  },
+  toolbarRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    marginVertical: 10,
+    gap: 10,
+  },
+  searchBarWrap: {
+    flex: 1,
+    height: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    height: "100%",
+    color: "#FFFFFF",
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    outlineStyle: "none",
+  },
+  clearSearchBtn: {
+    padding: 4,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  sortBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 38,
+    paddingHorizontal: 12,
+    borderRadius: 19,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  sortBtnText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: "#FFFFFF",
+  },
+  folderBreadcrumb: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    marginBottom: 8,
+    gap: 6,
+  },
+  breadcrumbBackBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  breadcrumbBackText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: colors.primary,
+  },
+  breadcrumbDivider: {
+    color: colors.textMuted,
+    fontSize: 14,
+  },
+  breadcrumbBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  breadcrumbBadgeText: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    color: "#FFFFFF",
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingTop: 6,
   },
-  topArtistsSection: {
-    marginBottom: 14,
-  },
-  topArtistsHeaderRow: {
+  playlistCardRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "baseline",
-    marginBottom: 12,
-  },
-  topArtistsTitle: {
-    fontFamily: fonts.bold,
-    fontSize: 18,
-    color: colors.text,
-  },
-  topArtistsSub: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: colors.textSecondary,
-  },
-  sectionHeader: {
-    fontFamily: fonts.bold,
-    fontSize: 16,
-    color: colors.text,
-    marginBottom: 10,
-  },
-  artistCardsScroll: {
-    paddingVertical: 2,
-    gap: 12,
-  },
-  artistCard: {
-    width: 114,
     alignItems: "center",
-    backgroundColor: "#181818",
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.06)",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.04)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  artistAvatarWrap: {
-    position: "relative",
-    width: 72,
-    height: 72,
-    marginBottom: 10,
+  playlistRowThumb: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
   },
-  artistAvatarImage: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: "#282828",
-  },
-  artistAvatarFallback: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+  playlistRowThumbFallback: {
     alignItems: "center",
     justifyContent: "center",
   },
-  artistInitialText: {
-    fontFamily: fonts.bold,
-    fontSize: 26,
-    color: "#FFFFFF",
+  playlistRowInfo: {
+    flex: 1,
+    marginLeft: 14,
   },
-  artistRankBadge: {
-    position: "absolute",
-    bottom: -2,
-    right: -2,
-    borderRadius: 10,
+  playlistRowTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 15,
+    color: "#FFFFFF",
+    marginBottom: 3,
+  },
+  playlistRowCount: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.textMuted,
+  },
+  collabBadgePill: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderWidth: 2,
-    borderColor: "#181818",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.35)",
+    backgroundColor: "rgba(29, 185, 84, 0.12)",
+    marginLeft: 8,
   },
-  rankGold: {
-    backgroundColor: "#F59B23",
-  },
-  rankSilver: {
-    backgroundColor: "#2EBDD7",
-  },
-  rankBronze: {
-    backgroundColor: colors.primary,
-  },
-  artistRankText: {
+  collabBadgeText: {
     fontFamily: fonts.bold,
     fontSize: 10,
-    color: "#000000",
+    color: colors.primary,
   },
-  artistCardName: {
-    fontFamily: fonts.semiBold,
-    fontSize: 13,
-    color: "#FFFFFF",
-    textAlign: "center",
-    width: "100%",
-    marginTop: 4,
+  folderDeleteBtn: {
+    padding: 8,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  artistCardSub: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: "#FFFFFF",
-    marginTop: 2,
-    textAlign: "center",
+  downloadedHeaderCard: {
+    backgroundColor: "rgba(29, 185, 84, 0.08)",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.2)",
   },
-  artistName: {
-    fontFamily: fonts.semiBold,
-    fontSize: 13,
-    color: "#FFFFFF",
-    textAlign: "center",
-    width: "100%",
-    marginTop: 4,
-  },
-  artistPlays: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: "#FFFFFF",
-    marginTop: 2,
-    textAlign: "center",
-  },
-  historySectionHeaderRow: {
+  downloadedMetaRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 18,
-    marginBottom: 10,
-    paddingHorizontal: 2,
   },
-  historyFilterGroup: {
-    flexDirection: "row",
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderRadius: 16,
-    padding: 3,
-    gap: 4,
+  downloadedTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: "#FFFFFF",
   },
-  historyFilterPill: {
+  downloadedSubtitle: {
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  clearDownloadsBtn: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 12,
+    backgroundColor: "rgba(235, 67, 53, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(235, 67, 53, 0.25)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  historyFilterPillActive: {
-    backgroundColor: colors.primary,
-  },
-  historyFilterText: {
+  clearDownloadsText: {
     fontFamily: fonts.semiBold,
     fontSize: 11,
-    color: colors.textSecondary,
+    color: colors.error,
   },
-  historyFilterTextActive: {
-    color: "#000000",
-    fontFamily: fonts.bold,
-  },
-  centerContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  emptyContainer: {
-    paddingVertical: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  emptyText: {
-    fontFamily: fonts.bold,
-    fontSize: 15,
-    color: colors.text,
-    marginTop: 10,
-  },
-  emptySub: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: colors.textSecondary,
-    textAlign: "center",
-    marginTop: 4,
-    paddingHorizontal: 32,
-  },
-
-  // Playlists UI Styles
   playlistsListHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 16,
-    paddingHorizontal: 0,
+    marginBottom: 14,
+    paddingTop: 4,
+  },
+  sectionHeader: {
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: "#FFFFFF",
   },
   sectionSubHeader: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 2,
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: colors.textMuted,
   },
   headerButtonsRow: {
     flexDirection: "row",
@@ -1057,12 +1799,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     paddingHorizontal: 14,
     paddingVertical: 7,
-    borderRadius: 20,
+    borderRadius: 18,
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   playAllSmallBtnText: {
     fontFamily: fonts.bold,
-    fontSize: 12,
+    fontSize: 13,
     color: "#000000",
   },
   shuffleSmallBtn: {
@@ -1074,374 +1816,282 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  importYtBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(255, 68, 68, 0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 68, 68, 0.35)",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 20,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  importYtBtnText: {
-    fontFamily: fonts.bold,
-    fontSize: 12,
-    color: "#FFFFFF",
-  },
-  createPlBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.primary,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
-    gap: 4,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  createPlBtnText: {
-    fontFamily: fonts.bold,
-    fontSize: 12,
-    color: "#000000",
-  },
-  collabBadgePill: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(29, 185, 84, 0.15)",
-    borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.3)",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
-    marginLeft: 8,
-  },
-  collabBadgeText: {
-    fontFamily: fonts.bold,
-    fontSize: 10,
-    color: "#1DB954",
-  },
-  playlistCardRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "transparent",
-    paddingVertical: 10,
-    paddingHorizontal: 0,
-    borderRadius: 0,
-    marginBottom: 0,
-    borderWidth: 0,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  playlistRowThumb: {
-    width: 56,
-    height: 56,
-    borderRadius: 8,
-  },
-  playlistRowThumbFallback: {
-    backgroundColor: colors.surfaceCard,
+  emptyContainer: {
     alignItems: "center",
     justifyContent: "center",
+    paddingVertical: 60,
+    gap: 8,
   },
-  playlistRowInfo: {
-    flex: 1,
-    marginLeft: 14,
-    marginRight: 8,
-  },
-  playlistRowTitle: {
-    fontFamily: fonts.bold,
-    fontSize: 15,
-    color: colors.text,
-  },
-  playlistRowCount: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 4,
-  },
-  createEmptyBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.primary,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 24,
-    marginTop: 18,
-  },
-  createEmptyBtnText: {
-    fontFamily: fonts.bold,
-    fontSize: 14,
-    color: "#000000",
-  },
-
-  // Playlist Detail View
-  playlistDetailHeader: {
-    marginBottom: 16,
-  },
-  backButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 14,
-    paddingVertical: 4,
-  },
-  backButtonText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 14,
-    color: colors.text,
-  },
-  playlistHeroCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.surfaceBorder,
-  },
-  playlistHeroArtwork: {
-    width: 96,
-    height: 96,
-    borderRadius: 10,
-  },
-  playlistHeroArtworkFallback: {
-    backgroundColor: colors.surfaceCard,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  playlistHeroInfo: {
-    flex: 1,
-    marginLeft: 16,
-  },
-  playlistHeroTag: {
-    fontFamily: fonts.bold,
-    fontSize: 10,
-    color: colors.primary,
-    letterSpacing: 1,
-  },
-  playlistHeroTitle: {
-    fontFamily: fonts.bold,
-    fontSize: 18,
-    color: colors.text,
-    marginTop: 2,
-  },
-  playlistHeroDesc: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 4,
-  },
-  playlistHeroMeta: {
-    fontFamily: fonts.medium,
-    fontSize: 12,
-    color: colors.textMuted,
-    marginTop: 6,
-  },
-  playlistActionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginVertical: 16,
-  },
-  playAllButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.primary,
-    paddingHorizontal: 22,
-    paddingVertical: 10,
-    borderRadius: 24,
-    gap: 6,
-  },
-  playAllText: {
-    fontFamily: fonts.bold,
-    fontSize: 14,
-    color: "#000000",
-  },
-  shuffleButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.surfaceVariant,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: colors.surfaceBorder,
-  },
-  deleteButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(233, 20, 41, 0.1)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginLeft: "auto",
-  },
-  disabledBtn: {
-    opacity: 0.4,
-  },
-  playlistTracksHeader: {
+  emptyText: {
     fontFamily: fonts.bold,
     fontSize: 16,
-    color: colors.text,
-    marginBottom: 8,
-    marginTop: 6,
+    color: "#FFFFFF",
   },
-  playlistTrackRowWrap: {
-    flexDirection: "row",
-    alignItems: "center",
+  emptySub: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: "center",
+    maxWidth: 280,
   },
-  removeTrackBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 12,
-  },
-
-  // Modal Styles
-  modalBackdrop: {
+  menuOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
     alignItems: "center",
     justifyContent: "center",
     padding: 20,
   },
-  createModalCard: {
+  createMenuCard: {
     width: "100%",
+    maxWidth: 380,
+    backgroundColor: "#181818",
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+  },
+  desktopCreateMenuCard: {
     maxWidth: 420,
-    backgroundColor: colors.surface,
+  },
+  createMenuTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: "#FFFFFF",
+    marginBottom: 8,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    marginBottom: 8,
+  },
+  menuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    gap: 14,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  menuRowIcon: {
+    width: 24,
+    textAlign: "center",
+  },
+  menuRowTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: "#FFFFFF",
+  },
+  menuRowSub: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  folderModalCard: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: "#181818",
     borderRadius: 16,
     padding: 20,
     borderWidth: 1,
-    borderColor: colors.surfaceBorder,
+    borderColor: "rgba(255, 255, 255, 0.12)",
   },
-  createModalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 16,
-  },
-  createModalTitle: {
+  folderModalTitle: {
     fontFamily: fonts.bold,
-    fontSize: 18,
-    color: colors.text,
+    fontSize: 17,
+    color: "#FFFFFF",
+    marginBottom: 14,
   },
-  modalInput: {
-    backgroundColor: colors.surfaceCard,
-    borderRadius: 8,
-    paddingHorizontal: 14,
+  folderInput: {
     height: 44,
-    color: colors.text,
-    fontFamily: fonts.regular,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    color: "#FFFFFF",
+    fontFamily: fonts.medium,
     fontSize: 14,
     borderWidth: 1,
-    borderColor: colors.surfaceBorder,
-    marginBottom: 12,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    marginBottom: 16,
+    outlineStyle: "none",
   },
-  modalInputDesc: {
-    height: 72,
-    paddingTop: 10,
-    textAlignVertical: "top",
+  colorLabel: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: colors.textMuted,
+    marginBottom: 8,
   },
-  modalButtonsRow: {
+  colorPickerRow: {
     flexDirection: "row",
-    alignItems: "center",
+    gap: 10,
+    marginBottom: 20,
+  },
+  colorCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  selectedColorCircle: {
+    borderWidth: 2.5,
+    borderColor: "#FFFFFF",
+  },
+  folderModalButtons: {
+    flexDirection: "row",
     justifyContent: "flex-end",
     gap: 10,
-    marginTop: 8,
   },
-  modalCancelBtn: {
+  folderCancelBtn: {
     paddingHorizontal: 16,
     paddingVertical: 10,
+    borderRadius: 20,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  modalCancelText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 13,
-    color: colors.textSecondary,
+  folderCancelText: {
+    fontFamily: fonts.medium,
+    fontSize: 14,
+    color: colors.textMuted,
   },
-  modalConfirmBtn: {
+  folderCreateBtn: {
     backgroundColor: colors.primary,
     paddingHorizontal: 20,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 20,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  modalConfirmText: {
+  folderCreateText: {
     fontFamily: fonts.bold,
-    fontSize: 13,
+    fontSize: 14,
     color: "#000000",
   },
-
-  // Skeleton Styles
+  sortModalCard: {
+    width: "100%",
+    maxWidth: 320,
+    backgroundColor: "#181818",
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+  },
+  sortModalTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: "#FFFFFF",
+    marginBottom: 8,
+  },
+  sortRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  sortRowText: {
+    fontFamily: fonts.medium,
+    fontSize: 14,
+    color: colors.textSecondary,
+  },
+  importModalCard: {
+    width: "100%",
+    maxWidth: 420,
+    backgroundColor: "#181818",
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+  },
+  importModalSub: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.textMuted,
+    marginBottom: 12,
+  },
+  importJsonInput: {
+    height: 120,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    borderRadius: 10,
+    padding: 12,
+    color: "#FFFFFF",
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    textAlignVertical: "top",
+    marginBottom: 16,
+    outlineStyle: "none",
+  },
   skeletonWrap: {
-    flex: 1,
     paddingHorizontal: 16,
     paddingTop: 8,
-  },
-  skeletonLine: {
-    height: 13,
-    borderRadius: 4,
-    backgroundColor: "#1A1A1A",
   },
   skeletonPlaylistRow: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 10,
-    gap: 12,
   },
   skeletonPlaylistThumb: {
-    width: 52,
-    height: 52,
-    borderRadius: 6,
-    backgroundColor: "#1A1A1A",
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
   },
   skeletonPlaylistInfo: {
     flex: 1,
+    marginLeft: 14,
+  },
+  skeletonLine: {
+    borderRadius: 4,
+    backgroundColor: "rgba(255, 255, 255, 0.12)",
   },
   skeletonChevron: {
-    width: 18,
-    height: 18,
-    borderRadius: 4,
-    backgroundColor: "#1A1A1A",
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+  },
+  skeletonHistoryHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  skeletonHistoryButtons: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  skeletonPillBtn: {
+    width: 76,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+  },
+  skeletonCircleBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
   },
   skeletonSongRow: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 8,
-    gap: 10,
   },
   skeletonSongThumb: {
-    width: 48,
-    height: 48,
+    width: 44,
+    height: 44,
     borderRadius: 6,
-    backgroundColor: "#1A1A1A",
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
   },
   skeletonSongInfo: {
     flex: 1,
+    marginLeft: 12,
   },
   skeletonDots: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    backgroundColor: "#1A1A1A",
-  },
-  skeletonHistoryHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 14,
-    marginTop: 4,
-  },
-  skeletonHistoryButtons: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  skeletonPillBtn: {
-    width: 100,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#1A1A1A",
-  },
-  skeletonCircleBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#1A1A1A",
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
   },
 });

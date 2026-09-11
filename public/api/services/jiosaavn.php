@@ -104,6 +104,23 @@ class JioSaavnService {
         ];
     }
 
+    public static function getAlbumDetails($albumId) {
+        $data = self::callApi('content.getAlbumDetails', [
+            'albumid' => $albumId,
+        ]);
+        if (empty($data) || empty($data['id'])) {
+            return null;
+        }
+        $album = self::normalizeAlbum($data);
+        $songs = [];
+        foreach ($data['songs'] ?? [] as $song) {
+            $songs[] = self::normalizeSong($song);
+        }
+        $album['tracks'] = $songs;
+        $album['track_count'] = count($songs);
+        return $album;
+    }
+
     public static function searchPlaylists($query, $page = 1, $limit = 20) {
         $data = self::callApi('search.getPlaylistResults', [
             'q' => $query,

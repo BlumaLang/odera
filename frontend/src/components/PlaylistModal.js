@@ -24,6 +24,7 @@ import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useUser, getDeterministicAvatarColor } from "../context/UserContext";
 import { getHighResArtwork } from "../utils/imageUtils";
+import { downloadTrack } from "../services/offlineStorage";
 
 function getTrackDurationSeconds(t) {
   if (!t) return 0;
@@ -392,6 +393,144 @@ export default function PlaylistModal({
   const totalDurationStr = useMemo(() => {
     return formatTotalPlaylistDuration(tracks);
   }, [tracks]);
+
+  // Bulk Edit state
+  const [isBulkMode, setIsBulkMode] = useState(false);
+  const [selectedVideoIds, setSelectedVideoIds] = useState(new Set());
+
+  // Duplicate track detection
+  const duplicateTrackCount = useMemo(() => {
+    const seen = new Set();
+    let dupes = 0;
+    for (const t of tracks) {
+      const vid = t.videoId || t.video_id || t.id;
+      const key = vid || (t.title || "").trim().toLowerCase();
+      if (seen.has(key)) {
+        dupes++;
+      } else if (key) {
+        seen.add(key);
+      }
+    }
+    return dupes;
+  }, [tracks]);
+
+  const handleRemoveDuplicates = useCallback(async () => {
+    if (!tracks.length) return;
+    const seen = new Set();
+    const uniqueTracks = [];
+    const duplicateIds = [];
+
+    for (const t of tracks) {
+      const vid = t.videoId || t.video_id || t.id;
+      const key = vid || (t.title || "").trim().toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueTracks.push(t);
+      } else {
+        if (vid) duplicateIds.push(vid);
+      }
+    }
+
+    if (uniqueTracks.length === tracks.length) return;
+
+    const updated = {
+      ...playlistData,
+      tracks: uniqueTracks,
+      track_count: uniqueTracks.length,
+    };
+    setPlaylistData(updated);
+    if (onPlaylistUpdated) onPlaylistUpdated(updated);
+
+    const playlistId = playlistData?.id || playlistData?.collabId;
+    const uid = currentUser?.uid || "staytup_user_main";
+    api.updatePlaylist(playlistId, { tracks: uniqueTracks, track_count: uniqueTracks.length }, uid).catch(() => {});
+  }, [tracks, playlistData, onPlaylistUpdated, currentUser]);
+
+  const handleExportPlaylist = useCallback(() => {
+    try {
+      const exportData = {
+        staytup_backup_version: "1.0",
+        exported_at: new Date().toISOString(),
+        name: playlistData?.name || "Playlist",
+        description: playlistData?.description || "",
+        cover_url: playlistData?.cover_url || "",
+        track_count: tracks.length,
+        tracks: tracks.map((t) => ({
+          videoId: t.videoId || t.video_id || t.id,
+          title: t.title,
+          artist: t.artist,
+          album: t.album,
+          duration: t.duration,
+          duration_seconds: t.duration_seconds,
+          artwork_url: t.artwork_url || t.image || t.thumbnail,
+        })),
+      };
+
+      const jsonStr = JSON.stringify(exportData, null, 2);
+      if (typeof window !== "undefined") {
+        const blob = new Blob([jsonStr], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const safeName = (playlistData?.name || "playlist").replace(/[^a-zA-Z0-9_-]/g, "_");
+        a.href = url;
+        a.download = `${safeName}_backup.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      console.warn("Failed exporting playlist:", err);
+    }
+  }, [playlistData, tracks]);
+
+  const toggleSelectTrack = useCallback((vid) => {
+    setSelectedVideoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(vid)) next.delete(vid);
+      else next.add(vid);
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    if (selectedVideoIds.size === tracks.length) {
+      setSelectedVideoIds(new Set());
+    } else {
+      setSelectedVideoIds(new Set(tracks.map((t) => t.videoId || t.video_id || t.id).filter(Boolean)));
+    }
+  }, [tracks, selectedVideoIds.size]);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (!selectedVideoIds.size) return;
+    const remaining = tracks.filter((t) => !selectedVideoIds.has(t.videoId || t.video_id || t.id));
+    const idsToDelete = Array.from(selectedVideoIds);
+
+    const updated = {
+      ...playlistData,
+      tracks: remaining,
+      track_count: remaining.length,
+    };
+    setPlaylistData(updated);
+    if (onPlaylistUpdated) onPlaylistUpdated(updated);
+    setSelectedVideoIds(new Set());
+    setIsBulkMode(false);
+
+    const playlistId = playlistData?.id || playlistData?.collabId;
+    const uid = currentUser?.uid || "staytup_user_main";
+    api.bulkDeleteTracksFromPlaylist(playlistId, idsToDelete, uid).catch(() => {});
+  }, [tracks, selectedVideoIds, playlistData, onPlaylistUpdated, currentUser]);
+
+  const handleBulkDownload = useCallback(async () => {
+    const selectedTracks = tracks.filter((t) => selectedVideoIds.has(t.videoId || t.video_id || t.id));
+    for (const t of selectedTracks) {
+      try {
+        await downloadTrack(t);
+      } catch (_) {}
+    }
+    setIsBulkMode(false);
+    setSelectedVideoIds(new Set());
+  }, [tracks, selectedVideoIds]);
 
   const friendsMap = useMemo(() => {
     const map = {};
@@ -1085,44 +1224,113 @@ export default function PlaylistModal({
                     (isDesktop || isTablet) && styles.tracksHeaderRowDesktop,
                   ]}
                 >
-                  <Text style={styles.tracksHeaderText}>Tracks</Text>
-                  {isLoadingTracks && (
-                    <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 10 }} />
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Text style={styles.tracksHeaderText}>Tracks</Text>
+                    {isLoadingTracks && (
+                      <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 10 }} />
+                    )}
+                  </View>
+
+                  {tracks.length > 0 && (
+                    <TouchableOpacity
+                      style={styles.bulkToggleHeaderBtn}
+                      onPress={() => {
+                        setIsBulkMode((prev) => !prev);
+                        if (isBulkMode) setSelectedVideoIds(new Set());
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={isBulkMode ? "close-circle-outline" : "checkbox-outline"}
+                        size={16}
+                        color={isBulkMode ? colors.primary : colors.textMuted}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text style={[styles.bulkToggleHeaderText, isBulkMode && { color: colors.primary }]}>
+                        {isBulkMode ? "Cancel" : "Select"}
+                      </Text>
+                    </TouchableOpacity>
                   )}
                 </View>
+
+                {/* Duplicate track clean-up banner */}
+                {duplicateTrackCount > 0 && (
+                  <View style={styles.duplicateBanner}>
+                    <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                      <Ionicons name="alert-circle" size={18} color="#EAB308" style={{ marginRight: 8 }} />
+                      <Text style={styles.duplicateBannerText}>
+                        {duplicateTrackCount} duplicate {duplicateTrackCount === 1 ? "track" : "tracks"} found
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.cleanDuplicatesBtn}
+                      onPress={handleRemoveDuplicates}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.cleanDuplicatesText}>Clean Up</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
             }
-            renderItem={({ item, index }) => (
-              <View style={styles.trackRowWrapper}>
-                <View style={{ flex: 1 }}>
-                  <SongCard
-                    track={{
-                      ...item,
-                      videoId: item.video_id || item.videoId,
-                    }}
-                    layout="row"
-                    showRank={false}
-                    showPlayButton={false}
-                    showDuration={false}
-                    isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
-                    onPress={() => handlePlayAll(index)}
-                    onAddToPlaylist={(t) => {
-                      freezeScrollPosition();
-                      setAddToPlaylistTrack(t);
-                    }}
-                  />
-                </View>
+            renderItem={({ item, index }) => {
+              const vid = item.video_id || item.videoId;
+              const isSelected = selectedVideoIds.has(vid);
+              return (
+                <View style={[styles.trackRowWrapper, isSelected && styles.selectedTrackRowWrapper]}>
+                  {isBulkMode && (
+                    <TouchableOpacity
+                      style={styles.bulkCheckRowBtn}
+                      onPress={() => toggleSelectTrack(vid)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={isSelected ? "checkbox" : "square-outline"}
+                        size={22}
+                        color={isSelected ? colors.primary : colors.textMuted}
+                      />
+                    </TouchableOpacity>
+                  )}
 
-                <TouchableOpacity
-                  style={styles.removeTrackBtn}
-                  onPress={() => handleRemoveTrack(item.video_id || item.videoId)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  accessibilityLabel="Remove track from playlist"
-                >
-                  <Ionicons name="remove-circle-outline" size={22} color={colors.textMuted} />
-                </TouchableOpacity>
-              </View>
-            )}
+                  <View style={{ flex: 1 }}>
+                    <SongCard
+                      track={{
+                        ...item,
+                        videoId: vid,
+                      }}
+                      layout="row"
+                      showRank={!isBulkMode}
+                      rank={index + 1}
+                      showPlayButton={false}
+                      showDuration={false}
+                      isActive={currentTrack?.videoId === vid}
+                      onPress={() => {
+                        if (isBulkMode) {
+                          toggleSelectTrack(vid);
+                        } else {
+                          handlePlayAll(index);
+                        }
+                      }}
+                      onAddToPlaylist={(t) => {
+                        freezeScrollPosition();
+                        setAddToPlaylistTrack(t);
+                      }}
+                    />
+                  </View>
+
+                  {!isBulkMode && (
+                    <TouchableOpacity
+                      style={styles.removeTrackBtn}
+                      onPress={() => handleRemoveTrack(vid)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityLabel="Remove track from playlist"
+                    >
+                      <Ionicons name="remove-circle-outline" size={22} color={colors.textMuted} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              );
+            }}
             ListEmptyComponent={
               isLoadingTracks ? (
                 <View style={styles.loadingContainer}>
@@ -1158,8 +1366,56 @@ export default function PlaylistModal({
               ) : (
                 <View style={{ height: isDesktop || isTablet ? 40 : 130 }} />
               )
-            }
           />
+
+          {/* Sticky Bulk Action Bar */}
+          {isBulkMode && (
+            <View style={[styles.bulkActionBar, (isDesktop || isTablet) && styles.desktopBulkActionBar]}>
+              <TouchableOpacity style={styles.bulkActionBtn} onPress={handleSelectAll} activeOpacity={0.75}>
+                <Ionicons
+                  name={selectedVideoIds.size === tracks.length ? "close-circle-outline" : "checkmark-done-outline"}
+                  size={18}
+                  color="#FFFFFF"
+                />
+                <Text style={styles.bulkActionText}>
+                  {selectedVideoIds.size === tracks.length ? "Deselect" : "All"}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.bulkActionBtn, selectedVideoIds.size === 0 && styles.disabledBulkBtn]}
+                onPress={handleBulkDelete}
+                disabled={selectedVideoIds.size === 0}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="trash-outline" size={18} color={colors.error} />
+                <Text style={[styles.bulkActionText, { color: colors.error }]}>
+                  Delete ({selectedVideoIds.size})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.bulkActionBtn, selectedVideoIds.size === 0 && styles.disabledBulkBtn]}
+                onPress={handleBulkDownload}
+                disabled={selectedVideoIds.size === 0}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="arrow-down-circle-outline" size={18} color="#FFFFFF" />
+                <Text style={styles.bulkActionText}>Save ({selectedVideoIds.size})</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.bulkDoneBtn}
+                onPress={() => {
+                  setIsBulkMode(false);
+                  setSelectedVideoIds(new Set());
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.bulkDoneText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {/* Add to Playlist Modal */}
@@ -1262,6 +1518,46 @@ export default function PlaylistModal({
                 <Text style={styles.optionsRowText}>
                   {isBlend ? "View Blend Participants" : "Collaborate with Friends"}
                 </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.optionsRow}
+                onPress={() => {
+                  closeOptionsMenu();
+                  setIsBulkMode(true);
+                }}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="list-outline" size={20} color={colors.text} style={styles.optionsRowIcon} />
+                <Text style={styles.optionsRowText}>Bulk Edit Tracks</Text>
+              </TouchableOpacity>
+
+              {duplicateTrackCount > 0 && (
+                <TouchableOpacity
+                  style={styles.optionsRow}
+                  onPress={() => {
+                    closeOptionsMenu();
+                    handleRemoveDuplicates();
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <Ionicons name="copy-outline" size={20} color="#EAB308" style={styles.optionsRowIcon} />
+                  <Text style={[styles.optionsRowText, { color: "#EAB308" }]}>
+                    Clean Up {duplicateTrackCount} Duplicate {duplicateTrackCount === 1 ? "Track" : "Tracks"}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={styles.optionsRow}
+                onPress={() => {
+                  closeOptionsMenu();
+                  handleExportPlaylist();
+                }}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="download-outline" size={20} color={colors.text} style={styles.optionsRowIcon} />
+                <Text style={styles.optionsRowText}>Export Playlist Backup (.json)</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -2480,5 +2776,117 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     fontSize: 13,
     color: "#EB4335",
+  },
+  bulkToggleHeaderBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  bulkToggleHeaderText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+  duplicateBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "rgba(234, 179, 8, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(234, 179, 8, 0.35)",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginVertical: 10,
+  },
+  duplicateBannerText: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "#EAB308",
+    flex: 1,
+  },
+  cleanDuplicatesBtn: {
+    backgroundColor: "#EAB308",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginLeft: 8,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  cleanDuplicatesText: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    color: "#000000",
+  },
+  selectedTrackRowWrapper: {
+    backgroundColor: "rgba(29, 185, 84, 0.08)",
+    borderRadius: 8,
+  },
+  bulkCheckRowBtn: {
+    paddingHorizontal: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  bulkActionBar: {
+    position: "absolute",
+    bottom: Platform.OS === "web" ? 20 : 30,
+    left: 16,
+    right: 16,
+    backgroundColor: "#181818",
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.15)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    elevation: 10,
+    gap: 8,
+  },
+  desktopBulkActionBar: {
+    maxWidth: 600,
+    left: "50%",
+    transform: [{ translateX: -300 }],
+    bottom: 30,
+  },
+  bulkActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 4,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  bulkActionText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: "#FFFFFF",
+  },
+  disabledBulkBtn: {
+    opacity: 0.4,
+  },
+  bulkDoneBtn: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    marginLeft: "auto",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  bulkDoneText: {
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: "#000000",
   },
 });

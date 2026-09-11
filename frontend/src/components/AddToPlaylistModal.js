@@ -276,9 +276,17 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
                         >
                           {item.name}
                         </Text>
-                        <Text style={styles.playlistCount}>
-                          {trackCount} {trackCount === 1 ? "song" : "songs"}
-                        </Text>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
+                          <Text style={styles.playlistCount}>
+                            {trackCount} {trackCount === 1 ? "song" : "songs"}
+                          </Text>
+                          {isAdded && (
+                            <View style={styles.alreadyInBadge}>
+                              <Ionicons name="copy-outline" size={10} color="#EAB308" style={{ marginRight: 3 }} />
+                              <Text style={styles.alreadyInText}>Already in playlist</Text>
+                            </View>
+                          )}
+                        </View>
                       </View>
                       <View style={styles.actionWrap}>
                         {status === "adding" ? (
@@ -521,5 +529,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
+  },
+  alreadyInBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(234, 179, 8, 0.12)",
+    borderColor: "rgba(234, 179, 8, 0.35)",
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  alreadyInText: {
+    fontFamily: fonts.medium,
+    fontSize: 10,
+    color: "#EAB308",
   },
 });

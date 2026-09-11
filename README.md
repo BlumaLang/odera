@@ -1,18 +1,31 @@
 # Staytup - Real-Time Music Streaming & Social Listening Platform
 
-[![Staytup](https://img.shields.io/badge/Staytup-PWA%20v2.8.4-1DB954?style=for-the-badge&logo=music)](https://staytup.odireca.com)
+[![Staytup](https://img.shields.io/badge/Staytup-PWA%20v2.8.5-1DB954?style=for-the-badge&logo=music)](https://staytup.odireca.com)
 [![React Native](https://img.shields.io/badge/React_Native-Expo%20SDK%2057-61DAFB?style=for-the-badge&logo=react)](https://reactnative.dev)
 [![PHP](https://img.shields.io/badge/PHP-8.x%20Backend-777BB4?style=for-the-badge&logo=php)](https://php.net)
 [![Firebase](https://img.shields.io/badge/Firebase-Realtime%20Database-FFCA28?style=for-the-badge&logo=firebase)](https://firebase.google.com)
-[![Service Worker](https://img.shields.io/badge/Service_Worker-staytup--pwa--v36-blue?style=for-the-badge)](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API)
+[![Service Worker](https://img.shields.io/badge/Service_Worker-staytup--pwa--v37-blue?style=for-the-badge)](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API)
 
-**Staytup** is a modern, high-performance music streaming and collaborative listening Progressive Web App (PWA) built with **React Native for Web (Expo SDK 57)**, a lightweight **PHP 8.x backend**, and **Firebase Realtime Database**. It pairs studio-grade audio streaming with synchronized listening parties (without chat), real-time social presence, collaborative and blend playlists, friend listening sync, live synchronized karaoke lyrics, multi-device hardware management, advanced typo-tolerant search, and universal deep links.
+**Staytup** is a modern, high-performance music streaming and collaborative listening Progressive Web App (PWA) built with **React Native for Web (Expo SDK 57)**, a lightweight **PHP 8.x backend**, and **Firebase Realtime Database**. It pairs studio-grade audio streaming with synchronized listening parties (without chat), full offline playback caching, comprehensive music library management (albums, followed artists, folders, duplicate clean-up, bulk editing, backup export & restore), real-time social presence, collaborative and blend playlists, friend listening sync, live synchronized karaoke lyrics, multi-device hardware management, advanced typo-tolerant search, and universal deep links.
 
 ---
 
 ## Key Features & Capabilities
 
-### 1. 🎧 Listening Party — Without Chat
+### 1. 📚 Comprehensive Library & Offline Music Manager
+- **Liked Songs**: Dedicated tracklist for user favorites with single-tap "Play All", "Shuffle All", and batch "Download All" offline actions.
+- **Albums Library**: Full saved albums library with cover art grid, metadata, real-time filtering, and interactive `AlbumModal` featuring album hero artwork, tracklist, and offline download.
+- **Followed Artists**: Dedicated followed artists hub with direct 1-tap navigation into full artist profile discographies.
+- **Recently Played**: Chronological listening history tracking play counts with instant "Play All" and "Shuffle".
+- **Recently Added**: Fast access to freshly added songs and playlists.
+- **Downloaded / Offline Songs**: Full offline storage manager powered by the Cache API (`staytup-offline-audio-v1`). Shows total MB storage used, 1-tap "Clear All Downloads", offline green checkmark badges, and works completely offline without network connectivity.
+- **Custom Playlists & Folders**: Organize playlists into custom folders with breadcrumb navigation (`Library > Folder Name`).
+- **In-Library Real-Time Search & Sorting**: Search input filtering playlists, albums, songs, and folders instantly. Interactive sort pill cycling between Recent, A - Z, Z - A, and Track Count.
+- **Duplicate-Track Detection**: Automatic scanning for duplicate tracks in playlists with an orange alert banner and 1-tap "Clean Up" button to deduplicate without losing playlist order.
+- **Playlist Backup, Export & Restore**: 1-click "Export Playlist Backup (.json)" downloading a structured JSON file with all tracks and metadata, plus "Restore Backup" for instant JSON import.
+- **Bulk Playlist Editing**: Multi-select track editing mode with checkboxes on each track row, Select All / Deselect All, and a sticky bottom action bar for bulk Delete and bulk Download.
+
+### 2. 🎧 Listening Party — Without Chat
 - **Synchronized Group Listening**: Create public discovery rooms or private rooms with 4-digit passcodes. Host playback controls are broadcasted live to all listeners with millisecond-level drift correction (~200ms) and automatic seek syncing.
 - **Collaborative Room Queue**: Anyone in the room can search and suggest songs to the party queue.
 - **Democratic Queue Upvoting**: Listeners can upvote queued tracks (`▲ count`); higher-voted tracks bubble up to play next automatically.

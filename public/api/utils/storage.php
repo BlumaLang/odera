@@ -196,6 +196,65 @@ class Storage {
         self::writeJson($path, $playlists);
     }
     
+    public static function bulkRemoveTracksFromPlaylist($userId, $playlistId, $videoIds) {
+        $dir = self::getUserDir($userId);
+        $path = $dir . '/playlists.json';
+        $playlists = self::readJson($path) ?? [];
+        $idSet = array_flip($videoIds);
+        
+        foreach ($playlists as &$pl) {
+            if ($pl['id'] === $playlistId) {
+                $pl['tracks'] = array_values(array_filter($pl['tracks'], function($t) use ($idSet) {
+                    $vid = $t['videoId'] ?? $t['video_id'] ?? $t['id'] ?? '';
+                    return !isset($idSet[$vid]);
+                }));
+                $pl['track_count'] = count($pl['tracks']);
+                break;
+            }
+        }
+        
+        self::writeJson($path, $playlists);
+    }
+
+    // ==================== ALBUMS ====================
+
+    public static function getSavedAlbums($userId) {
+        $dir = self::getUserDir($userId);
+        $path = $dir . '/albums.json';
+        $albums = self::readJson($path) ?? [];
+        return array_values($albums);
+    }
+
+    public static function toggleSavedAlbum($userId, $albumId, $albumData) {
+        $dir = self::getUserDir($userId);
+        $path = $dir . '/albums.json';
+        $albums = self::readJson($path) ?? [];
+
+        if (isset($albums[$albumId])) {
+            unset($albums[$albumId]);
+            self::writeJson($path, $albums);
+            return false;
+        } else {
+            $albums[$albumId] = $albumData;
+            self::writeJson($path, $albums);
+            return true;
+        }
+    }
+
+    // ==================== PLAYLIST FOLDERS ====================
+
+    public static function getPlaylistFolders($userId) {
+        $dir = self::getUserDir($userId);
+        $path = $dir . '/folders.json';
+        return self::readJson($path) ?? [];
+    }
+
+    public static function savePlaylistFolders($userId, $folders) {
+        $dir = self::getUserDir($userId);
+        $path = $dir . '/folders.json';
+        self::writeJson($path, $folders);
+    }
+
     // ==================== PREMIUM ====================
     
     public static function saveUserPremium($userId, $premium) {

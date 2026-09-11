@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.5] - 2026-09-12
+
+### Added
+- **📚 Complete Library Overhaul (12 Major Features)**:
+  - **Liked Songs**: Full dedicated tracklist with one-click "Play All", "Shuffle All", and batch "Download All" actions.
+  - **Albums Library**: Saved albums collection with real-time search & sorting, cover art grid, and interactive `AlbumModal` (hero header, track list, play, shuffle, save/bookmark toggle, and offline download).
+  - **Followed Artists**: Dedicated followed artists list with artist avatars and direct 1-tap navigation into full artist profile discographies.
+  - **Recently Played**: Chronological listening history with track play counts and quick "Play All" / "Shuffle".
+  - **Recently Added**: Real-time list of freshly added songs and playlists.
+  - **Downloaded / Offline Songs**: Full offline storage manager powered by the Cache API (`staytup-offline-audio-v1`). Shows total MB formatted storage used, single-tap "Clear All Downloads", offline green checkmark badges, and playback that works completely offline without network connectivity.
+  - **Custom Playlists**: Clean playlist management with custom cover artwork, tracks count, and duration summaries.
+  - **Playlist Folders**: Create, rename, delete custom folders to organize playlists. Folder cards show playlist counts, and tapping opens folder breadcrumb navigation (`Library > Folder Name`).
+  - **Playlist Sorting & Filtering**: Real-time in-library search input filtering playlists, albums, songs, and folders instantly. Interactive sort pill cycling between Recent, A - Z, Z - A, and Track Count.
+  - **Duplicate-Track Detection**: Automatic scanning for duplicate tracks in playlists. Displays an orange alert banner with 1-tap "Clean Up" button to deduplicate without losing playlist order.
+  - **Playlist Backup & Export**: 1-click "Export Playlist Backup (.json)" downloading a structured JSON file with all tracks and metadata.
+  - **Bulk Playlist Editing**: Multi-select track editing mode with checkboxes on each track row, Select All / Deselect All, and a sticky bottom action bar for bulk Delete and bulk Download.
+  - **Restore Playlist Backup**: "Restore Backup" pill allowing instant import and recreation of playlists from JSON backup files.
+
+---
+
 ## [2.8.4] - 2026-09-12
 
 ### Added

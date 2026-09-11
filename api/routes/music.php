@@ -27,6 +27,8 @@ class MusicRoutes {
                     return self::trackImage($params['id'] ?? null);
                 }
                 return self::track($params['id'] ?? null);
+            case 'album':
+                return self::album($params['id'] ?? null);
             default:
                 sendError('Unknown music action', 404);
         }
@@ -139,5 +141,16 @@ class MusicRoutes {
         }
         
         sendError('Failed to fetch image', 502);
+    }
+
+    private static function album($id) {
+        if (!$id) {
+            $id = getQueryParam('id');
+        }
+        if (!$id) sendError('Album ID is required');
+
+        $album = JioSaavnService::getAlbumDetails($id);
+        if (!$album) sendError('Album not found', 404);
+        sendJson($album);
     }
 }

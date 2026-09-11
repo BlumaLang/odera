@@ -512,6 +512,16 @@ export const api = {
     return api.searchWithFilter(query, "albums", offset, limit);
   },
 
+  getAlbumDetails: async (albumId) => {
+    if (!albumId) return null;
+    try {
+      const data = await backendFetch(`album?id=${encodeURIComponent(albumId)}`);
+      return data || null;
+    } catch (_) {
+      return null;
+    }
+  },
+
   searchPlaylists: async (query, offset = 0, limit = 20) => {
     return api.searchWithFilter(query, "playlists", offset, limit);
   },
@@ -865,6 +875,30 @@ export const api = {
   updatePlaylist: () => Promise.resolve({}),
   addTrackToPlaylist: () => Promise.resolve({}),
   removeTrackFromPlaylist: () => Promise.resolve({}),
+  bulkDeleteTracksFromPlaylist: (playlistId, videoIds, userId) =>
+    backendFetch(`user/playlists_bulk_delete_tracks?id=${encodeURIComponent(playlistId)}&user_id=${encodeURIComponent(userId || DEFAULT_USER_ID)}`, {}, {
+      method: "POST",
+      body: { video_ids: videoIds },
+    }).catch(() => ({})),
+  importPlaylistJson: (playlistData, userId) =>
+    backendFetch(`user/playlists_import_json?user_id=${encodeURIComponent(userId || DEFAULT_USER_ID)}`, {}, {
+      method: "POST",
+      body: playlistData,
+    }).catch(() => ({})),
+  getSavedAlbums: (userId) =>
+    backendFetch(`user/albums?user_id=${encodeURIComponent(userId || DEFAULT_USER_ID)}`).catch(() => ({ albums: [] })),
+  toggleSavedAlbum: (albumData, userId) =>
+    backendFetch("user/albums", {}, {
+      method: "POST",
+      body: { user_id: userId || DEFAULT_USER_ID, ...albumData },
+    }).catch(() => ({})),
+  getPlaylistFolders: (userId) =>
+    backendFetch(`user/folders?user_id=${encodeURIComponent(userId || DEFAULT_USER_ID)}`).catch(() => ({ folders: [] })),
+  savePlaylistFolders: (folders, userId) =>
+    backendFetch("user/folders", {}, {
+      method: "POST",
+      body: { user_id: userId || DEFAULT_USER_ID, folders },
+    }).catch(() => ({})),
   deletePlaylist: () => Promise.resolve({}),
   savePremiumSubscription: () => Promise.resolve({}),
 

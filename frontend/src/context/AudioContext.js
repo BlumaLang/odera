@@ -27,6 +27,7 @@ import {
   updateActiveDeviceHeartbeat,
 } from "../services/firebase";
 import { getAccurateDeviceInfo } from "./ResponsiveContext";
+import { getOfflineAudioUrl, isTrackDownloaded } from "../services/offlineStorage";
 
 let LockScreenControls = null;
 try {
@@ -1664,8 +1665,14 @@ const AudioProvider = ({ children }) => {
     // to execute SYNCHRONOUSLY within the 'ended' event — which iOS & Android PWA allow without muting!
     let playableUrl = track.stream_url;
 
+    // 1. Check if track is downloaded for offline listening
+    const offlineUrl = await getOfflineAudioUrl(cleanId);
+    if (offlineUrl) {
+      playableUrl = offlineUrl;
+    }
+
     const cachedStream = globalStreamCache.get(cleanId);
-    if (cachedStream && cachedStream.stream_url) {
+    if (cachedStream && cachedStream.stream_url && !playableUrl) {
       playableUrl = cachedStream.stream_url;
       if (cachedStream.duration && (!initDurationMs || initDurationMs <= 0)) {
         const ms = cachedStream.duration * 1000;
