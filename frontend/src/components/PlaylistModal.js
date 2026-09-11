@@ -889,7 +889,7 @@ export default function PlaylistModal({
           existingId: playlistData.id,
           name: playlistData.name,
           description: playlistData.description || "",
-          cover_url: artwork || "",
+          cover_url: currentHeroArt || getPlaylistHeroArt() || playlistData?.cover_url || "",
           tracks: playlistData.tracks || [],
         });
         if (res && res.success && res.playlist) {
@@ -1610,8 +1610,15 @@ export default function PlaylistModal({
 
               {/* Header inside options */}
               <View style={styles.optionsHeaderRow}>
-                {artwork ? (
-                  <Image source={{ uri: getHighResArtwork(artwork) || artwork }} style={styles.optionsThumb} />
+                {(currentHeroArt || getPlaylistHeroArt()) ? (
+                  <Image
+                    source={{
+                      uri:
+                        getHighResArtwork(currentHeroArt || getPlaylistHeroArt()) ||
+                        (currentHeroArt || getPlaylistHeroArt()),
+                    }}
+                    style={styles.optionsThumb}
+                  />
                 ) : (
                   <View style={[styles.optionsThumb, styles.optionsThumbFallback]}>
                     <Ionicons name="musical-notes" size={20} color={colors.primary} />
@@ -2135,6 +2142,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#121212",
     marginBottom: 16,
     overflow: "hidden",
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    elevation: 8,
   },
   heroArtworkDesktop: {
     width: 220,

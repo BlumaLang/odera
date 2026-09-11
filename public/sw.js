@@ -1,5 +1,5 @@
 // Staytup Service Worker for PWA
-const CACHE_NAME = 'staytup-pwa-v59';
+const CACHE_NAME = 'staytup-pwa-v60';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -77,46 +77,57 @@ self.addEventListener('fetch', (event) => {
   if (isNav) {
     event.respondWith(
       (async () => {
-        // 1. Network-first with 2.5s timeout for navigation to ensure fresh index.html
         try {
-          const fetchPromise = fetch(event.request);
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Network timeout')), 2500)
+          // 1. Network-first with 2.5s timeout for navigation to ensure fresh index.html
+          try {
+            const fetchPromise = fetch(event.request);
+            const timeoutPromise = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Network timeout')), 2500)
+            );
+            const networkRes = await Promise.race([fetchPromise, timeoutPromise]);
+            if (networkRes && (networkRes.status === 200 || networkRes.type === 'opaqueredirect')) {
+              try {
+                const cache = await caches.open(CACHE_NAME);
+                await cache.put('/index.html', networkRes.clone());
+              } catch (_) {}
+              return networkRes;
+            }
+          } catch (_) {
+            // Network failed or timed out - fall back to cached shell
+          }
+
+          // 2. Fetch /index.html directly from network if possible
+          try {
+            const appShell = await fetch('/index.html');
+            if (appShell && (appShell.status === 200 || appShell.type === 'opaqueredirect')) {
+              try {
+                const cache = await caches.open(CACHE_NAME);
+                await cache.put('/index.html', appShell.clone());
+              } catch (_) {}
+              return appShell;
+            }
+          } catch (_) {}
+
+          // 3. Fall back to cached app shell
+          try {
+            const cached = (await caches.match('/index.html')) || (await caches.match('/'));
+            if (cached) {
+              return cached;
+            }
+          } catch (_) {}
+
+          // 4. Safe offline fallback: never auto-reload in a loop
+          return new Response(
+            '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Staytup - Offline</title></head><body style="background:#000;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;"><div style="padding:20px;"><h2>Staytup</h2><p style="color:#aaa;margin-bottom:20px;">Connection unavailable. Please check your network.</p><button onclick="window.location.reload()" style="background:#1DB954;color:#000;border:none;padding:12px 24px;border-radius:24px;font-weight:700;cursor:pointer;font-size:15px;">Retry Connection</button></div></body></html>',
+            { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
           );
-          const networkRes = await Promise.race([fetchPromise, timeoutPromise]);
-          if (networkRes && networkRes.status === 200) {
-            const cache = await caches.open(CACHE_NAME);
-            cache.put('/index.html', networkRes.clone()).catch(() => {});
-            return networkRes;
-          }
         } catch (_) {
-          // Network failed or timed out - fall back to cached shell
+          return new Response(
+            '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Staytup</title></head><body style="background:#000;color:#fff;"><p>Loading...</p><script>window.location.reload();</script></body></html>',
+            { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+          );
         }
-
-        // 2. Fetch /index.html directly from network if possible
-        try {
-          const appShell = await fetch('/index.html');
-          if (appShell && appShell.status === 200) {
-            const cache = await caches.open(CACHE_NAME);
-            cache.put('/index.html', appShell.clone()).catch(() => {});
-            return appShell;
-          }
-        } catch (_) {}
-
-        // 3. Fall back to cached app shell
-        try {
-          const cached = (await caches.match('/index.html')) || (await caches.match('/'));
-          if (cached) {
-            return cached;
-          }
-        } catch (_) {}
-
-        // 4. Safe offline fallback: never auto-reload in a loop
-        return new Response(
-          '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Staytup - Offline</title></head><body style="background:#000;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;"><div style="padding:20px;"><h2>Staytup</h2><p style="color:#aaa;margin-bottom:20px;">Connection unavailable. Please check your network.</p><button onclick="window.location.reload()" style="background:#1DB954;color:#000;border:none;padding:12px 24px;border-radius:24px;font-weight:700;cursor:pointer;font-size:15px;">Retry Connection</button></div></body></html>',
-          { status: 200, headers: { 'Content-Type': 'text/html' } }
-        );
-      })()
+      })().catch(() => new Response('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Staytup</title></head><body style="background:#000;color:#fff;"><script>window.location.reload();</script></body></html>', { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }))
     );
     return;
   }
@@ -139,10 +150,12 @@ self.addEventListener('fetch', (event) => {
             return networkRes;
           }
         } catch (_) {}
-        const cached = await caches.match(event.request);
-        if (cached) return cached;
+        try {
+          const cached = await caches.match(event.request);
+          if (cached) return cached;
+        } catch (_) {}
         return new Response('', { status: 404, statusText: 'Not Found' });
-      })()
+      })().catch(() => new Response('', { status: 404, statusText: 'Not Found' }))
     );
     return;
   }
@@ -171,6 +184,6 @@ self.addEventListener('fetch', (event) => {
       } catch (err) {
         return new Response('', { status: 404, statusText: 'Not Found' });
       }
-    })()
+    })().catch(() => new Response('', { status: 404, statusText: 'Not Found' }))
   );
 });
