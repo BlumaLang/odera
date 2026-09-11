@@ -2555,7 +2555,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
       <Modal
         visible={Boolean(partyToDelete)}
         transparent={true}
-        animationType="fade"
+        animationType="slide"
         onRequestClose={() => !isDeletingParty && setPartyToDelete(null)}
       >
         <TouchableOpacity
@@ -2567,6 +2567,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
             style={styles.partyDeleteModalCard}
             onStartShouldSetResponder={() => true}
           >
+            <View style={styles.partyDeleteDragHandle} />
             <View style={styles.partyDeleteIconCircle}>
               <Ionicons name="close-circle-outline" size={32} color="#FF4D4D" />
             </View>
@@ -5081,26 +5082,40 @@ const styles = StyleSheet.create({
   // ═══════════ DELETE LISTENING PARTY CONFIRMATION MODAL ═══════════
   partyDeleteModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    backgroundColor: "rgba(0, 0, 0, 0.78)",
     alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 20,
-    ...(Platform.OS === "web" ? { backdropFilter: "blur(6px)" } : {}),
+    justifyContent: "flex-end",
+    paddingHorizontal: 0,
+    ...(Platform.OS === "web" ? { backdropFilter: "blur(6px)", cursor: "default" } : {}),
   },
   partyDeleteModalCard: {
     width: "100%",
-    maxWidth: 380,
+    maxWidth: 480,
     backgroundColor: "#16161A",
-    borderRadius: 24,
-    padding: 24,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    paddingHorizontal: 22,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === "web" ? 32 : 44,
     alignItems: "center",
     borderWidth: 1,
+    borderBottomWidth: 0,
     borderColor: "rgba(255, 255, 255, 0.12)",
     shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 10 },
+    shadowOffset: { width: 0, height: -8 },
     shadowOpacity: 0.5,
-    shadowRadius: 20,
-    elevation: 12,
+    shadowRadius: 24,
+    elevation: 16,
+  },
+  partyDeleteDragHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    alignSelf: "center",
+    marginBottom: 16,
   },
   partyDeleteIconCircle: {
     width: 56,

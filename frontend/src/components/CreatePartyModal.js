@@ -75,7 +75,7 @@ export default function CreatePartyModal({ visible, onClose, onCreated }) {
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType="slide"
       onRequestClose={onClose}
     >
       <TouchableOpacity
@@ -88,6 +88,9 @@ export default function CreatePartyModal({ visible, onClose, onCreated }) {
           activeOpacity={1}
           onPress={(e) => e.stopPropagation()}
         >
+          {/* Top Drag Handle */}
+          <View style={styles.dragHandle} />
+
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
@@ -226,23 +229,44 @@ const styles = StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.78)",
-    justifyContent: "center",
+    justifyContent: "flex-end",
     alignItems: "center",
-    padding: 20,
+    padding: 0,
+    ...(Platform.OS === "web" ? { backdropFilter: "blur(6px)", cursor: "default" } : {}),
   },
   card: {
     width: "100%",
-    maxWidth: 440,
+    maxWidth: 500,
     backgroundColor: "#141416",
-    borderRadius: 24,
-    padding: 24,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    paddingHorizontal: 22,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === "web" ? 32 : 44,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.08)",
+    borderBottomWidth: 0,
+    borderColor: "rgba(255, 255, 255, 0.1)",
     ...(Platform.OS === "web"
       ? {
-          boxShadow: "0 20px 48px rgba(0, 0, 0, 0.6)",
+          boxShadow: "0 -10px 40px rgba(0, 0, 0, 0.7)",
         }
-      : {}),
+      : {
+          shadowColor: "#000000",
+          shadowOffset: { width: 0, height: -8 },
+          shadowOpacity: 0.5,
+          shadowRadius: 24,
+          elevation: 20,
+        }),
+  },
+  dragHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    alignSelf: "center",
+    marginBottom: 16,
   },
   header: {
     flexDirection: "row",

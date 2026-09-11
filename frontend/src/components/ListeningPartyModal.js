@@ -361,7 +361,12 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
                 <Text style={styles.membersCountText}>{onlineCount} Listening</Text>
               </View>
 
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.avatarsRow}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.avatarsScrollView}
+                contentContainerStyle={styles.avatarsRow}
+              >
                 {membersList.map((m, idx) => {
                   const isCur = m.uid === myUid || m.uid === currentUser?.uid;
                   const memberUser = {
@@ -375,10 +380,10 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
                   };
                   return (
                     <View key={(m.uid || idx) + "_m"} style={styles.memberAvatarWrap}>
-                      <UserAvatar user={memberUser} size={32} fontSize={12} />
+                      <UserAvatar user={memberUser} size={36} fontSize={13} />
                       {m.isHost && (
                         <View style={styles.hostCrownBadge}>
-                          <Ionicons name="star" size={8} color="#000000" />
+                          <Ionicons name="star" size={9} color="#000000" />
                         </View>
                       )}
                     </View>
@@ -589,7 +594,7 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
           <Modal
             visible={showDeleteConfirm}
             transparent={true}
-            animationType="fade"
+            animationType="slide"
             onRequestClose={() => !isDeleting && setShowDeleteConfirm(false)}
           >
             <TouchableOpacity
@@ -601,6 +606,7 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
                 style={styles.deleteModalCard}
                 onStartShouldSetResponder={() => true}
               >
+                <View style={styles.deleteDragHandle} />
                 <View style={styles.deleteIconCircle}>
                   <Ionicons name="close-circle-outline" size={32} color="#FF4D4D" />
                 </View>
@@ -744,8 +750,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "rgba(255, 255, 255, 0.03)",
-    borderRadius: 16,
-    padding: 12,
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     marginBottom: 20,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.05)",
@@ -755,51 +762,69 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "rgba(29, 185, 84, 0.12)",
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
     borderRadius: 12,
-    marginRight: 12,
+    marginRight: 10,
   },
   membersCountText: {
     fontFamily: fonts.semiBold || "System",
     fontSize: 11.5,
     color: "#1DB954",
   },
+  avatarsScrollView: {
+    flex: 1,
+    overflow: "visible",
+  },
   avatarsRow: {
-    gap: 8,
+    gap: 10,
     alignItems: "center",
+    paddingVertical: 6,
+    paddingHorizontal: 4,
   },
   memberAvatarWrap: {
     position: "relative",
+    paddingTop: 5,
+    paddingRight: 5,
+    paddingBottom: 2,
+    paddingLeft: 2,
   },
   memberAvatarImg: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: "#222222",
   },
   memberAvatarFallback: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: "#333333",
     alignItems: "center",
     justifyContent: "center",
   },
   memberAvatarText: {
     fontFamily: fonts.bold || "System",
-    fontSize: 12,
+    fontSize: 13,
     color: "#FFFFFF",
   },
   hostCrownBadge: {
     position: "absolute",
-    top: -2,
-    right: -2,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    top: 0,
+    right: 0,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: "#FFD700",
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#000000",
+    zIndex: 10,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 3,
+    elevation: 4,
   },
   nowPlayingCard: {
     flexDirection: "row",
@@ -1133,25 +1158,40 @@ const styles = StyleSheet.create({
   },
   deleteModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.8)",
+    backgroundColor: "rgba(0, 0, 0, 0.78)",
     alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 24,
+    justifyContent: "flex-end",
+    paddingHorizontal: 0,
+    ...(Platform.OS === "web" ? { backdropFilter: "blur(6px)", cursor: "default" } : {}),
   },
   deleteModalCard: {
     width: "100%",
-    maxWidth: 360,
+    maxWidth: 480,
     backgroundColor: "#16161A",
-    borderRadius: 24,
-    padding: 24,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    paddingHorizontal: 22,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === "web" ? 32 : 44,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.1)",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 10 },
+    borderBottomWidth: 0,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: -8 },
     shadowOpacity: 0.5,
-    shadowRadius: 20,
-    elevation: 12,
+    shadowRadius: 24,
+    elevation: 16,
+  },
+  deleteDragHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    alignSelf: "center",
+    marginBottom: 16,
   },
   deleteIconCircle: {
     width: 56,
