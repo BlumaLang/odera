@@ -4,6 +4,7 @@
  */
 
 require_once __DIR__ . '/../services/jiosaavn.php';
+require_once __DIR__ . '/../utils/response.php';
 
 class ArtistRoutes {
     
@@ -71,65 +72,14 @@ class ArtistRoutes {
         
         $page = max(1, (int)(getQueryParam('page', 1)));
         $limit = max(1, min(50, (int)(getQueryParam('limit', 20))));
-        $artistName = $artistId;
         
-        // Get artist info for the hero header
-        $artist = null;
-        if (!ctype_digit($artistId)) {
-            $searchResult = JioSaavnService::searchArtists($artistId, 1);
-            if (!empty($searchResult['artists'][0])) {
-                $artist = $searchResult['artists'][0];
-            }
-        }
-        if (!$artist) {
-            $info = JioSaavnService::getArtistInfo($artistId);
-            if (!empty($info['artist'])) {
-                $artist = $info['artist'];
-            }
-        }
-        $artistName = $artist['name'] ?? $artistId;
-        
-        // Fetch 100 songs from search in one go
-        $searchData = JioSaavnService::searchSongs("{$artistName} songs", 1, 100);
-        $allResults = $searchData['results'] ?? [];
-        
-        // Filter to only songs by this artist
-        $filtered = [];
-        $target = strtolower($artistName);
-        foreach ($allResults as $song) {
-            $songArtist = strtolower($song['artist'] ?? '');
-            $songTitle = strtolower($song['title'] ?? '');
-            if ($songArtist === '' && $songTitle === '') continue;
-            if (strpos($songArtist, $target) !== false || strpos($songTitle, $target) !== false) {
-                $filtered[] = $song;
-            }
-        }
-        
-        // Paginate
-        $offset = ($page - 1) * $limit;
-        $pageTracks = array_slice($filtered, $offset, $limit);
-        $hasMore = ($offset + $limit) < count($filtered);
-        
-        sendJson([
-            'tracks'   => $pageTracks,
-            'results'  => $pageTracks,
-            'has_more' => $hasMore,
-            'artist'   => $artist,
-            'total'    => count($filtered),
-        ]);
+        $result = JioSaavnService::getArtistSongs($artistId, $page, $limit);
+        sendJson($result);
     }
     
     private static function image($artistId) {
         if (empty($artistId)) {
             sendError('Artist ID is required');
-        }
-        
-        // If not a numeric ID, search for the artist first
-        if (!ctype_digit($artistId)) {
-            $searchResult = JioSaavnService::searchArtists($artistId, 1);
-            if (!empty($searchResult['artists'][0])) {
-                $artistId = $searchResult['artists'][0]['id'];
-            }
         }
         
         $image = JioSaavnService::getArtistImage($artistId);
@@ -147,14 +97,6 @@ class ArtistRoutes {
         
         $limit = (int)(getQueryParam('limit', 10));
         
-        // If not a numeric ID, search for the artist first
-        if (!ctype_digit($artistId)) {
-            $searchResult = JioSaavnService::searchArtists($artistId, 1);
-            if (!empty($searchResult['artists'][0])) {
-                $artistId = $searchResult['artists'][0]['id'];
-            }
-        }
-        
         $results = JioSaavnService::getRelatedArtists($artistId, $limit);
         sendJson($results);
     }
@@ -162,14 +104,6 @@ class ArtistRoutes {
     private static function info($artistId) {
         if (empty($artistId)) {
             sendError('Artist ID is required');
-        }
-        
-        // If not a numeric ID, search for the artist first
-        if (!ctype_digit($artistId)) {
-            $searchResult = JioSaavnService::searchArtists($artistId, 1);
-            if (!empty($searchResult['artists'][0])) {
-                $artistId = $searchResult['artists'][0]['id'];
-            }
         }
         
         $results = JioSaavnService::getArtistInfo($artistId);

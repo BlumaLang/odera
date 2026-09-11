@@ -31,6 +31,7 @@ import FullPlayerModal from "./src/components/FullPlayerModal";
 import DesktopSidebar from "./src/components/DesktopSidebar";
 import DesktopPlayerBar from "./src/components/DesktopPlayerBar";
 import ChangelogModal from "./src/components/ChangelogModal";
+import QueueNoticeBanner from "./src/components/QueueNoticeBanner";
 import { BUILD_NUMBER, APP_VERSION } from "./src/config/version";
 import { colors, fonts } from "./src/theme/colors";
 import { handleGlobalBack, registerBackAction } from "./src/services/navigation";
@@ -355,6 +356,7 @@ function AppContent() {
   } = useUser();
 
   const [showUpdateChangelog, setShowUpdateChangelog] = useState(false);
+  const [forceReady, setForceReady] = useState(false);
 
   // Profile modal back handler registration
   useEffect(() => {
@@ -432,10 +434,10 @@ function AppContent() {
     } catch (_) {}
   };
 
-  if (isLoadingUser) {
+  if (isLoadingUser && !forceReady) {
     return (
       <SafeAreaProvider>
-        <SplashScreen onFinish={() => {}} />
+        <SplashScreen onFinish={() => setForceReady(true)} />
       </SafeAreaProvider>
     );
   }
@@ -464,6 +466,8 @@ function AppContent() {
     >
       <StatusBar style="light" backgroundColor="#000000" />
       <MainTabs />
+      {/* Global Floating Queue Action Feedback */}
+      <QueueNoticeBanner />
       {/* Global Profile Page Modal */}
       <ProfileScreen visible={isProfileOpen} onClose={closeProfile} />
       {/* One-time Update Changelog Modal (shows once per version update on app open) */}
@@ -505,13 +509,13 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ResponsiveProvider>
-        <UserProvider>
-          <ErrorBoundary>
+        <ErrorBoundary>
+          <UserProvider>
             <AudioProvider>
               <AppContent />
             </AudioProvider>
-          </ErrorBoundary>
-        </UserProvider>
+          </UserProvider>
+        </ErrorBoundary>
       </ResponsiveProvider>
     </SafeAreaProvider>
   );

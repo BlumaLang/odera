@@ -5,6 +5,17 @@
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>
 
+# Explicitly grant public access to Web App Manifest and PWA assets
+<FilesMatch "^(manifest\.json|manifest\.webmanifest|sw\.js)$">
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Allow from all
+    </IfModule>
+</FilesMatch>
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteBase /
@@ -20,10 +31,14 @@
     # Route /api to the PHP API router
     RewriteRule ^api$ api/index.php [L]
 
-    # Serve frontend from dist/ or root
-    RewriteCond %{REQUEST_FILENAME} !-f
-    RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteRule ^(.*)$ dist/index.html [L]
+    # If file exists in public/, serve from public/
+    RewriteCond %{DOCUMENT_ROOT}/public/$1 -f
+    RewriteRule ^(.*)$ public/$1 [L]
+
+    # Serve SPA frontend from public/index.html or index.html
+    RewriteCond %{DOCUMENT_ROOT}/public/index.html -f
+    RewriteRule ^ public/index.html [L]
+    RewriteRule ^ index.html [L]
 </IfModule>
 
 # PWA Cache Controls

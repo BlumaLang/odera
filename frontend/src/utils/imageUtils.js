@@ -17,34 +17,53 @@ export function getHighResArtwork(url) {
     return clean;
   }
 
+  // JioSaavn CDN — upgrade to 500x500
+  if (clean.includes("saavncdn.com") || clean.includes("c.saavncdn.com")) {
+    clean = clean.replace(/\/(50x50|150x150|250x250)\//g, "/500x500/");
+    clean = clean.replace(/([_-])(50x50|150x150|250x250)\./g, "$1500x500.");
+    return clean;
+  }
+
+  // YouTube video thumbnails — upgrade to high quality (480x360)
+  if (clean.includes("i.ytimg.com/vi/")) {
+    // Upgrade low-res thumbnails to hqdefault (reliable 480x360)
+    clean = clean.replace(/\/(default|sddefault|mqdefault)\.jpg/, "/hqdefault.jpg");
+    return clean;
+  }
+
   // Generic CDN — upgrade to 800px
   clean = clean.replace(/=w\d+-h\d+[^?&]*/, "=w800-h800-l90-rj");
   clean = clean.replace(/=s\d+[^?&]*/, "=s800");
-
-  // Fallback: downgrade overly large / broken YouTube defaults
-  clean = clean.replace(/\/default\.jpg/, "/mqdefault.jpg");
-  clean = clean.replace(/\/sddefault\.jpg/, "/mqdefault.jpg");
-  clean = clean.replace(/\/maxresdefault\.jpg/, "/mqdefault.jpg");
 
   return clean;
 }
 
 /**
- * Get highest quality artist image.
+ * HTML entity decoder for track titles, artists, and album names.
+ */
+export function decodeHtml(str) {
+  if (!str || typeof str !== "string") return str || "";
+  return str
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ");
+}
+
+/**
+ * Get highest quality artist image (always 500x500 or higher).
  * JioSaavn images often have size parameters we can upgrade.
  */
 export function getHighResArtistImage(url) {
   if (!url) return null;
-  let clean = url;
-
-  // JioSaavn images: replace size parameter with 500x500
+  // Apply full artwork upgrade pipeline (handles JioSaavn _150x150., -150x150., /150x150/, YT, etc.)
+  let clean = getHighResArtwork(url);
+  // Additional artist specific params
   clean = clean.replace(/=\d+x\d+/, "=500x500");
   clean = clean.replace(/\/\d+x\d+\//, "/500x500/");
-
-  // Generic CDN — upgrade to 500px for artist circular images
-  clean = clean.replace(/=w\d+-h\d+[^?&]*/, "=w500-h500-l90-rj");
-  clean = clean.replace(/=s\d+[^?&]*/, "=s500");
-
   return clean;
 }
 

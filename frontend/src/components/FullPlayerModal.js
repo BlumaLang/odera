@@ -115,6 +115,11 @@ export default function FullPlayerModal() {
     cancelSleepTimer,
     removeFromQueue,
     clearQueue,
+    addToPlayNext,
+    setAsNextTrack,
+    moveQueueItem,
+    isQueueOpen,
+    setIsQueueOpen,
   } = useAudio();
 
   const { isDesktop, isTablet, deviceName, deviceIcon: accurateDeviceIcon } = useResponsive();
@@ -136,6 +141,12 @@ export default function FullPlayerModal() {
   const barLayoutRef = useRef({ pageX: 0, width: 0 });
 
   const [showQueue, setShowQueue] = useState(false);
+
+  useEffect(() => {
+    if (isQueueOpen) {
+      setShowQueue(true);
+    }
+  }, [isQueueOpen]);
   const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
   const [lyrics, setLyrics] = useState(null);
@@ -887,6 +898,7 @@ export default function FullPlayerModal() {
                         {item.artist}
                       </Text>
                     </View>
+
                     <TouchableOpacity
                       onPress={(e) => {
                         e?.stopPropagation?.();

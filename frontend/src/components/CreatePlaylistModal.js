@@ -62,28 +62,33 @@ export default function CreatePlaylistModal({
   const [loading, setLoading] = useState(false);
 
   const inputRef = useRef(null);
+  const isInitializedRef = useRef(false);
 
-  // Initialize input value ONLY when modal opens
+  // Initialize input value ONLY once when modal transitions to visible
   useEffect(() => {
     if (visible) {
-      const startingName =
-        initialName && initialName.trim()
-          ? initialName.trim()
-          : getNextPlaylistDefaultName(existingPlaylists);
-      setPlaylistName(startingName);
-      setLoading(false);
+      if (!isInitializedRef.current) {
+        isInitializedRef.current = true;
+        const startingName =
+          initialName && initialName.trim()
+            ? initialName.trim()
+            : getNextPlaylistDefaultName(existingPlaylists);
+        setPlaylistName(startingName);
+        setLoading(false);
 
-      const timer = setTimeout(() => {
-        if (inputRef.current) {
-          inputRef.current.focus();
-        }
-      }, 120);
-      return () => clearTimeout(timer);
+        const timer = setTimeout(() => {
+          if (inputRef.current) {
+            inputRef.current.focus();
+          }
+        }, 120);
+        return () => clearTimeout(timer);
+      }
     } else {
+      isInitializedRef.current = false;
       setPlaylistName("");
       setLoading(false);
     }
-  }, [visible, initialName, existingPlaylists]);
+  }, [visible]);
 
   useEffect(() => {
     if (visible && onClose) {
@@ -96,12 +101,11 @@ export default function CreatePlaylistModal({
 
   const handleSave = async () => {
     const trimmed = playlistName.trim();
-    const finalName =
-      trimmed || (initialName && initialName.trim()) || getNextPlaylistDefaultName(existingPlaylists);
+    if (!trimmed) return;
     setLoading(true);
     try {
       if (onSubmit) {
-        await onSubmit(finalName, initialCover || "");
+        await onSubmit(trimmed, initialCover || "");
       }
       onClose();
     } catch (err) {
@@ -262,9 +266,12 @@ export default function CreatePlaylistModal({
 
             {/* Bottom Create Button */}
             <TouchableOpacity
-              style={[styles.bottomCreateBtn, loading && styles.disabledBtn]}
+              style={[
+                styles.bottomCreateBtn,
+                (loading || !playlistName.trim()) && styles.disabledBtn,
+              ]}
               onPress={handleSave}
-              disabled={loading}
+              disabled={loading || !playlistName.trim()}
               activeOpacity={0.85}
             >
               {loading ? (

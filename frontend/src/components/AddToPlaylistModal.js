@@ -15,7 +15,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useUser } from "../context/UserContext";
-import LikeConfetti from "./LikeConfetti";
 import CreatePlaylistModal from "./CreatePlaylistModal";
 import { registerBackAction } from "../services/navigation";
 import { getHighResArtwork } from "../utils/imageUtils";
@@ -53,9 +52,6 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
   const [loading, setLoading] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [addedPlaylists, setAddedPlaylists] = useState({});
-  const [statusMessage, setStatusMessage] = useState("");
-  const [confettiPlaylistId, setConfettiPlaylistId] = useState(null);
-  const [showBannerConfetti, setShowBannerConfetti] = useState(false);
 
   useEffect(() => {
     if (showCreateModal) {
@@ -78,10 +74,7 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
   useEffect(() => {
     if (visible) {
       setAddedPlaylists({});
-      setStatusMessage("");
       setShowCreateModal(false);
-      setConfettiPlaylistId(null);
-      setShowBannerConfetti(false);
     }
   }, [visible]);
 
@@ -94,10 +87,6 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
         const ok = await removeTrackFromPlaylist(playlist.id, vid);
         if (ok) {
           setAddedPlaylists((prev) => ({ ...prev, [playlist.id]: "removed" }));
-          setStatusMessage(`Removed from "${playlist.name}"`);
-          setTimeout(() => {
-            setStatusMessage("");
-          }, 2500);
         } else {
           setAddedPlaylists((prev) => ({ ...prev, [playlist.id]: "error" }));
         }
@@ -105,14 +94,7 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
         const ok = await addTrackToPlaylist(playlist.id, track);
         if (ok) {
           setAddedPlaylists((prev) => ({ ...prev, [playlist.id]: "done" }));
-          setStatusMessage(`Added to "${playlist.name}"`);
-          setConfettiPlaylistId(playlist.id);
-          setShowBannerConfetti(true);
           if (onSuccess) onSuccess(playlist);
-          setTimeout(() => {
-            setStatusMessage("");
-            setShowBannerConfetti(false);
-          }, 2500);
         } else {
           setAddedPlaylists((prev) => ({ ...prev, [playlist.id]: "error" }));
         }
@@ -209,19 +191,6 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
               </View>
             )}
 
-            {/* Status Banner */}
-            {statusMessage ? (
-              <View style={styles.statusBanner}>
-                <Ionicons name="checkmark-circle" size={16} color={colors.primary} />
-                <Text style={styles.statusText}>{statusMessage}</Text>
-                {showBannerConfetti && (
-                  <View style={styles.bannerConfettiAnchor}>
-                    <LikeConfetti onComplete={() => setShowBannerConfetti(false)} />
-                  </View>
-                )}
-              </View>
-            ) : null}
-
             {/* Create New Playlist Action Card */}
             <TouchableOpacity
               style={styles.newPlaylistBtn}
@@ -312,9 +281,6 @@ export default function AddToPlaylistModal({ visible, onClose, track, onSuccess 
                         </Text>
                       </View>
                       <View style={styles.actionWrap}>
-                        {confettiPlaylistId === item.id && (
-                          <LikeConfetti onComplete={() => setConfettiPlaylistId(null)} />
-                        )}
                         {status === "adding" ? (
                           <ActivityIndicator size="small" color={colors.primary} />
                         ) : isAdded ? (
@@ -447,28 +413,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
     marginTop: 2,
-  },
-  statusBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(29, 185, 84, 0.15)",
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    marginBottom: 12,
-    gap: 8,
-    position: "relative",
-  },
-  statusText: {
-    fontFamily: fonts.medium,
-    fontSize: 13,
-    color: colors.primary,
-    flex: 1,
-  },
-  bannerConfettiAnchor: {
-    position: "absolute",
-    right: 20,
-    top: "50%",
   },
   newPlaylistBtn: {
     flexDirection: "row",

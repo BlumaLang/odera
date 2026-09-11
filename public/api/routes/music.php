@@ -18,6 +18,8 @@ class MusicRoutes {
                 return self::personalizedFeed();
             case 'lyrics':
                 return self::lyrics();
+            case 'proxy-image':
+                return self::proxyImage();
             case 'stream':
                 return self::stream($params['id'] ?? null);
             case 'track':
@@ -104,5 +106,38 @@ class MusicRoutes {
         }
         
         sendJson($image);
+    }
+    
+    private static function proxyImage() {
+        $url = getQueryParam('url');
+        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+            sendError('Valid image URL is required', 400);
+        }
+        
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 5,
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        ]);
+        
+        $imageData = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $contentType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        curl_close($ch);
+        
+        if ($httpCode >= 200 && $httpCode < 300 && !empty($imageData)) {
+            header('Access-Control-Allow-Origin: *');
+            header('Content-Type: ' . ($contentType ?: 'image/jpeg'));
+            header('Cache-Control: public, max-age=86400');
+            echo $imageData;
+            exit;
+        }
+        
+        sendError('Failed to fetch image', 502);
     }
 }

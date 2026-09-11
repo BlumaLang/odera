@@ -213,14 +213,6 @@ export default function ProfileScreen({ visible, onClose }) {
     }
   }, [showDisclaimerModal]);
 
-  useEffect(() => {
-    if (visible && onClose) {
-      return registerBackAction(() => {
-        onClose();
-        return true;
-      });
-    }
-  }, [visible, onClose]);
 
   // Settings state
   const [audioQuality, setAudioQuality] = useState("Lossless (320 kbps)");

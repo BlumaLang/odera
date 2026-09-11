@@ -20,6 +20,9 @@ import {
   getCachedTrackImage,
   getCollabPlaylistDetails,
   addTrackToCollabPlaylist,
+  subscribeFollowedArtists,
+  getAppTrendingTracksRTDB,
+  getTrendingFeedRTDB,
 } from "../services/firebase";
 import { getAccurateDeviceInfo } from "./ResponsiveContext";
 
@@ -71,6 +74,19 @@ export function fisherYatesShuffle(arr) {
   return result;
 }
 
+export function cleanTrackTitle(title) {
+  if (!title) return "Track";
+  return String(title)
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s*\([^)]*(?:official|video|audio|lyrics|hd|4k)[^)]*\)/gi, "")
+    .replace(/\s*\[[^\]]*(?:official|video|audio|lyrics|hd|4k)[^\]]*\]/gi, "")
+    .trim();
+}
+
 // ─── Stream URL Cache ───────────────────────────────────────────────────────
 // In-memory cache: maps clean trackId -> { stream_url, duration, timestamp }.
 // Resolving the next URL early reduces the normal gap between queued tracks.
@@ -91,6 +107,9 @@ const AudioProvider = ({ children }) => {
   const [isShuffle, setIsShuffle] = useState(false);
   const [isFullPlayerVisible, setIsFullPlayerVisible] = useState(false);
   const [errorNotice, setErrorNotice] = useState(null);
+  const [isQueueOpen, setIsQueueOpen] = useState(false);
+  const [queueNotice, setQueueNotice] = useState(null);
+  const queueNoticeTimerRef = useRef(null);
 
   // Sleep Timer state
   const [sleepSecondsLeft, setSleepSecondsLeft] = useState(null);
@@ -128,6 +147,33 @@ const AudioProvider = ({ children }) => {
   const playNextRef = useRef(null);
   const playPreviousRef = useRef(null);
   const enrichmentTokenRef = useRef(0);
+  const followedArtistsRef = useRef([]);
+
+  // Keep followed artists live for personalized & diverse auto-queue
+  useEffect(() => {
+    let unsubscribeFollowed = null;
+    const unsubAuth = onAuthChange((user) => {
+      if (unsubscribeFollowed) {
+        unsubscribeFollowed();
+        unsubscribeFollowed = null;
+      }
+      if (user?.uid) {
+        unsubscribeFollowed = subscribeFollowedArtists(user.uid, (artistsList) => {
+          const cleanList = (Array.isArray(artistsList) ? artistsList : [])
+            .map((a) => (typeof a === "string" ? a : a?.name || "").trim())
+            .filter((a) => a.length > 0);
+          followedArtistsRef.current = cleanList;
+        });
+      } else {
+        followedArtistsRef.current = [];
+      }
+    });
+
+    return () => {
+      if (unsubscribeFollowed) unsubscribeFollowed();
+      if (unsubAuth) unsubAuth();
+    };
+  }, []);
 
   queueRef.current = queue;
   queueIndexRef.current = queueIndex;
@@ -517,7 +563,7 @@ const AudioProvider = ({ children }) => {
         const trackId = currentTrackRef.current.videoId || currentTrackRef.current.video_id || currentTrackRef.current.id;
         try {
           console.log(`[AudioContext] Re-resolving fresh stream URL for ${trackId}...`);
-          const fresh = await api.getStream(trackId);
+          const fresh = await api.getStream(trackId, 1, currentTrackRef.current?.title, currentTrackRef.current?.artist);
           if (fresh && fresh.stream_url && webAudioRef.current) {
             webAudioRef.current.src = fresh.stream_url;
             await webAudioRef.current.play();
@@ -841,25 +887,117 @@ const AudioProvider = ({ children }) => {
     setSleepEndOnTrack(false);
   };
 
-  // ─── Smart Auto-Queue: Enriches queue with artist top hits & related artist tracks ──
-  const enrichQueueForTrack = async (track, baseQueue = []) => {
-    if (!track) return;
-    // If user explicitly chose a playlist/album/list with multiple songs, preserve their queue intact!
-    if (baseQueue && baseQueue.length > 1) return;
+  // ─── Song Title Root Normalizer & Similarity Checker ──
+  // Strictly eliminates duplicate and near-duplicate song names (e.g. "Riha", "Rihaa", "Riha (Unplugged)")
+  const cleanSongTitleRoot = (str) => {
+    if (!str) return "";
+    let s = String(str).toLowerCase();
+    s = s.replace(/[\(\[\{].*?[\)\]\}]/g, " ");
+    s = s.replace(/\b(feat|ft|featuring|with)\b.*$/i, " ");
+    s = s.replace(/\b(official|audio|video|music|lyric|lyrics|mv|hd|4k|visualizer|teaser)\b/gi, " ");
+    s = s.replace(/\b(acoustic|unplugged|remix|alternate|live|version|edit|instrumental|slowed|reverb|reprise|extended|mix|lofi|lq|hq)\b/gi, " ");
+    s = s.replace(/[^a-z0-9]/g, "");
+    s = s.replace(/(.)\1+/g, "$1");
+    return s.trim();
+  };
 
-    const currentToken = ++enrichmentTokenRef.current;
+  const areTitlesSameOrTooSimilar = (titleA, titleB) => {
+    const rootA = cleanSongTitleRoot(titleA);
+    const rootB = cleanSongTitleRoot(titleB);
+    if (!rootA || !rootB) return false;
+    if (rootA === rootB) return true;
+    const minLen = Math.min(rootA.length, rootB.length);
+    if (minLen >= 4) {
+      if (rootA.startsWith(rootB) || rootB.startsWith(rootA)) return true;
+      if (rootA.slice(0, 4) === rootB.slice(0, 4) && Math.abs(rootA.length - rootB.length) <= 3) {
+        return true;
+      }
+    } else if (minLen === 3 && rootA.slice(0, 3) === rootB.slice(0, 3) && Math.abs(rootA.length - rootB.length) <= 1) {
+      return true;
+    }
+    return false;
+  };
+
+  // Helper to fetch user's Blend tracks from Firebase RTDB
+  const fetchUserBlendTracks = async (uid) => {
+    if (!uid) return [];
+    try {
+      const userCollabsSnap = await get(child(dbRef(db), `users/${uid}/collab_playlists`));
+      if (!userCollabsSnap.exists()) return [];
+      const collabs = userCollabsSnap.val() || {};
+      const collabIds = Object.keys(collabs);
+      const tracks = [];
+      for (const cid of collabIds) {
+        const plSnap = await get(child(dbRef(db), `collab_playlists/${cid}`));
+        if (!plSnap.exists()) continue;
+        const pl = plSnap.val();
+        if (!pl.isBlend && !cid.startsWith("blend_")) continue;
+        const rawTracks = pl.tracks ? (Array.isArray(pl.tracks) ? pl.tracks : Object.values(pl.tracks)) : [];
+        for (const t of rawTracks) {
+          if (t && (t.videoId || t.video_id || t.id)) tracks.push(t);
+        }
+      }
+      return tracks;
+    } catch (_) {
+      return [];
+    }
+  };
+
+  // Helper to fetch user's Personal Playlists and Liked Songs from Firebase RTDB
+  const fetchUserLibraryTracks = async (uid) => {
+    if (!uid) return [];
+    try {
+      const [plsSnap, likedSnap] = await Promise.allSettled([
+        get(child(dbRef(db), `users/${uid}/playlists`)),
+        get(child(dbRef(db), `users/${uid}/likedSongs`)),
+      ]);
+      const tracks = [];
+      if (likedSnap.status === "fulfilled" && likedSnap.value.exists()) {
+        const likedVal = likedSnap.value.val();
+        const likedArr = Array.isArray(likedVal) ? likedVal : Object.values(likedVal || {});
+        tracks.push(...likedArr);
+      }
+      if (plsSnap.status === "fulfilled" && plsSnap.value.exists()) {
+        const plsVal = plsSnap.value.val();
+        const plsArr = Array.isArray(plsVal) ? plsVal : Object.values(plsVal || {});
+        for (const pl of plsArr) {
+          const pTracks = pl?.tracks ? (Array.isArray(pl.tracks) ? pl.tracks : Object.values(pl.tracks)) : [];
+          tracks.push(...pTracks);
+        }
+      }
+      return tracks.filter((t) => t && (t.videoId || t.video_id || t.id));
+    } catch (_) {
+      return [];
+    }
+  };
+
+  // Helper to fetch Trending on Staytup tracks
+  const fetchTrendingStaytupTracks = async () => {
+    try {
+      const rtdbTrending = await getAppTrendingTracksRTDB(25);
+      if (Array.isArray(rtdbTrending) && rtdbTrending.length > 0) {
+        return rtdbTrending;
+      }
+    } catch (_) {}
+    try {
+      const feedData = await api.getHomeFeed("staytup", false);
+      const sections = feedData?.sections || [];
+      const trendingSec = sections.find(
+        (s) => s.id === "trending_now" || s.id === "trending_on_staytup" || s.title?.toLowerCase().includes("trending")
+      );
+      return trendingSec?.items || trendingSec?.tracks || sections[0]?.items || [];
+    } catch (_) {
+      return [];
+    }
+  };
+
+  // ─── Core Smart Queue Builder: Followed Artists, Blend, Playlists & Trending ──
+  const buildSmartPersonalizedQueue = async (track, baseQueue = [], maxTracks = 20) => {
+    if (!track) return [];
     try {
       const trackId = track.videoId || track.video_id || track.id;
-      const normTitle = (str) =>
-        String(str || "")
-          .toLowerCase()
-          .replace(/\(.*?\)/g, "")
-          .replace(/\[.*?\]/g, "")
-          .replace(/feat\..*$/i, "")
-          .replace(/ft\..*$/i, "")
-          .trim();
-
-      const currentTitleNorm = normTitle(track.title);
+      const currentTitle = track.title || "";
+      const currentTitleRoot = cleanSongTitleRoot(currentTitle);
 
       const artists = (track.artist || track.primaryArtists || "")
         .split(/[,&•/]/)
@@ -873,231 +1011,321 @@ const AudioProvider = ({ children }) => {
       );
       if (trackId) existingIds.add(trackId);
 
-      const existingTitles = new Set();
-      if (currentTitleNorm) existingTitles.add(currentTitleNorm);
+      const existingTitleRoots = new Set();
+      if (currentTitleRoot) existingTitleRoots.add(currentTitleRoot);
       (baseQueue || []).forEach((t) => {
-        const nt = normTitle(t?.title);
-        if (nt) existingTitles.add(nt);
+        const r = cleanSongTitleRoot(t?.title);
+        if (r) existingTitleRoots.add(r);
       });
 
-      // 1. Fetch official discography top hits by the primary artist
-      let artistTracks = [];
-      if (cleanArtist && cleanArtist.length > 1) {
-        try {
-          const artistSongsData = await api.getArtistSongs(cleanArtist, 0, 15);
-          const rawTracks = artistSongsData?.tracks || artistSongsData?.results || [];
-          artistTracks = rawTracks.filter((t) => {
+      const uid = auth.currentUser?.uid;
+
+      const isCandidateAllowed = (t) => {
+        if (!t) return false;
+        const id = t?.videoId || t?.video_id || t?.id;
+        if (!id || existingIds.has(id)) return false;
+        if (uid && isTrackHidden(uid, id)) return false;
+        const tTitle = t?.title;
+        if (!tTitle) return false;
+        const root = cleanSongTitleRoot(tTitle);
+        if (!root) return false;
+        if (existingTitleRoots.has(root)) return false;
+        if (areTitlesSameOrTooSimilar(tTitle, currentTitle)) return false;
+        for (const exRoot of existingTitleRoots) {
+          if (areTitlesSameOrTooSimilar(root, exRoot)) return false;
+        }
+        return true;
+      };
+
+      const filterUniqueCandidates = (rawList, maxCount = 5) => {
+        const out = [];
+        for (const t of rawList || []) {
+          if (isCandidateAllowed(t)) {
             const id = t?.videoId || t?.video_id || t?.id;
-            const tTitle = normTitle(t?.title);
-            if (!id || existingIds.has(id)) return false;
-            if (tTitle && existingTitles.has(tTitle)) return false;
+            const root = cleanSongTitleRoot(t?.title);
             existingIds.add(id);
-            if (tTitle) existingTitles.add(tTitle);
-            return true;
-          });
-        } catch (_) {}
-      }
-
-      // 2. If artist has few hits or there's a co-artist, fetch from secondary artist or similar artists
-      let relatedTracks = [];
-      if (artistTracks.length < 8 && cleanArtist && cleanArtist.length > 1) {
-        try {
-          const secondaryArtist = artists[1];
-          if (secondaryArtist && secondaryArtist.toLowerCase() !== cleanArtist.toLowerCase()) {
-            const secSongsData = await api.getArtistSongs(secondaryArtist, 0, 6);
-            const secRaw = secSongsData?.tracks || secSongsData?.results || [];
-            for (const st of secRaw) {
-              const id = st?.videoId || st?.video_id || st?.id;
-              const tTitle = normTitle(st?.title);
-              if (id && !existingIds.has(id) && (!tTitle || !existingTitles.has(tTitle))) {
-                existingIds.add(id);
-                if (tTitle) existingTitles.add(tTitle);
-                relatedTracks.push(st);
-              }
-            }
+            if (root) existingTitleRoots.add(root);
+            out.push(t);
+            if (out.length >= maxCount) break;
           }
+        }
+        return out;
+      };
 
-          if (artistTracks.length + relatedTracks.length < 8) {
-            const relatedData = await api.getRelatedArtists(cleanArtist, 2);
-            const relatedArtists = relatedData?.artists || relatedData?.related || [];
-            for (const rel of relatedArtists) {
-              const relName = rel?.name || rel?.artist;
-              if (relName && relName.toLowerCase() !== cleanArtist.toLowerCase()) {
-                const relSongsData = await api.getArtistSongs(relName, 0, 4);
-                const rTracks = relSongsData?.tracks || relSongsData?.results || [];
-                for (const rt of rTracks) {
-                  const id = rt?.videoId || rt?.video_id || rt?.id;
-                  const tTitle = normTitle(rt?.title);
-                  if (id && !existingIds.has(id) && (!tTitle || !existingTitles.has(tTitle))) {
-                    existingIds.add(id);
-                    if (tTitle) existingTitles.add(tTitle);
-                    relatedTracks.push(rt);
-                  }
-                }
-              }
-            }
+      // 1. Fetch concurrently from all requested sources
+      const [
+        primaryArtistRes,
+        followedArtistsRes,
+        blendTracksRes,
+        libraryTracksRes,
+        trendingTracksRes,
+      ] = await Promise.allSettled([
+        // Source 0: Current Artist Top Songs (max 2)
+        cleanArtist && cleanArtist.length > 1
+          ? api.getArtistSongs(cleanArtist, 0, 6)
+          : Promise.resolve([]),
+
+        // Source 1: Artists I Follow (pick 3 random followed artists)
+        (async () => {
+          const userFollowed = followedArtistsRef.current || [];
+          const validFollowed = userFollowed.filter(
+            (fa) => fa && fa.toLowerCase() !== cleanArtist.toLowerCase()
+          );
+          const chosen = fisherYatesShuffle(validFollowed).slice(0, 3);
+          if (chosen.length === 0) return [];
+          const fetches = chosen.map((name) => api.getArtistSongs(name, 0, 4).catch(() => null));
+          const res = await Promise.all(fetches);
+          const out = [];
+          for (const d of res) {
+            const r = d?.tracks || d?.results || [];
+            out.push(...r);
           }
-        } catch (_) {}
-      }
+          return out;
+        })(),
 
-      // 3. Queue only authentic artist hits & closely related tracks (No random Home feed dump!)
-      const mergedRecs = [...artistTracks, ...relatedTracks].slice(0, 15);
-      if (mergedRecs.length > 0) {
-        if (currentToken !== enrichmentTokenRef.current) return;
+        // Source 2: My Blend Playlists
+        fetchUserBlendTracks(uid),
 
+        // Source 3: My Playlists & Liked Songs
+        fetchUserLibraryTracks(uid),
+
+        // Source 4: Trending on Staytup (Community Listening via RTDB)
+        fetchTrendingStaytupTracks(),
+      ]);
+
+      const rawPrimary = primaryArtistRes.status === "fulfilled" ? (primaryArtistRes.value?.tracks || primaryArtistRes.value?.results || []) : [];
+      const rawFollowed = followedArtistsRes.status === "fulfilled" ? followedArtistsRes.value : [];
+      const rawBlend = blendTracksRes.status === "fulfilled" ? blendTracksRes.value : [];
+      const rawLibrary = libraryTracksRes.status === "fulfilled" ? libraryTracksRes.value : [];
+      const rawTrending = trendingTracksRes.status === "fulfilled" ? trendingTracksRes.value : [];
+
+      // Extract distinct non-repetitive tracks from each pool
+      const distinctPrimary = filterUniqueCandidates(fisherYatesShuffle(rawPrimary), 2);
+      const distinctFollowed = filterUniqueCandidates(fisherYatesShuffle(rawFollowed), 5);
+      const distinctBlend = filterUniqueCandidates(fisherYatesShuffle(rawBlend), 4);
+      const distinctLibrary = filterUniqueCandidates(fisherYatesShuffle(rawLibrary), 4);
+      const distinctTrending = filterUniqueCandidates(fisherYatesShuffle(rawTrending), 5);
+
+      const combinedPool = [
+        ...distinctPrimary,
+        ...distinctFollowed,
+        ...distinctBlend,
+        ...distinctLibrary,
+        ...distinctTrending,
+      ];
+
+      // Randomize completely across all sources: "AMKE IT A RANDOM AMKE IT MORE AWSOME AND ALL DONE"
+      return fisherYatesShuffle(combinedPool).slice(0, maxTracks);
+    } catch (err) {
+      console.warn("[AudioContext] Smart personalized queue build notice:", err?.message);
+      return [];
+    }
+  };
+
+  // ─── Smart Auto-Queue: Populates queue when playing a song ──
+  const enrichQueueForTrack = async (track, baseQueue = []) => {
+    if (!track) return;
+    // If baseQueue already has multiple distinct tracks from an explicit album/playlist, preserve it
+    if (baseQueue && baseQueue.length > 1) return;
+
+    const currentToken = ++enrichmentTokenRef.current;
+    try {
+      const randomizedTracks = await buildSmartPersonalizedQueue(track, baseQueue, 20);
+      if (randomizedTracks.length === 0) return;
+      if (currentToken !== enrichmentTokenRef.current) return;
+
+      setQueue((prevQueue) => {
+        if (currentToken !== enrichmentTokenRef.current) return prevQueue;
+        const curId = currentTrackRef.current?.videoId || currentTrackRef.current?.video_id || currentTrackRef.current?.id;
+        const targetId = track.videoId || track.video_id || track.id;
+        if (curId && targetId && curId !== targetId) return prevQueue;
+
+        const seen = new Set(prevQueue.map((t) => t?.videoId || t?.video_id || t?.id).filter(Boolean));
+        const finalNew = randomizedTracks.filter((t) => {
+          const id = t?.videoId || t?.video_id || t?.id;
+          return id && !seen.has(id);
+        });
+        if (finalNew.length === 0) return prevQueue;
+
+        const updated = [...prevQueue, ...finalNew];
+        queueRef.current = updated;
+        return updated;
+      });
+    } catch (err) {
+      console.warn("[AudioContext] Smart queue enrichment error:", err?.message);
+    }
+  };
+
+  // ─── Smart Autoplay: Generates diverse randomized tracks when queue is ending ──
+  const autoplayGeneratedRef = useRef(false);
+
+  const generateAutoplayTracks = async (currentQueue, currentIndex) => {
+    if (!currentQueue || currentIndex < 0) return;
+    const currentTrackObj = currentQueue[currentIndex];
+    if (!currentTrackObj) return;
+
+    try {
+      const newAutoplayTracks = await buildSmartPersonalizedQueue(currentTrackObj, currentQueue, 15);
+      if (newAutoplayTracks.length > 0) {
         setQueue((prevQueue) => {
-          if (currentToken !== enrichmentTokenRef.current) return prevQueue;
           const curId = currentTrackRef.current?.videoId || currentTrackRef.current?.video_id || currentTrackRef.current?.id;
-          const targetId = track.videoId || track.video_id || track.id;
+          const targetId = currentTrackObj?.videoId || currentTrackObj?.video_id || currentTrackObj?.id;
           if (curId && targetId && curId !== targetId) return prevQueue;
 
           const seen = new Set(prevQueue.map((t) => t?.videoId || t?.video_id || t?.id).filter(Boolean));
-          const uid = auth.currentUser?.uid || "guest";
-          const uniqueNew = mergedRecs.filter((t) => {
+          const uniqueNew = newAutoplayTracks.filter((t) => {
             const id = t?.videoId || t?.video_id || t?.id;
-            return id && !seen.has(id) && !isTrackHidden(uid, id);
+            return id && !seen.has(id);
           });
           if (uniqueNew.length === 0) return prevQueue;
 
           const updated = [...prevQueue, ...uniqueNew];
           queueRef.current = updated;
+          autoplayGeneratedRef.current = false;
           return updated;
         });
       }
     } catch (err) {
-      console.warn("[AudioContext] Smart queue enrichment notice:", err?.message);
+      console.warn("[AudioContext] Autoplay generation notice:", err?.message);
     }
   };
 
-  // ─── Smart Autoplay: Generates context-aware tracks when queue is ending ──
-  const autoplayGeneratedRef = useRef(false);
+  const showQueueNotice = (text, icon = "play-forward") => {
+    if (queueNoticeTimerRef.current) clearTimeout(queueNoticeTimerRef.current);
+    setQueueNotice({ text, icon });
+    queueNoticeTimerRef.current = setTimeout(() => {
+      setQueueNotice(null);
+    }, 2800);
+  };
 
-  const generateAutoplayTracks = async (currentQueue, currentIndex) => {
-    if (!currentQueue || currentIndex < 0) return;
+  const openQueue = () => {
+    setIsQueueOpen(true);
+    setIsFullPlayerVisible(true);
+  };
 
-    const currentTrackObj = currentQueue[currentIndex];
-    if (!currentTrackObj) return;
-
-    const normTitle = (str) =>
-      String(str || "")
-        .toLowerCase()
-        .replace(/\(.*?\)/g, "")
-        .replace(/\[.*?\]/g, "")
-        .replace(/feat\..*$/i, "")
-        .replace(/ft\..*$/i, "")
-        .trim();
-
-    // Collect existing IDs and titles from current queue to avoid duplicates
-    const existingIds = new Set(currentQueue.map((t) => t?.videoId || t?.video_id || t?.id).filter(Boolean));
-    const existingTitles = new Set(currentQueue.map((t) => normTitle(t?.title)).filter(Boolean));
-
-    const artists = (currentTrackObj.artist || currentTrackObj.primaryArtists || "")
-      .split(/[,&•/]/)
-      .map((a) => a.replace(/\(.*?\)/g, "").trim())
-      .filter((a) => a.length > 1);
-    const cleanArtist = artists[0] || (currentTrackObj.artist || currentTrackObj.primaryArtists || "").trim();
-
-    const recommendations = [];
-
-    // Priority 1: More tracks from the same artist
-    if (cleanArtist && cleanArtist.length > 1) {
-      try {
-        const data = await api.getArtistSongs(cleanArtist, 0, 8);
-        const tracks = data?.tracks || data?.results || [];
-        for (const t of tracks) {
-          const id = t?.videoId || t?.video_id || t?.id;
-          const tTitle = normTitle(t?.title);
-          if (id && !existingIds.has(id) && (!tTitle || !existingTitles.has(tTitle))) {
-            existingIds.add(id);
-            if (tTitle) existingTitles.add(tTitle);
-            recommendations.push({ ...t, _autoplaySource: "artist" });
-          }
-        }
-      } catch (_) {}
-    }
-
-    // Priority 2: Related/similar artists
-    if (recommendations.length < 10 && cleanArtist && cleanArtist.length > 1) {
-      try {
-        const relData = await api.getRelatedArtists(cleanArtist, 3);
-        const relArtists = relData?.artists || relData?.related || [];
-        for (const rel of relArtists) {
-          if (recommendations.length >= 15) break;
-          const relName = rel?.name || rel?.artist;
-          if (relName && relName.toLowerCase() !== cleanArtist.toLowerCase()) {
-            try {
-              const relSongs = await api.getArtistSongs(relName, 0, 3);
-              const rTracks = relSongs?.tracks || relSongs?.results || [];
-              for (const rt of rTracks) {
-                const id = rt?.videoId || rt?.video_id || rt?.id;
-                const tTitle = normTitle(rt?.title);
-                if (id && !existingIds.has(id) && (!tTitle || !existingTitles.has(tTitle))) {
-                  existingIds.add(id);
-                  if (tTitle) existingTitles.add(tTitle);
-                  recommendations.push({ ...rt, _autoplaySource: "related" });
-                }
-              }
-            } catch (_) {}
-          }
-        }
-      } catch (_) {}
-    }
-
-    // Priority 3: Secondary/co-artist tracks
-    if (recommendations.length < 10 && artists.length > 1) {
-      const secondaryArtist = artists[1];
-      if (secondaryArtist && secondaryArtist.toLowerCase() !== cleanArtist.toLowerCase()) {
-        try {
-          const secData = await api.getArtistSongs(secondaryArtist, 0, 6);
-          const secTracks = secData?.tracks || secData?.results || [];
-          for (const st of secTracks) {
-            const id = st?.videoId || st?.video_id || st?.id;
-            const tTitle = normTitle(st?.title);
-            if (id && !existingIds.has(id) && (!tTitle || !existingTitles.has(tTitle))) {
-              existingIds.add(id);
-              if (tTitle) existingTitles.add(tTitle);
-              recommendations.push({ ...st, _autoplaySource: "artist" });
-            }
-          }
-        } catch (_) {}
-      }
-    }
-
-    // Filter out hidden tracks
-    const uid = auth.currentUser?.uid || "guest";
-    const filtered = recommendations.filter((t) => {
-      const id = t?.videoId || t?.video_id || t?.id;
-      return id && !isTrackHidden(uid, id);
-    }).slice(0, 20);
-
-    if (filtered.length > 0) {
-      setQueue((prevQueue) => {
-        const curId = currentTrackRef.current?.videoId || currentTrackRef.current?.video_id || currentTrackRef.current?.id;
-        const targetId = currentTrackObj?.videoId || currentTrackObj?.video_id || currentTrackObj?.id;
-        if (curId && targetId && curId !== targetId) return prevQueue;
-
-        const seen = new Set(prevQueue.map((t) => t?.videoId || t?.video_id || t?.id).filter(Boolean));
-        const uniqueNew = filtered.filter((t) => {
-          const id = t?.videoId || t?.video_id || t?.id;
-          return id && !seen.has(id);
-        });
-        if (uniqueNew.length === 0) return prevQueue;
-
-        const updated = [...prevQueue, ...uniqueNew];
-        queueRef.current = updated;
-        return updated;
-      });
-    }
+  const closeQueue = () => {
+    setIsQueueOpen(false);
   };
 
   // Queue helper methods
   const addToQueue = (trackToAppend) => {
     if (!trackToAppend) return;
+    const cleanT = cleanTrackTitle(trackToAppend.title || "Track");
+
+    if (!currentTrackRef.current) {
+      playTrack(trackToAppend);
+      showQueueNotice(`Playing now: ${cleanT}`, "play");
+      return;
+    }
+
     setQueue((prev) => {
       const updated = [...prev, trackToAppend];
       queueRef.current = updated;
       return updated;
     });
+
+    prefetchUpcomingStreams(queueRef.current, queueIndexRef.current);
+    showQueueNotice(`Added to queue: ${cleanT}`, "list");
+  };
+
+  const addToPlayNext = (trackToPlayNext) => {
+    if (!trackToPlayNext) return;
+    const cleanT = cleanTrackTitle(trackToPlayNext.title || "Track");
+
+    if (!currentTrackRef.current) {
+      playTrack(trackToPlayNext);
+      showQueueNotice(`Playing now: ${cleanT}`, "play");
+      return;
+    }
+
+    const currentIdx = queueIndexRef.current >= 0 ? queueIndexRef.current : 0;
+    const targetIdx = currentIdx + 1;
+    const vid = trackToPlayNext.videoId || trackToPlayNext.video_id || trackToPlayNext.id;
+
+    setQueue((prev) => {
+      const updated = [...prev];
+      // If already in upcoming queue after currentIdx, remove duplicate
+      const existingAfterIdx = updated.findIndex(
+        (t, idx) => idx > currentIdx && (t?.videoId || t?.video_id || t?.id) === vid
+      );
+      if (existingAfterIdx > -1) {
+        updated.splice(existingAfterIdx, 1);
+      }
+      updated.splice(targetIdx, 0, trackToPlayNext);
+      queueRef.current = updated;
+      return updated;
+    });
+
+    prefetchUpcomingStreams(queueRef.current, currentIdx);
+    showQueueNotice(`Playing next: ${cleanT}`, "play-forward");
+  };
+
+  const setAsNextTrack = (fromIndexOrTrackId) => {
+    const currentIdx = queueIndexRef.current >= 0 ? queueIndexRef.current : 0;
+    const targetIdx = currentIdx + 1;
+    let targetTitle = "";
+
+    setQueue((prev) => {
+      let fromIdx = -1;
+      if (typeof fromIndexOrTrackId === "number") {
+        fromIdx = fromIndexOrTrackId;
+      } else {
+        fromIdx = prev.findIndex(
+          (t) => (t?.videoId || t?.video_id || t?.id) === fromIndexOrTrackId
+        );
+      }
+
+      if (fromIdx < 0 || fromIdx >= prev.length || fromIdx === targetIdx || fromIdx === currentIdx) {
+        return prev;
+      }
+
+      const updated = [...prev];
+      const [movedTrack] = updated.splice(fromIdx, 1);
+      if (!movedTrack) return prev;
+
+      targetTitle = movedTrack.title || "";
+      const insertAt = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
+      updated.splice(insertAt, 0, movedTrack);
+      queueRef.current = updated;
+      return updated;
+    });
+
+    prefetchUpcomingStreams(queueRef.current, currentIdx);
+    if (targetTitle) {
+      showQueueNotice(`Set as next: ${cleanTrackTitle(targetTitle)}`, "play-forward");
+    }
+  };
+
+  const moveQueueItem = (fromIndex, toIndex) => {
+    if (fromIndex === toIndex) return;
+    setQueue((prev) => {
+      if (fromIndex < 0 || fromIndex >= prev.length || toIndex < 0 || toIndex >= prev.length) {
+        return prev;
+      }
+      const updated = [...prev];
+      const [item] = updated.splice(fromIndex, 1);
+      updated.splice(toIndex, 0, item);
+
+      let newQueueIndex = queueIndexRef.current;
+      if (fromIndex === queueIndexRef.current) {
+        newQueueIndex = toIndex;
+      } else if (fromIndex < queueIndexRef.current && toIndex >= queueIndexRef.current) {
+        newQueueIndex--;
+      } else if (fromIndex > queueIndexRef.current && toIndex <= queueIndexRef.current) {
+        newQueueIndex++;
+      }
+      setQueueIndex(newQueueIndex);
+      queueIndexRef.current = newQueueIndex;
+      queueRef.current = updated;
+      return updated;
+    });
+  };
+
+  const playQueueTrack = (index) => {
+    const q = queueRef.current || [];
+    if (index >= 0 && index < q.length) {
+      playTrack(q[index], q, index);
+    }
   };
 
   const removeFromQueue = (indexOrTrackId) => {
@@ -1137,6 +1365,7 @@ const AudioProvider = ({ children }) => {
       setQueueIndex(0);
       queueIndexRef.current = 0;
     }
+    showQueueNotice("Upcoming queue cleared", "trash-outline");
   };
 
 
@@ -1156,7 +1385,7 @@ const AudioProvider = ({ children }) => {
         if (cleanId && !globalStreamCache.has(cleanId)) {
           const delay = idx === currentIndex + 1 ? 0 : 400 * (idx - currentIndex);
           setTimeout(() => {
-            api.getStream(cleanId).then((data) => {
+            api.getStream(cleanId, 1, t.title, t.artist).then((data) => {
               if (data && data.stream_url) {
                 globalStreamCache.set(cleanId, {
                   stream_url: data.stream_url,
@@ -1249,6 +1478,47 @@ const AudioProvider = ({ children }) => {
       } else {
         effectiveQueue = [preparedTrack];
         index = 0;
+      }
+    }
+
+    // Auto-clean & Deduplicate: Remove duplicate IDs and same-name song clones
+    if (effectiveQueue && effectiveQueue.length > 1) {
+      const seenIds = new Set();
+      const seenRoots = new Set();
+      const deduped = [];
+      const targetSongTitle = preparedTrack?.title || "";
+      for (let i = 0; i < effectiveQueue.length; i++) {
+        const t = effectiveQueue[i];
+        if (!t) continue;
+        const id = t?.videoId || t?.video_id || t?.id;
+        const root = cleanSongTitleRoot(t?.title);
+        const isCurrentTarget = i === index;
+        if (isCurrentTarget) {
+          if (id) seenIds.add(id);
+          if (root) seenRoots.add(root);
+          deduped.push(t);
+        } else if (id && !seenIds.has(id)) {
+          const isCloneOfTarget = areTitlesSameOrTooSimilar(t?.title, targetSongTitle);
+          let isCloneOfOther = root ? seenRoots.has(root) : false;
+          if (!isCloneOfOther && root) {
+            for (const existingRoot of seenRoots) {
+              if (areTitlesSameOrTooSimilar(root, existingRoot)) {
+                isCloneOfOther = true;
+                break;
+              }
+            }
+          }
+          if (!isCloneOfTarget && !isCloneOfOther) {
+            seenIds.add(id);
+            if (root) seenRoots.add(root);
+            deduped.push(t);
+          }
+        }
+      }
+      if (deduped.length > 0) {
+        effectiveQueue = deduped;
+        const newTargetIdx = effectiveQueue.findIndex((t) => (t?.videoId || t?.video_id || t?.id) === trackId);
+        index = newTargetIdx >= 0 ? newTargetIdx : 0;
       }
     }
 
@@ -1379,7 +1649,7 @@ const AudioProvider = ({ children }) => {
     if (!playableUrl || track.source === "saavn" || String(track.id).startsWith("saavn_")) {
       if (!playableUrl) {
         try {
-          const streamData = await api.getStream(cleanId);
+          const streamData = await api.getStream(cleanId, 2, preparedTrack.title, preparedTrack.artist);
           // The listener selected another track while this URL was resolving.
           // Do not let this stale request seize the shared audio element.
           if (requestId !== playbackRequestRef.current) return;
@@ -1935,9 +2205,20 @@ const AudioProvider = ({ children }) => {
       setSleepTimer: setSleepTimerMinutes,
       setSleepEndOfTrack: setSleepEndOfTrackMode,
       cancelSleepTimer,
+      // Queue management methods
       addToQueue,
+      addToPlayNext,
+      setAsNextTrack,
+      moveQueueItem,
+      playQueueTrack,
       removeFromQueue,
       clearQueue,
+      openQueue,
+      closeQueue,
+      isQueueOpen,
+      setIsQueueOpen,
+      queueNotice,
+      showQueueNotice,
     }),
     [
       currentTrack,
@@ -1952,6 +2233,8 @@ const AudioProvider = ({ children }) => {
       volume,
       sleepSecondsLeft,
       sleepEndOnTrack,
+      isQueueOpen,
+      queueNotice,
     ]
   );
 
@@ -2031,8 +2314,18 @@ const defaultAudioContext = {
   setSleepEndOfTrack: () => {},
   cancelSleepTimer: () => {},
   addToQueue: () => {},
+  addToPlayNext: () => {},
+  setAsNextTrack: () => {},
+  moveQueueItem: () => {},
+  playQueueTrack: () => {},
   removeFromQueue: () => {},
   clearQueue: () => {},
+  openQueue: () => {},
+  closeQueue: () => {},
+  isQueueOpen: false,
+  setIsQueueOpen: () => {},
+  queueNotice: null,
+  showQueueNotice: () => {},
 };
 
 export const useAudio = () => {

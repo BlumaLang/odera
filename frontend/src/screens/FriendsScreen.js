@@ -229,6 +229,7 @@ export default function FriendsScreen({ onNavigate }) {
     removeFriend,
     searchUsers,
     collabPlaylists,
+    setCollabPlaylists,
     createCollabPlaylist,
     getFriendBlend,
     collabInvites,
@@ -236,6 +237,7 @@ export default function FriendsScreen({ onNavigate }) {
     acceptCollabInvite,
     declineCollabInvite,
     pendingRequestsCount,
+    renamePlaylist,
   } = useUser() || {};
 
   const { playTrack, currentTrack, isPlaying, togglePlayPause } = useAudioPlayback();
@@ -257,9 +259,13 @@ export default function FriendsScreen({ onNavigate }) {
   const [showBlendModal, setShowBlendModal] = useState(false);
   const [blendFriendsMap, setBlendFriendsMap] = useState({});
   const [copiedBlendShare, setCopiedBlendShare] = useState(false);
+  const [editingBlendPlaylist, setEditingBlendPlaylist] = useState(null);
   const [isCreatingBlend, setIsCreatingBlend] = useState(false);
   const [blendSuccessMsg, setBlendSuccessMsg] = useState("");
   const [blendRequestSent, setBlendRequestSent] = useState(false);
+  const [joiningInviteId, setJoiningInviteId] = useState(null);
+  const [joinSuccessMsg, setJoinSuccessMsg] = useState("");
+  const [isAcceptingBlend, setIsAcceptingBlend] = useState(false);
   const searchInputRef = useRef(null);
 
   // Collab Playlist states
@@ -684,9 +690,7 @@ export default function FriendsScreen({ onNavigate }) {
     setIsSending(true);
     try {
       const ok = await sendFriendRequest(targetUser.uid, targetUser);
-      if (ok) {
-        setSendFeedback({ text: `Friend request sent to ${targetUser.username}!`, isError: false });
-      } else {
+      if (!ok) {
         setSendFeedback({ text: "Could not send friend request. Please try again.", isError: true });
       }
     } catch (err) {
@@ -700,7 +704,6 @@ export default function FriendsScreen({ onNavigate }) {
     if (!acceptFriendRequest) return;
     try {
       await acceptFriendRequest(reqUser);
-      setSendFeedback({ text: `Accepted friend request from ${reqUser.username}!`, isError: false });
     } catch (err) {
       console.warn("Failed to accept friend request:", err);
     }
@@ -771,6 +774,47 @@ export default function FriendsScreen({ onNavigate }) {
     });
   }, [collabPlaylists, currentUser?.uid, userProfile?.uid]);
 
+  // Combined incoming invites: listens to collab_invites AND synthesizes any unjoined blends
+  const allIncomingInvites = useMemo(() => {
+    const myUid = currentUser?.uid || userProfile?.uid;
+    const list = [...(collabInvites || [])];
+    const seenIds = new Set(list.map((i) => i.collabId || i.playlistId || i.id));
+
+    if (Array.isArray(collabPlaylists) && myUid) {
+      collabPlaylists.forEach((pl) => {
+        if (!pl) return;
+        const isBlend = pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend");
+        if (!isBlend) return;
+        const id = pl.collabId || pl.id;
+        if (!id || seenIds.has(id)) return;
+
+        // Check if we haven't joined yet
+        const myRole = pl.collaborators?.[myUid]?.role;
+        const isOwner = pl.ownerUid === myUid;
+        if (!isOwner && !myRole) {
+          seenIds.add(id);
+          list.push({
+            id: `invite_${id}`,
+            collabId: id,
+            playlistId: id,
+            playlistName: pl.name || "Blend Playlist",
+            description: pl.description || "",
+            coverUrl: pl.cover_url || pl.preview_artwork || "",
+            matchPercentage: pl.matchPercentage || null,
+            type: "blend",
+            senderUid: pl.ownerUid,
+            senderName: pl.ownerName || "Friend",
+            senderAvatar: pl.ownerAvatar || "memoji_0",
+            senderAvatarColor: pl.ownerAvatarColor || "#1DB954",
+            createdAt: pl.createdAt || Date.now(),
+          });
+        }
+      });
+    }
+
+    return list;
+  }, [collabInvites, collabPlaylists, currentUser?.uid, userProfile?.uid]);
+
   const activeBlend = selectedBlendFriend ? findExistingBlend(selectedBlendFriend.uid) : null;
 
   const handleOpenBlend = async (friend) => {
@@ -788,7 +832,8 @@ export default function FriendsScreen({ onNavigate }) {
       setBlendFriendsMap((prev) => ({ ...prev, [friend.uid]: matchPct }));
       // Check if friend has joined (has role in collaborators)
       const friendJoined = Boolean(existingBlend.collaborators?.[friend.uid]?.role);
-      if (!friendJoined) {
+      const isMyBlend = existingBlend.ownerUid === (currentUser?.uid || userProfile?.uid);
+      if (!friendJoined && isMyBlend) {
         setBlendRequestSent(true);
       }
       // Use existing playlist tracks if available
@@ -832,10 +877,19 @@ export default function FriendsScreen({ onNavigate }) {
       // Check if a blend already exists for this friend pair
       const existingBlend = findExistingBlend(selectedBlendFriend.uid);
       let activeCollabId;
+      let activePlaylist = null;
+
+      // Determine clean blend name
+      const existingBlendCount = (collabPlaylists || []).filter(
+        (pl) => pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend")
+      ).length;
+      const blendNumber = existingBlendCount + 1;
+      const blendName = existingBlend?.name || `Blend #${blendNumber}`;
 
       if (existingBlend) {
         // Update existing blend playlist with new tracks
         activeCollabId = existingBlend.collabId || existingBlend.id;
+        activePlaylist = existingBlend;
         if (addTracksToCollab && formattedTracks.length > 0) {
           const existingTrackIds = new Set((existingBlend.tracks || []).map((t) => t.videoId || t.id));
           const newTracks = formattedTracks.filter((t) => !existingTrackIds.has(t.videoId));
@@ -843,18 +897,10 @@ export default function FriendsScreen({ onNavigate }) {
             await addTracksToCollab(activeCollabId, newTracks);
           }
         }
-        setBlendSuccessMsg("Blend playlist updated!");
       } else {
-        // Create new blend playlist and send invite
+        // Create new blend playlist
         let created = null;
         if (createCollabPlaylist) {
-          // Find existing blend count for this user to generate Blend #N
-          const existingBlendCount = (collabPlaylists || []).filter(
-            (pl) => pl.isBlend || pl.type === "blend" || String(pl.name || "").startsWith("Blend")
-          ).length;
-          const blendNumber = existingBlendCount + 1;
-          const blendName = `Blend #${blendNumber}`;
-          
           created = await createCollabPlaylist({
             name: blendName,
             description: `${matchPct}% Music Match • Auto-curated daily shared blend`,
@@ -869,9 +915,28 @@ export default function FriendsScreen({ onNavigate }) {
           });
         }
         activeCollabId = created?.collabId || created?.playlist?.id || created?.id;
+        activePlaylist = created?.playlist;
+      }
 
-        if (sendCollabInvite && selectedBlendFriend.uid) {
-          await sendCollabInvite(selectedBlendFriend.uid, {
+      if (!activeCollabId && currentUser?.uid && selectedBlendFriend.uid) {
+        const pairKey = [currentUser.uid, selectedBlendFriend.uid].sort().join("_");
+        activeCollabId = `blend_${pairKey}`;
+      }
+
+      setBlendFriendsMap((prev) => ({
+        ...prev,
+        [selectedBlendFriend.uid]: matchPct,
+      }));
+
+      const friendUid = selectedBlendFriend.uid;
+      const friendJoinedNow = Boolean(
+        activePlaylist?.collaborators?.[friendUid]?.role ||
+        existingBlend?.collaborators?.[friendUid]?.role
+      );
+
+      if (!friendJoinedNow) {
+        if (sendCollabInvite && friendUid && activeCollabId) {
+          await sendCollabInvite(friendUid, {
             collabId: activeCollabId,
             playlistId: activeCollabId,
             id: activeCollabId,
@@ -881,22 +946,11 @@ export default function FriendsScreen({ onNavigate }) {
             tracksCount: formattedTracks.length,
             cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
             type: "blend",
+            isBlend: true,
             matchPercentage: matchPct,
-            playlist: created?.playlist,
+            playlist: activePlaylist || existingBlend,
           });
         }
-      }
-
-      setBlendFriendsMap((prev) => ({
-        ...prev,
-        [selectedBlendFriend.uid]: matchPct,
-      }));
-
-      // Only mark as request sent if friend hasn't joined yet
-      const friendUid = selectedBlendFriend.uid;
-      const updatedBlend = findExistingBlend(friendUid);
-      const friendJoinedNow = Boolean(updatedBlend?.collaborators?.[friendUid]?.role);
-      if (!friendJoinedNow) {
         setBlendRequestSent(true);
         setBlendSuccessMsg("Blend request sent!");
       } else {
@@ -1112,10 +1166,10 @@ export default function FriendsScreen({ onNavigate }) {
                 <Text style={[styles.tabText, activeTab === "requests" && styles.activeTabText]}>
                   Requests
                 </Text>
-                {(incomingRequests.length + (collabInvites?.length || 0)) > 0 && (
+                {(incomingRequests.length + (allIncomingInvites?.length || 0)) > 0 && (
                   <View style={[styles.tabPillBadge, activeTab === "requests" && styles.tabPillBadgeActive]}>
                     <Text style={[styles.tabPillBadgeText, activeTab === "requests" && styles.tabPillBadgeTextActive]}>
-                      {incomingRequests.length + (collabInvites?.length || 0)}
+                      {incomingRequests.length + (allIncomingInvites?.length || 0)}
                     </Text>
                   </View>
                 )}
@@ -1151,25 +1205,25 @@ export default function FriendsScreen({ onNavigate }) {
         keyboardShouldPersistTaps="handled"
       >
         <View style={[styles.innerContent, (isDesktop || isTablet) && styles.desktopInnerContent]}>
-          {/* Feedback banner */}
-          {sendFeedback.text.length > 0 && (
+          {/* Feedback banner (errors only) */}
+          {sendFeedback.isError && sendFeedback.text.length > 0 && (
             <View
               style={[
                 styles.statusMsgWrap,
-                sendFeedback.isError ? styles.statusMsgError : styles.statusMsgSuccess,
+                styles.statusMsgError,
                 { marginBottom: 16 },
               ]}
             >
               <Ionicons
-                name={sendFeedback.isError ? "alert-circle" : "checkmark-circle"}
+                name="alert-circle"
                 size={15}
-                color={sendFeedback.isError ? "#FF5252" : "#1DB954"}
+                color="#FF5252"
                 style={{ marginRight: 6 }}
               />
               <Text
                 style={[
                   styles.statusMsgText,
-                  sendFeedback.isError ? { color: "#FF5252" } : { color: "#1DB954" },
+                  { color: "#FF5252" },
                 ]}
               >
                 {sendFeedback.text}
@@ -1462,12 +1516,27 @@ export default function FriendsScreen({ onNavigate }) {
                         const savedScore = blendFriendsMap[friend.uid];
                         const existingBlend = findExistingBlend(friend.uid);
                         const friendJoined = Boolean(existingBlend?.collaborators?.[friend.uid]?.role);
-                        const requestPending = existingBlend && !friendJoined;
+                        const isMyBlend = existingBlend?.ownerUid === (currentUser?.uid || userProfile?.uid);
+                        const requestPending = existingBlend && !friendJoined && isMyBlend;
+
+                        // Check if this friend sent US a blend invite
+                        const incomingBlendInvite = (allIncomingInvites || []).find(
+                          (inv) =>
+                            (inv.senderUid === friend.uid || inv.ownerUid === friend.uid) &&
+                            (inv.type === "blend" || String(inv.playlistName || "").toLowerCase().includes("blend"))
+                        );
+
                         return (
                           <TouchableOpacity
                             key={`blend_${friend.uid}`}
                             style={styles.blendFriendCard}
-                            onPress={() => handleOpenBlend(friend)}
+                            onPress={() => {
+                              if (incomingBlendInvite) {
+                                setActiveTab("requests");
+                              } else {
+                                handleOpenBlend(friend);
+                              }
+                            }}
                             activeOpacity={0.75}
                           >
                             <View style={styles.blendCardAvatarCluster}>
@@ -1491,7 +1560,11 @@ export default function FriendsScreen({ onNavigate }) {
                               <Text style={styles.blendCardTitle} numberOfLines={1}>
                                 You & {friend.username}
                               </Text>
-                              {requestPending ? (
+                              {incomingBlendInvite ? (
+                                <Text style={[styles.blendCardSubtitle, { color: "#1DB954", fontFamily: fonts.semiBold }]} numberOfLines={1}>
+                                  Sent you a Blend request!
+                                </Text>
+                              ) : requestPending ? (
                                 <Text style={styles.blendCardSubtitle} numberOfLines={1}>
                                   Waiting for friend to join
                                 </Text>
@@ -1512,15 +1585,22 @@ export default function FriendsScreen({ onNavigate }) {
                             </View>
 
                             <View style={styles.blendCardActionWrap}>
-                              {requestPending ? (
-                                <View style={[styles.blendMatchScoreBadge, { backgroundColor: "rgba(255, 255, 255, 0.08)", borderColor: "rgba(255, 255, 255, 0.15)" }]}>
-                                  <Ionicons name="hourglass" size={12} color="#AAAAAA" style={{ marginRight: 3 }} />
-                                  <Text style={[styles.blendMatchScoreBadgeText, { color: "#AAAAAA" }]}>Sent</Text>
+                              {incomingBlendInvite ? (
+                                <View style={[styles.blendOpenPillBtn, { backgroundColor: "#1DB954" }]}>
+                                  <Text style={[styles.blendOpenPillText, { color: "#000000", fontFamily: fonts.bold }]}>Check Request</Text>
+                                  <Ionicons name="mail-unread" size={14} color="#000000" style={{ marginLeft: 4 }} />
+                                </View>
+                              ) : requestPending ? (
+                                <View style={styles.blendSentGrayBadge}>
+                                  <Ionicons name="checkmark-circle" size={12} color="#888888" style={{ marginRight: 4 }} />
+                                  <Text style={styles.blendSentGrayText}>Request Sent</Text>
                                 </View>
                               ) : (
                                 <View style={styles.blendOpenPillBtn}>
+                                  <View style={styles.sendButtonCircleSmall}>
+                                    <Ionicons name="send" size={10} color="#000000" style={{ marginLeft: 1 }} />
+                                  </View>
                                   <Text style={styles.blendOpenPillText}>Blend</Text>
-                                  <Ionicons name="chevron-forward" size={14} color="#000000" />
                                 </View>
                               )}
                             </View>
@@ -1542,50 +1622,86 @@ export default function FriendsScreen({ onNavigate }) {
               ) : activeTab === "requests" ? (
                 /* ── REQUESTS TAB (Incoming Requests & Collab Invites) ── */
                 <View style={styles.sectionBlock}>
-                  {collabInvites && collabInvites.length > 0 && (
+                  {joinSuccessMsg ? (
+                    <View style={[styles.blendFeedbackBanner, { marginBottom: 16, backgroundColor: "rgba(29, 185, 84, 0.15)", borderColor: "rgba(29, 185, 84, 0.3)" }]}>
+                      <Ionicons name="checkmark-circle" size={16} color="#1DB954" style={{ marginRight: 6 }} />
+                      <Text style={[styles.blendFeedbackText, { color: "#1DB954" }]}>{joinSuccessMsg}</Text>
+                    </View>
+                  ) : null}
+                  {allIncomingInvites && allIncomingInvites.length > 0 && (
                     <View style={{ marginBottom: 20 }}>
                       <Text style={[styles.sectionHeaderTitle, { fontSize: 13, color: "#1DB954", marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.6 }]}>
-                        Blend & Collab Invites ({collabInvites.length})
+                        Blend & Collab Invites ({allIncomingInvites.length})
                       </Text>
                       <View style={styles.unifiedUserList}>
-                        {collabInvites.map((inv) => (
-                          <View key={`collab_inv_${inv.inviteId || inv.id}`} style={styles.userRowItem}>
-                            <UserAvatar user={{ username: inv.senderName || "Friend", avatar: inv.senderAvatar }} size={46} fontSize={16} />
-                            <View style={styles.userInfoWrap}>
-                              <Text style={styles.userNameText} numberOfLines={1}>
-                                {inv.playlistName || "Collab Playlist"}
-                              </Text>
-                              <Text style={styles.userHandleSubText} numberOfLines={1}>
-                                Invited by @{inv.senderName || "Friend"}{inv.matchPercentage ? ` • ${inv.matchPercentage}% Match` : ""}
-                              </Text>
+                        {allIncomingInvites.map((inv) => {
+                          const isBlendInvite = inv.type === "blend" || String(inv.playlistName || "").startsWith("Blend");
+                          const invKey = inv.id || inv.collabId || inv.playlistId;
+                          const isBusy = joiningInviteId === invKey;
+                          return (
+                            <View key={`collab_inv_${inv.inviteId || inv.id}`} style={styles.userRowItem}>
+                              <UserAvatar user={{ username: inv.senderName || "Friend", avatar: inv.senderAvatar }} size={46} fontSize={16} />
+                              <View style={styles.userInfoWrap}>
+                                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                  {isBlendInvite && (
+                                    <View style={styles.blendBadgeTag}>
+                                      <Ionicons name="flash" size={9} color="#1DB954" style={{ marginRight: 2 }} />
+                                      <Text style={styles.blendBadgeTagText}>BLEND</Text>
+                                    </View>
+                                  )}
+                                  <Text style={styles.userNameText} numberOfLines={1}>
+                                    {inv.playlistName || "Collab Playlist"}
+                                  </Text>
+                                </View>
+                                <Text style={styles.userHandleSubText} numberOfLines={1}>
+                                  Invited by @{inv.senderName || "Friend"}{inv.matchPercentage ? ` • ${inv.matchPercentage}% Match` : ""}
+                                </Text>
+                              </View>
+                              <View style={styles.requestActionsRow}>
+                                <TouchableOpacity
+                                  style={styles.acceptBtn}
+                                  onPress={async () => {
+                                    if (acceptCollabInvite && !isBusy) {
+                                      setJoiningInviteId(invKey);
+                                      const res = await acceptCollabInvite(inv);
+                                      setJoiningInviteId(null);
+                                      if (res?.success) {
+                                        setJoinSuccessMsg(`Joined "${inv.playlistName || "Collab Playlist"}"!`);
+                                        setTimeout(() => setJoinSuccessMsg(""), 3500);
+                                      }
+                                    }
+                                  }}
+                                  disabled={isBusy}
+                                  activeOpacity={0.8}
+                                >
+                                  {isBusy ? (
+                                    <ActivityIndicator size="small" color="#000000" />
+                                  ) : (
+                                    <>
+                                      <Ionicons name="checkmark" size={14} color="#000000" style={{ marginRight: 4 }} />
+                                      <Text style={styles.acceptBtnText}>{isBlendInvite ? "Join Blend" : "Join"}</Text>
+                                    </>
+                                  )}
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={styles.declineCloseBtn}
+                                  onPress={() => declineCollabInvite && declineCollabInvite(inv)}
+                                  activeOpacity={0.8}
+                                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                >
+                                  <Ionicons name="close" size={18} color="#888888" />
+                                </TouchableOpacity>
+                              </View>
                             </View>
-                            <View style={styles.requestActionsRow}>
-                              <TouchableOpacity
-                                style={styles.acceptBtn}
-                                onPress={() => acceptCollabInvite && acceptCollabInvite(inv.collabId || inv.playlistId || inv.id)}
-                                activeOpacity={0.8}
-                              >
-                                <Ionicons name="checkmark" size={14} color="#000000" style={{ marginRight: 4 }} />
-                                <Text style={styles.acceptBtnText}>Join</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                style={styles.declineCloseBtn}
-                                onPress={() => declineCollabInvite && declineCollabInvite(inv.collabId || inv.playlistId || inv.id)}
-                                activeOpacity={0.8}
-                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                              >
-                                <Ionicons name="close" size={18} color="#888888" />
-                              </TouchableOpacity>
-                            </View>
-                          </View>
-                        ))}
+                          );
+                        })}
                       </View>
                     </View>
                   )}
 
                   {incomingRequests.length > 0 ? (
                     <View>
-                      {collabInvites && collabInvites.length > 0 && (
+                      {allIncomingInvites && allIncomingInvites.length > 0 && (
                         <Text style={[styles.sectionHeaderTitle, { fontSize: 13, color: colors.textMuted, marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.6 }]}>
                           Friend Requests ({incomingRequests.length})
                         </Text>
@@ -1638,12 +1754,12 @@ export default function FriendsScreen({ onNavigate }) {
                         ))}
                       </View>
                     </View>
-                  ) : (!collabInvites || collabInvites.length === 0) ? (
+                  ) : (!allIncomingInvites || allIncomingInvites.length === 0) ? (
                     /* Center-oriented empty state with subtle gray icon for requests */
                     <View style={styles.emptyCenterState}>
                       <Ionicons name="mail-unread-outline" size={48} color="#444444" style={styles.emptyCenterIcon} />
-                      <Text style={styles.emptyCenterTitle}>No friend requests</Text>
-                      <Text style={styles.emptyCenterSub}>You're all caught up.</Text>
+                      <Text style={styles.emptyCenterTitle}>No requests</Text>
+                      <Text style={styles.emptyCenterSub}>You're all caught up with friend and blend invites.</Text>
                     </View>
                   ) : null}
                 </View>
@@ -2117,7 +2233,20 @@ export default function FriendsScreen({ onNavigate }) {
           visible={!!selectedCollabPlaylist}
           playlist={selectedCollabPlaylist}
           onClose={() => setSelectedCollabPlaylist(null)}
-          onPlaylistUpdated={(updated) => setSelectedCollabPlaylist(updated)}
+          onPlaylistUpdated={(updated) => {
+            if (!updated) return;
+            setSelectedCollabPlaylist(updated);
+            if (setCollabPlaylists) {
+              const uId = updated.collabId || updated.id;
+              setCollabPlaylists((prev) =>
+                (prev || []).map((p) =>
+                  (p.collabId === uId || p.id === uId || (updated.collabId && p.collabId === updated.collabId) || (updated.id && p.id === updated.id))
+                    ? { ...p, ...updated }
+                    : p
+                )
+              );
+            }
+          }}
         />
       )}
 
@@ -2139,6 +2268,23 @@ export default function FriendsScreen({ onNavigate }) {
           }
         }}
         existingPlaylists={collabPlaylists || []}
+      />
+
+      {/* Edit Blend Playlist Name Modal */}
+      <CreatePlaylistModal
+        visible={!!editingBlendPlaylist}
+        mode="edit"
+        initialName={editingBlendPlaylist?.name || "Shared Blend Playlist"}
+        initialCover={editingBlendPlaylist?.cover_url || editingBlendPlaylist?.preview_artwork || ""}
+        onClose={() => setEditingBlendPlaylist(null)}
+        onSubmit={async (newName) => {
+          if (!editingBlendPlaylist || !newName.trim()) return;
+          const targetId = editingBlendPlaylist.collabId || editingBlendPlaylist.id;
+          if (renamePlaylist) {
+            await renamePlaylist(targetId, newName.trim());
+          }
+          setEditingBlendPlaylist(null);
+        }}
       />
 
       {/* ═══════════ BLEND RADAR MODAL ═══════════ */}
@@ -2241,7 +2387,13 @@ export default function FriendsScreen({ onNavigate }) {
                   {(() => {
                     const friendUid = selectedBlendFriend?.uid;
                     const friendJoined = Boolean(activeBlend?.collaborators?.[friendUid]?.role);
-                    const requestPending = blendRequestSent || (activeBlend && !friendJoined);
+                    const incomingBlendInvite = (allIncomingInvites || []).find(
+                      (inv) =>
+                        (inv.senderUid === friendUid || inv.ownerUid === friendUid) &&
+                        (inv.type === "blend" || String(inv.playlistName || "").toLowerCase().includes("blend"))
+                    );
+                    const isMyBlend = activeBlend?.ownerUid === (currentUser?.uid || userProfile?.uid);
+                    const requestPending = blendRequestSent || (activeBlend && !friendJoined && isMyBlend);
 
                     if (friendJoined) {
                       // Active blend - both users joined
@@ -2283,36 +2435,73 @@ export default function FriendsScreen({ onNavigate }) {
                       );
                     }
 
-                    if (requestPending) {
-                      // Request sent, waiting for friend to join
+                    if (incomingBlendInvite) {
+                      // The friend already sent a blend invite! Allow accepting right here
                       return (
                         <View style={styles.blendActionButtonsRow}>
                           <TouchableOpacity
-                            style={[styles.blendCreatePlaylistBtn, { opacity: 0.6 }]}
-                            disabled={true}
-                            activeOpacity={1}
+                            style={[styles.blendCreatePlaylistBtn, { backgroundColor: "#1DB954" }]}
+                            onPress={async () => {
+                              if (acceptCollabInvite && !isAcceptingBlend) {
+                                setIsAcceptingBlend(true);
+                                const res = await acceptCollabInvite(incomingBlendInvite);
+                                setIsAcceptingBlend(false);
+                                if (res?.success) {
+                                  setBlendSuccessMsg("Joined Blend!");
+                                  setTimeout(() => setBlendSuccessMsg(""), 3500);
+                                }
+                              }
+                            }}
+                            activeOpacity={0.8}
+                            disabled={isAcceptingBlend}
                           >
-                            <Ionicons name="hourglass" size={18} color="#000000" style={{ marginRight: 8 }} />
-                            <Text style={styles.blendCreatePlaylistBtnText}>Request Sent</Text>
+                            {isAcceptingBlend ? (
+                              <ActivityIndicator size="small" color="#000000" />
+                            ) : (
+                              <>
+                                <Ionicons name="checkmark-circle" size={18} color="#000000" style={{ marginRight: 8 }} />
+                                <Text style={styles.blendCreatePlaylistBtnText}>Accept Blend Request</Text>
+                              </>
+                            )}
                           </TouchableOpacity>
                         </View>
                       );
                     }
 
-                    // No request yet - show send button
+                    if (requestPending) {
+                      // Request sent, waiting for friend to join - disabled gray style
+                      return (
+                        <View style={styles.blendActionButtonsRow}>
+                          <TouchableOpacity
+                            style={styles.blendRequestSentDisabledBtn}
+                            disabled={true}
+                            activeOpacity={1}
+                          >
+                            <View style={styles.disabledCircleWrap}>
+                              <Ionicons name="checkmark" size={13} color="#888888" />
+                            </View>
+                            <Text style={styles.blendRequestSentDisabledText}>Request Sent</Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    }
+
+                    // No request yet - show send button with circle
                     return (
                       <View style={styles.blendActionButtonsRow}>
                         <TouchableOpacity
                           style={styles.blendCreatePlaylistBtn}
                           onPress={handleCreateBlend}
                           disabled={isCreatingBlend}
-                          activeOpacity={0.8}
+                          activeOpacity={0.85}
                         >
                           {isCreatingBlend ? (
                             <ActivityIndicator size="small" color="#000000" />
                           ) : (
                             <>
-                              <Ionicons name="send" size={17} color="#000000" style={{ marginRight: 8 }} />
+                              <View style={styles.sendButtonCircle}>
+                                <Ionicons name="send" size={13} color="#000000" style={{ marginLeft: 1 }} />
+                              </View>
                               <Text style={styles.blendCreatePlaylistBtnText}>Send Blend Request</Text>
                             </>
                           )}
@@ -2325,8 +2514,25 @@ export default function FriendsScreen({ onNavigate }) {
                 {/* Shared Blend Playlist Tracks */}
                 <View style={styles.blendTracksSection}>
                   <View style={styles.blendTracksSectionHeader}>
-                    <View>
-                      <Text style={styles.blendTracksTitle}>Shared Blend Playlist</Text>
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      <TouchableOpacity
+                        style={{ flexDirection: "row", alignItems: "center" }}
+                        disabled={!activeBlend}
+                        onPress={() => activeBlend && setEditingBlendPlaylist(activeBlend)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.blendTracksTitle} numberOfLines={1}>
+                          {activeBlend?.name || "Shared Blend Playlist"}
+                        </Text>
+                        {activeBlend && (
+                          <Ionicons
+                            name="pencil-outline"
+                            size={14}
+                            color="rgba(255, 255, 255, 0.5)"
+                            style={{ marginLeft: 6 }}
+                          />
+                        )}
+                      </TouchableOpacity>
                       <Text style={styles.blendTracksSubtitle}>
                         Auto-curated daily mix alternating both of your favorite songs
                       </Text>
@@ -3838,6 +4044,80 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     fontSize: 14,
     color: "#000000",
+  },
+  blendRequestSentDisabledBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#222222",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    borderRadius: 24,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    gap: 8,
+    ...(Platform.OS === "web" ? { cursor: "default" } : {}),
+  },
+  blendRequestSentDisabledText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: "#888888",
+  },
+  disabledCircleWrap: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sendButtonCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(0, 0, 0, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
+  },
+  sendButtonCircleSmall: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: "rgba(0, 0, 0, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 4,
+  },
+  blendBadgeTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(29, 185, 84, 0.15)",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  blendBadgeTagText: {
+    fontFamily: fonts.bold,
+    fontSize: 10,
+    color: "#1DB954",
+    letterSpacing: 0.5,
+  },
+  blendSentGrayBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+  },
+  blendSentGrayText: {
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    color: "#888888",
   },
   blendTracksSection: {
     paddingTop: 8,

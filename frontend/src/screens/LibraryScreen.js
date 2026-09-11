@@ -136,6 +136,7 @@ export default function LibraryScreen() {
     playlists: rtdbPlaylists,
     collabPlaylists,
     setPlaylists,
+    setCollabPlaylists,
     recentlyPlayed: rtdbRecentlyPlayed,
     createPlaylist,
     deletePlaylist,
@@ -697,12 +698,21 @@ export default function LibraryScreen() {
           handleRemoveTrack(playlistId, videoId);
         }}
         onPlaylistUpdated={(updated) => {
-          if (setPlaylists && updated?.id) {
+          if (!updated) return;
+          const uId = updated.id || updated.collabId;
+          const matches = (p) => p.id === uId || p.collabId === uId || (updated.id && p.id === updated.id) || (updated.collabId && p.collabId === updated.collabId);
+
+          if (setPlaylists) {
             setPlaylists((prev) =>
-              (prev || []).map((p) => (p.id === updated.id ? { ...p, ...updated } : p))
+              (prev || []).map((p) => (matches(p) ? { ...p, ...updated } : p))
             );
           }
-          setSelectedPlaylist((prev) => (prev && prev.id === updated?.id ? { ...prev, ...updated } : prev));
+          if (setCollabPlaylists) {
+            setCollabPlaylists((prev) =>
+              (prev || []).map((p) => (matches(p) ? { ...p, ...updated } : p))
+            );
+          }
+          setSelectedPlaylist((prev) => (prev && matches(prev) ? { ...prev, ...updated } : prev));
         }}
       />
     </View>

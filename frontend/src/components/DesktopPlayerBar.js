@@ -57,6 +57,7 @@ export default function DesktopPlayerBar() {
     toggleShuffle,
     toggleRepeat,
     setFullPlayerVisible,
+    openQueue,
   } = useAudio();
   const { isSongLiked, toggleLikeSong } = useUser();
 
@@ -437,8 +438,19 @@ export default function DesktopPlayerBar() {
         </View>
       </View>
 
-      {/* 3. RIGHT SECTION: Device, Volume Slider, Expand */}
+      {/* 3. RIGHT SECTION: Device, Queue, Expand */}
       <View style={[styles.rightSection, isTablet && styles.rightSectionTablet]}>
+        {/* Queue Button */}
+        <TouchableOpacity
+          style={styles.expandBtn}
+          onPress={openQueue}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel="Open Queue"
+          accessibilityRole="button"
+        >
+          <Ionicons name="list" size={19} color={colors.textSecondary} />
+        </TouchableOpacity>
+
         <View style={styles.streamBadge}>
           <Ionicons
             name={deviceIcon || (isDesktop ? "desktop-outline" : isTablet ? "tablet-portrait-outline" : "phone-portrait-outline")}
@@ -450,8 +462,6 @@ export default function DesktopPlayerBar() {
             {deviceName || (isDesktop ? "Desktop" : isTablet ? "iPad / Tablet" : "Phone")}
           </Text>
         </View>
-
-
 
         {/* Maximize to modal */}
         <TouchableOpacity

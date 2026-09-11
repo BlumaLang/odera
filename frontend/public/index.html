@@ -8,7 +8,8 @@
     <title>Staytup</title>
 
     <!-- PWA Manifest & App Icons -->
-    <link rel="manifest" href="/manifest.json" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="alternate" type="application/manifest+json" href="/manifest.json" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#000000" />
@@ -117,10 +118,29 @@
         opacity: 0;
         pointer-events: none;
       }
+      .splash-center {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+      }
       #staytup-splash img {
         width: 220px;
         max-width: 70vw;
+        height: auto;
         animation: splashPop 0.55s cubic-bezier(0.34,1.56,0.64,1) both;
+      }
+      .splash-spinner {
+        width: 30px;
+        height: 30px;
+        border: 2.5px solid rgba(255, 255, 255, 0.12);
+        border-top-color: #1DB954;
+        border-radius: 50%;
+        animation: splashSpin 0.75s linear infinite;
+      }
+      @keyframes splashSpin {
+        to { transform: rotate(360deg); }
       }
       @keyframes splashPop {
         from { opacity: 0; transform: scale(0.88); }
@@ -180,7 +200,10 @@
 
     <!-- Instant splash: visible before ANY JS runs -->
     <div id="staytup-splash">
-      <img src="/staytup_logo.png" alt="Staytup" />
+      <div class="splash-center">
+        <img src="/staytup_logo.png" alt="Staytup" onerror="this.style.display='none'" />
+        <div class="splash-spinner"></div>
+      </div>
     </div>
 
     <div id="root"></div>
@@ -195,6 +218,17 @@
       window.addEventListener('appinstalled', function() {
         window.deferredPWAInstallPrompt = null;
         window.dispatchEvent(new CustomEvent('pwa-installed'));
+      });
+
+      // Dist upload chunk recovery (reloads fresh bundle if stale chunk is encountered)
+      window.addEventListener('error', function(e) {
+        var m = (e && e.message) || '';
+        if (/Loading chunk [\d]+ failed|Failed to fetch dynamically imported module/i.test(m)) {
+          if (!sessionStorage.getItem('staytup_dist_reload')) {
+            sessionStorage.setItem('staytup_dist_reload', '1');
+            window.location.reload();
+          }
+        }
       });
 
       if ('serviceWorker' in navigator) {
@@ -218,20 +252,35 @@
       (function() {
         var splash = document.getElementById('staytup-splash');
         if (!splash) return;
+        function dismissSplash() {
+          if (!splash || splash.classList.contains('hidden')) return;
+          splash.classList.add('hidden');
+          setTimeout(function() {
+            try { splash.remove(); } catch(_) {}
+          }, 360);
+        }
         var observer = new MutationObserver(function() {
           var root = document.getElementById('root');
           if (root && root.children.length > 0) {
             observer.disconnect();
-            splash.classList.add('hidden');
-            setTimeout(function() { splash.remove(); }, 380);
+            dismissSplash();
           }
         });
-        observer.observe(document.getElementById('root'), { childList: true, subtree: false });
-        // Safety: always remove after 6s even if React never mounts
+        observer.observe(document.getElementById('root'), { childList: true, subtree: true });
+
+        var pollTimer = setInterval(function() {
+          var root = document.getElementById('root');
+          if (root && root.children.length > 0) {
+            clearInterval(pollTimer);
+            dismissSplash();
+          }
+        }, 100);
+
+        // Safety: always remove after 1.2s max so user never sees a long black screen
         setTimeout(function() {
-          splash.classList.add('hidden');
-          setTimeout(function() { splash.remove(); }, 380);
-        }, 6000);
+          clearInterval(pollTimer);
+          dismissSplash();
+        }, 1200);
       })();
     </script>
   </body>

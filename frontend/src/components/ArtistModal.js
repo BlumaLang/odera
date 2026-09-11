@@ -24,42 +24,41 @@ import { resolveLocalArtistImage } from "../theme/artistImages";
 import SongCard from "./SongCard";
 import AddToPlaylistModal from "./AddToPlaylistModal";
 import { registerBackAction } from "../services/navigation";
-import { getHighResArtistImage } from "../utils/imageUtils";
+import { getHighResArtistImage, decodeHtml } from "../utils/imageUtils";
 
 const { width, height } = Dimensions.get("window");
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 20;
 
 // In-memory module cache for artist info and songs to prevent re-fetching and flicker
 const artistDataCache = new Map();
 
 // Deduplicate songs by both videoId and normalized title to prevent compilation album spam
 function dedupeArtistSongs(existing, incoming) {
-  const seenIds = new Set(existing.map((s) => s.videoId || s.video_id || s.id));
-  const seenTitles = new Set(
-    existing.map((s) =>
-      (s.title || "")
-        .toLowerCase()
-        .replace(/\s*\([^)]*\)/g, "")
-        .replace(/\s*\[[^\]]*\]/g, "")
-        .replace(/[^a-z0-9]/g, "")
-        .trim()
-    ).filter(Boolean)
-  );
-  const deduped = [];
-  for (const item of incoming) {
-    if (!item) continue;
-    const tid = item.videoId || item.video_id || item.id;
-    if (tid && seenIds.has(tid)) continue;
-    const cleanT = (item.title || "")
+  const normT = (t) =>
+    decodeHtml(t || "")
       .toLowerCase()
       .replace(/\s*\([^)]*\)/g, "")
       .replace(/\s*\[[^\]]*\]/g, "")
       .replace(/[^a-z0-9]/g, "")
       .trim();
+
+  const seenIds = new Set(existing.map((s) => s.videoId || s.video_id || s.id));
+  const seenTitles = new Set(existing.map((s) => normT(s.title)).filter(Boolean));
+  const deduped = [];
+  for (const item of incoming) {
+    if (!item) continue;
+    const tid = item.videoId || item.video_id || item.id;
+    if (tid && seenIds.has(tid)) continue;
+    const cleanT = normT(item.title);
     if (cleanT && seenTitles.has(cleanT)) continue;
     if (tid) seenIds.add(tid);
     if (cleanT) seenTitles.add(cleanT);
-    deduped.push(item);
+    deduped.push({
+      ...item,
+      title: decodeHtml(item.title),
+      artist: decodeHtml(item.artist),
+      album: decodeHtml(item.album),
+    });
   }
   return deduped;
 }
@@ -229,15 +228,17 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
           isMounted &&
           photo &&
           !photo.includes("artist-default-music.png") &&
-          !photo.includes("default_artist")
+          !photo.includes("default_artist") &&
+          !photo.includes("share-image")
         ) {
-          setArtistImage(photo);
+          const highRes = getHighResArtistImage(photo);
+          setArtistImage(highRes);
           if (onArtistImageResolved) {
-            onArtistImageResolved(cleanName, photo);
+            onArtistImageResolved(cleanName, highRes);
           }
           artistDataCache.set(cleanName, {
             ...(artistDataCache.get(cleanName) || {}),
-            image: photo,
+            image: highRes,
           });
         }
       })
@@ -254,10 +255,11 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
             artistInfo: info.artist,
           });
           // Update image if we got a better one from info
-          if (info.artist.image && !info.artist.image.includes("default")) {
-            setArtistImage(info.artist.image);
+          if (info.artist.image && !info.artist.image.includes("default") && !info.artist.image.includes("share-image")) {
+            const highRes = getHighResArtistImage(info.artist.image);
+            setArtistImage(highRes);
             if (onArtistImageResolved) {
-              onArtistImageResolved(cleanName, info.artist.image);
+              onArtistImageResolved(cleanName, highRes);
             }
           }
         }
@@ -334,11 +336,8 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
           const updated = [...prev, ...uniqueNew];
           
           // Determine if there are more songs to load
-          const noNewSongs = uniqueNew.length === 0;
           const backendSaysNoMore = data.has_more === false;
-          const fewerThanRequested = newTracks.length < PAGE_SIZE;
-          
-          const shouldHaveMore = !noNewSongs && !backendSaysNoMore && !fewerThanRequested;
+          const shouldHaveMore = !backendSaysNoMore && newTracks.length > 0;
           
           // Get existing cached data to preserve artistInfo
           const existingCache = artistDataCache.get(cleanName) || {};
@@ -563,7 +562,7 @@ export default function ArtistModal({ visible, onClose, artistName, initialPhoto
           ListEmptyComponent={emptyComponent}
           renderItem={renderItem}
           onEndReached={handleLoadMore}
-          onEndReachedThreshold={1.5}
+          onEndReachedThreshold={0.5}
           style={styles.scrollView}
           contentContainerStyle={[styles.scrollContent, (isDesktop || isTablet) && styles.desktopContent]}
           showsVerticalScrollIndicator={false}

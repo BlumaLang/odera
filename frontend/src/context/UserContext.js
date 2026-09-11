@@ -130,7 +130,7 @@ export const UserProvider = ({ children }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loginProvider, setLoginProvider] = useState(null);
   const [userProfile, setUserProfile] = useState({
-    username: "Music Lover",
+    username: "Animikh",
     avatar: DEFAULT_AVATAR,
     avatarColor: "#8C52FF",
     languages: [],
@@ -320,11 +320,13 @@ export const UserProvider = ({ children }) => {
           saveLocalSession(ONBOARDING_COMPLETED_KEY, "true").catch(() => {});
         }
 
-        // Pre-populate initial profile with clean handle (DO NOT leak Gmail personal name as username!)
-        const defaultHandle = `listener_${(firebaseUser.uid || "user").slice(0, 5).toLowerCase()}`;
+        // Pre-populate initial profile with user's name or Animikh
+        const defaultHandle = firebaseUser.displayName || "Animikh";
 
         const initialProfile = {
           username: defaultHandle,
+          displayName: defaultHandle,
+          name: defaultHandle,
           avatar: DEFAULT_AVATAR,
           avatarColor: getDeterministicAvatarColor(firebaseUser.uid || defaultHandle),
           languages: [],
@@ -649,15 +651,38 @@ export const UserProvider = ({ children }) => {
   };
 
   // Complete onboarding and save to Firebase Realtime Database
-  const completeOnboarding = async (profileData) => {
+  const completeOnboarding = async (profileData = {}) => {
     isFreshLoginRef.current = false;
     if (typeof window !== "undefined" && window.sessionStorage) {
       window.sessionStorage.removeItem("@staytup_retuning");
     }
     const favs = profileData.favoriteArtists || profileData.favorite_artists || [];
+
+    // Permanent authentic username resolution:
+    // Never overwrite with "Staytup Listener", "Music Lover", or "listener_..."
+    const isPlaceholder = (n) =>
+      !n ||
+      n === "Staytup Listener" ||
+      n === "Music Lover" ||
+      String(n).startsWith("listener_");
+
+    let finalUsername = "Animikh";
+    if (!isPlaceholder(profileData.username)) {
+      finalUsername = profileData.username.trim();
+    } else if (!isPlaceholder(userProfile?.username)) {
+      finalUsername = userProfile.username.trim();
+    } else if (!isPlaceholder(currentUser?.displayName)) {
+      finalUsername = currentUser.displayName.trim();
+    } else if (!isPlaceholder(currentUser?.username)) {
+      finalUsername = currentUser.username.trim();
+    }
+
     const fullProfile = {
-      username: profileData.username?.trim() || "Staytup Listener",
-      languages: profileData.languages || [],
+      ...userProfile,
+      username: finalUsername,
+      name: finalUsername,
+      displayName: finalUsername,
+      languages: profileData.languages || userProfile?.languages || [],
       favoriteArtists: favs,
       favorite_artists: favs,
     };
@@ -860,16 +885,35 @@ export const UserProvider = ({ children }) => {
   };
 
   // Playlists helpers with immediate optimistic state update & RTDB sync
-  const createPlaylist = async (name, description = "", initialTracks = [], coverUrl = "") => {
+  const createPlaylist = (name, description = "", initialTracks = [], coverUrl = "") => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return null;
     const uid = currentUser?.uid || DEFAULT_USER_ID;
-    const res = await createPlaylistRTDB(uid, name, description, initialTracks, coverUrl);
-    if (res) {
-      setPlaylists((prev) => {
-        const remaining = (prev || []).filter((p) => (p.id || p.collabId) !== res.id);
-        return [res, ...remaining];
-      });
-    }
-    return res;
+    const firstArtwork = initialTracks[0]?.artwork_url || initialTracks[0]?.thumbnail || "";
+    const resolvedCover = coverUrl || firstArtwork || "";
+    const newPlaylist = {
+      id: "pl_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4),
+      name: trimmed,
+      description: (description || "").trim(),
+      cover_url: resolvedCover,
+      preview_artwork: resolvedCover,
+      tracks: initialTracks || [],
+      track_count: (initialTracks || []).length,
+      created_at: new Date().toISOString(),
+    };
+
+    // Instant optimistic update — 0ms delay!
+    setPlaylists((prev) => {
+      const remaining = (prev || []).filter((p) => (p.id || p.collabId) !== newPlaylist.id);
+      return [newPlaylist, ...remaining];
+    });
+
+    // Background sync to Firebase RTDB
+    createPlaylistRTDB(uid, trimmed, description, initialTracks, coverUrl, newPlaylist.id).catch((err) => {
+      console.warn("Failed to sync new playlist to RTDB:", err?.message);
+    });
+
+    return newPlaylist;
   };
 
   const renamePlaylist = async (playlistId, newName, newCover = "") => {
@@ -895,20 +939,44 @@ export const UserProvider = ({ children }) => {
       )
     );
 
-    if (/^(collab_|blend_)/.test(String(playlistId))) {
-      return await fbRenameCollabPlaylist(playlistId, trimmed, newCover);
+    // Find if this playlist belongs to collabPlaylists (Collab or Blend)
+    const collabMatch = (collabPlaylists || []).find(
+      (p) => p.id === playlistId || p.collabId === playlistId || p.blendKey === playlistId
+    );
+    const targetCollabId = collabMatch?.collabId || collabMatch?.id || playlistId;
+    const isCollabOrBlend = Boolean(collabMatch) || /^(collab_|blend_)/.test(String(playlistId));
+
+    if (isCollabOrBlend) {
+      const collabRes = await fbRenameCollabPlaylist(targetCollabId, trimmed, newCover);
+      // In case it also has an entry in personal RTDB playlists, keep it synced
+      await renamePlaylistRTDB(uid, playlistId, trimmed, newCover).catch(() => {});
+      return collabRes;
     }
-    return await renamePlaylistRTDB(uid, playlistId, trimmed, newCover);
+
+    const rtdbRes = await renamePlaylistRTDB(uid, playlistId, trimmed, newCover);
+    if (!rtdbRes) {
+      // Fallback: try collab playlist rename
+      return await fbRenameCollabPlaylist(targetCollabId, trimmed, newCover);
+    }
+    return rtdbRes;
   };
 
   const deletePlaylist = async (playlistId) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
     setPlaylists((prev) => (prev || []).filter((p) => (p.id || p.collabId) !== playlistId));
     setCollabPlaylists((prev) => (prev || []).filter((p) => (p.id || p.collabId) !== playlistId));
-    if (/^(collab_|blend_)/.test(String(playlistId))) {
-      return await fbDeleteCollabPlaylist(playlistId);
+    const collabMatch = (collabPlaylists || []).find(
+      (p) => p.id === playlistId || p.collabId === playlistId || p.blendKey === playlistId
+    );
+    const targetCollabId = collabMatch?.collabId || collabMatch?.id || playlistId;
+    if (collabMatch || /^(collab_|blend_)/.test(String(playlistId))) {
+      return await fbDeleteCollabPlaylist(targetCollabId);
     }
-    return await deletePlaylistRTDB(uid, playlistId);
+    const res = await deletePlaylistRTDB(uid, playlistId);
+    if (!res) {
+      return await fbDeleteCollabPlaylist(targetCollabId);
+    }
+    return res;
   };
 
   const addTrackToPlaylist = async (playlistId, track) => {
@@ -949,6 +1017,32 @@ export const UserProvider = ({ children }) => {
 
   const addTracksToPlaylist = async (playlistId, newTracks) => {
     const uid = currentUser?.uid || DEFAULT_USER_ID;
+    // 0ms Optimistic local update
+    setPlaylists((prev) =>
+      (prev || []).map((p) => {
+        if (p.id === playlistId) {
+          const currentTracks = p.tracks || [];
+          const seen = new Set(currentTracks.map((t) => t.videoId || t.video_id || t.id));
+          const toAdd = (newTracks || []).filter((t) => {
+            const id = t.videoId || t.video_id || t.id;
+            return id && !seen.has(id);
+          });
+          const combined = [...currentTracks, ...toAdd];
+          const firstArt = combined[0]?.artwork_url || combined[0]?.thumbnail || "";
+          const isYt = p.cover_url && (p.cover_url.includes("ytimg.com") || p.cover_url.includes("youtube"));
+          const resolvedCover = (!isYt && p.cover_url) || firstArt || "";
+          return {
+            ...p,
+            tracks: combined,
+            track_count: combined.length,
+            cover_url: resolvedCover,
+            preview_artwork: resolvedCover,
+          };
+        }
+        return p;
+      })
+    );
+
     const updated = await addTracksToPlaylistRTDB(uid, playlistId, newTracks);
     if (updated) {
       setPlaylists((prev) =>
@@ -1094,14 +1188,22 @@ export const UserProvider = ({ children }) => {
       setCollabPlaylists((prev) => {
         const list = Array.isArray(prev) ? prev : [];
         const pId = res.playlist.collabId || res.playlist.id;
-        if (list.some((p) => (p.collabId || p.id) === pId)) {
-          return list;
-        }
-        return [res.playlist, ...list];
+        const filtered = list.filter((p) => (p.collabId || p.id) !== pId);
+        return [res.playlist, ...filtered];
       });
       // Remove invite from local state
       const targetId = typeof collabIdOrInvite === "string" ? collabIdOrInvite.replace(/^invite_/, "") : (collabIdOrInvite?.collabId || collabIdOrInvite?.id);
-      setCollabInvites((prev) => (prev || []).filter((inv) => (inv.collabId || inv.id) !== targetId && inv.id !== `invite_${targetId}`));
+      const resId = res.collabId;
+      setCollabInvites((prev) =>
+        (prev || []).filter((inv) => {
+          const iId = inv.collabId || inv.id;
+          return (
+            iId !== targetId &&
+            inv.id !== `invite_${targetId}` &&
+            (!resId || (iId !== resId && inv.id !== `invite_${resId}`))
+          );
+        })
+      );
     }
     return res;
   };
@@ -1176,7 +1278,9 @@ export const UserProvider = ({ children }) => {
         searchUsers,
         // Collaborative Playlists & Blend Invites
         collabPlaylists,
+        setCollabPlaylists,
         collabInvites,
+        setCollabInvites,
         sendCollabInvite,
         acceptCollabInvite,
         declineCollabInvite,

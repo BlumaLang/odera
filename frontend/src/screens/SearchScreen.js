@@ -647,9 +647,10 @@ export default function SearchScreen() {
   }, [isLoadingMore, isSearching, hasMore, query, results.length]);
 
   // Important: Playing a track must NEVER modify `query`
-  const handlePlaySong = (track) => {
+  const handlePlaySong = (track, index = 0, trackList = null) => {
     addTrackToRecent(track);
-    playTrack(track, [track], 0);
+    const effectiveList = trackList && Array.isArray(trackList) && trackList.length > 0 ? trackList : [track];
+    playTrack(track, effectiveList, index);
   };
 
   const handleSelectArtist = (artistName) => {
@@ -946,7 +947,7 @@ export default function SearchScreen() {
             return (
               <TouchableOpacity
                 style={[styles.spotifySongRow, isCurrent && styles.activeSongRow]}
-                onPress={() => handlePlaySong(item)}
+                onPress={() => handlePlaySong(item, 0, [item])}
                 activeOpacity={0.7}
               >
                 {/* Artwork */}
@@ -1080,7 +1081,8 @@ export default function SearchScreen() {
                               if (isCurrentTrack) {
                                 setFullPlayerVisible(true);
                               } else {
-                                handlePlaySong(item);
+                                const validRecents = displayRecents.filter((i) => i.type !== "query");
+                                handlePlaySong(item, idx, validRecents);
                               }
                             }}
                             activeOpacity={0.7}
@@ -1245,6 +1247,11 @@ export default function SearchScreen() {
             : null
         }
         onSelectArtist={(name) => setSelectedArtistForModal(name)}
+        onArtistImageResolved={(name, photo) => {
+          if (name && photo) {
+            setArtistImagesMap((prev) => ({ ...prev, [name]: photo }));
+          }
+        }}
       />
     </View>
   );

@@ -221,11 +221,60 @@ async function fetchYouTubePlaylistClient(playlistId) {
   const tracks = [];
 
   // Method 1: Parse ytInitialData JSON
-  const ytMatch = html.match(/var ytInitialData\s*=\s*({.*?});\s*<\/script>/s)
-    || html.match(/window\["ytInitialData"\]\s*=\s*({.*?});\s*<\/script>/s);
-  if (ytMatch) {
-    try {
-      const data = JSON.parse(ytMatch[1]);
+  let data = null;
+  const marker = "var ytInitialData = ";
+  const pos = html.indexOf(marker);
+  if (pos !== -1) {
+    const end = html.indexOf("</script>", pos + marker.length);
+    if (end !== -1) {
+      try {
+        let jsonStr = html.substring(pos + marker.length, end).trim();
+        if (jsonStr.endsWith(";")) jsonStr = jsonStr.slice(0, -1);
+        data = JSON.parse(jsonStr);
+      } catch (_) {}
+    }
+  }
+  if (!data) {
+    const ytMatch = html.match(/var ytInitialData\s*=\s*({.*?});\s*<\/script>/s)
+      || html.match(/window\["ytInitialData"\]\s*=\s*({.*?});\s*<\/script>/s);
+    if (ytMatch) {
+      try {
+        data = JSON.parse(ytMatch[1]);
+      } catch (_) {}
+    }
+  }
+
+  if (data) {
+    // 1a. Modern YouTube format (lockupViewModel)
+    const findLockups = (arr, found = []) => {
+      if (!arr || typeof arr !== "object") return found;
+      if (arr.lockupViewModel) found.push(arr.lockupViewModel);
+      for (const val of Object.values(arr)) {
+        if (typeof val === "object") findLockups(val, found);
+      }
+      return found;
+    };
+    const lockups = findLockups(data);
+    for (const lockup of lockups) {
+      const videoId = lockup.contentId || "";
+      const rawTitle = lockup.metadata?.lockupMetadataViewModel?.title?.content || "";
+      let artist = "";
+      const metaRows = lockup.metadata?.lockupMetadataViewModel?.metadata?.contentMetadataViewModel?.metadataRows || [];
+      if (metaRows[0]?.metadataParts) {
+        for (const p of metaRows[0].metadataParts) {
+          if (p.text?.content) {
+            artist = p.text.content;
+            break;
+          }
+        }
+      }
+      if (rawTitle && videoId) {
+        tracks.push({ title: cleanYouTubeTitle(rawTitle), artist, videoId });
+      }
+    }
+
+    // 1b. Classic structure fallback
+    if (tracks.length === 0) {
       const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
       const sections = tabs[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
       const items = sections[0]?.itemSectionRenderer?.contents?.[0]?.playlistVideoListRenderer?.contents
@@ -240,7 +289,7 @@ async function fetchYouTubePlaylistClient(playlistId) {
           tracks.push({ title: cleanYouTubeTitle(title), artist, videoId: v?.videoId || "" });
         }
       }
-    } catch (_) {}
+    }
   }
 
   // Method 2: Regex fallback
@@ -257,10 +306,18 @@ async function fetchYouTubePlaylistClient(playlistId) {
     return { success: false, error: "Could not parse YouTube playlist. It may be private." };
   }
 
-  // Get playlist name
+  // Get playlist name accurately
   let name = "YouTube Playlist";
-  const nameMatch = html.match(/"title":\s*\{"runs":\[\{"text":"([^"]+)"/);
-  if (nameMatch) name = nameMatch[1].replace(/&amp;/g, "&").replace(/&#39;/g, "'");
+  const metaNameMatch = html.match(/"metadata":\s*\{\s*"playlistMetadataRenderer":\s*\{\s*"title":\s*"([^"]+)"/);
+  const microNameMatch = html.match(/"microformat":\s*\{.*?"title":\s*"([^"]+)"/s);
+  const titleTagMatch = html.match(/<title>([^<]+)<\/title>/);
+  if (metaNameMatch) {
+    name = metaNameMatch[1].replace(/&amp;/g, "&").replace(/&#39;/g, "'");
+  } else if (microNameMatch) {
+    name = microNameMatch[1].replace(/&amp;/g, "&").replace(/&#39;/g, "'");
+  } else if (titleTagMatch) {
+    name = titleTagMatch[1].replace(/\s*-\s*YouTube$/i, "").trim();
+  }
 
   return {
     success: true,
@@ -271,20 +328,36 @@ async function fetchYouTubePlaylistClient(playlistId) {
 
 async function fetchSpotifyPlaylistClient(playlistId) {
   try {
-    const resp = await fetch(`https://open.spotify.com/oembed?url=https://open.spotify.com/playlist/${playlistId}`, { signal: AbortSignal.timeout(8000) });
-    const oembed = resp.ok ? await resp.json() : {};
-    const name = oembed?.title || "Spotify Playlist";
+    // Use Spotify oEmbed for accurate playlist name
+    let name = "Spotify Playlist";
+    try {
+      const oembedResp = await fetch(
+        `https://open.spotify.com/oembed?url=https://open.spotify.com/playlist/${playlistId}`,
+        { signal: AbortSignal.timeout(6000) }
+      );
+      if (oembedResp.ok) {
+        const oembedData = await oembedResp.json();
+        if (oembedData?.title) name = oembedData.title;
+      }
+    } catch (_) {}
 
-    // Try embed page via CORS proxy
+    // Fetch embed page for tracks via CORS proxy
     const CORS_PROXIES = [
       "https://api.allorigins.win/raw?url=",
       "https://corsproxy.io/?",
     ];
+
     let html = null;
     for (const proxy of CORS_PROXIES) {
       try {
-        const r = await fetch(proxy + encodeURIComponent(`https://open.spotify.com/embed/playlist/${playlistId}`), { signal: AbortSignal.timeout(10000) });
-        if (r.ok) { html = await r.text(); break; }
+        const resp = await fetch(
+          proxy + encodeURIComponent(`https://open.spotify.com/embed/playlist/${playlistId}`),
+          { signal: AbortSignal.timeout(10000) }
+        );
+        if (resp.ok) {
+          html = await resp.text();
+          if (html && (html.includes("__NEXT_DATA__") || html.includes("spotify"))) break;
+        }
       } catch (_) {}
     }
 
@@ -295,21 +368,34 @@ async function fetchSpotifyPlaylistClient(playlistId) {
       if (nextMatch) {
         try {
           const data = JSON.parse(nextMatch[1]);
-          const items = data?.props?.pageProps?.state?.data?.playlist?.tracks?.items || [];
-          for (const item of items) {
-            const t = item?.track;
-            if (!t) continue;
-            tracks.push({
-              title: t.name || "",
-              artist: (t.artists || []).map(a => a.name).join(", "),
-            });
+          const state = data?.props?.pageProps?.state?.data;
+          // Modern format: entity.trackList
+          const trackList = state?.entity?.trackList;
+          if (Array.isArray(trackList) && trackList.length > 0) {
+            for (const item of trackList) {
+              const title = item.title || item.name || "";
+              const artist = item.subtitle || "";
+              if (title) tracks.push({ title, artist });
+            }
+          }
+          // Classic format: playlist.tracks.items
+          if (tracks.length === 0) {
+            const items = state?.playlist?.tracks?.items || [];
+            for (const item of items) {
+              const t = item?.track;
+              if (!t) continue;
+              tracks.push({
+                title: t.name || "",
+                artist: (t.artists || []).map((a) => a.name).join(", "),
+              });
+            }
           }
         } catch (_) {}
       }
       // Regex fallback
       if (tracks.length === 0) {
-        const names = [...html.matchAll(/"name"\s*:\s*"([^"]+)"/g)].map(m => m[1]);
-        const artists = [...html.matchAll(/"artists?"?\s*:\s*\[?\{[^}]*"name"\s*:\s*"([^"]+)"/g)].map(m => m[1]);
+        const names = [...html.matchAll(/"name"\s*:\s*"([^"]+)"/g)].map((m) => m[1]);
+        const artists = [...html.matchAll(/"artists?"?\s*:\s*\[?\{[^}]*"name"\s*:\s*"([^"]+)"/g)].map((m) => m[1]);
         for (let i = 0; i < names.length; i++) {
           tracks.push({ title: names[i], artist: artists[i] || "" });
         }
@@ -408,7 +494,7 @@ export const api = {
         title: title.trim(),
         artist: artist.trim(),
         video_id: _videoId,
-      }, { timeout: 5000 });
+      }, { timeout: 12000 });
       return {
         has_lyrics: data.has_lyrics || false,
         is_synced: data.is_synced || false,
@@ -425,33 +511,58 @@ export const api = {
   },
 
   // ─── Stream URL (PHP backend decrypts DES-ECB) ──────────────────────────
-  getStream: async (videoIdOrTrackId, retries = 2) => {
-    if (!videoIdOrTrackId) return { stream_url: null, proxy_url: null };
-    const cleanId = String(videoIdOrTrackId).replace(/^saavn_/, "").trim();
+  getStream: async (videoIdOrTrackId, retries = 2, title = "", artist = "") => {
+    if (!videoIdOrTrackId && !title) return { stream_url: null, proxy_url: null };
+    const cleanId = String(videoIdOrTrackId || "").replace(/^saavn_/, "").trim();
 
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const data = await backendFetch(`stream/${cleanId}`, {}, { timeout: 8000 });
-        if (data && data.stream_url) {
-          return {
-            stream_url: data.stream_url,
-            videoId: data.videoId || cleanId,
-            id: data.id || `saavn_${cleanId}`,
-            duration: data.duration,
-          };
+    if (cleanId) {
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          const data = await backendFetch(`stream/${cleanId}`, {}, { timeout: 8000 });
+          if (data && data.stream_url) {
+            return {
+              stream_url: data.stream_url,
+              videoId: data.videoId || cleanId,
+              id: data.id || `saavn_${cleanId}`,
+              duration: data.duration,
+            };
+          }
+        } catch (err) {
+          if (attempt < retries) {
+            await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+            continue;
+          }
         }
-      } catch (err) {
-        if (attempt < retries) {
-          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
-          continue;
-        }
-        console.warn(`[API] Stream resolve failed for ${cleanId}:`, err.message);
       }
     }
+
+    // Fallback: If cleanId failed (e.g. 404 from old RTDB id or legacy track) and title is available,
+    // search JioSaavn by title + artist to resolve the stream URL seamlessly!
+    if (title && title.trim()) {
+      try {
+        const query = `${title} ${artist || ""}`.trim();
+        const searchData = await backendFetch("search", { q: query, limit: 3 });
+        const songs = searchData?.results || [];
+        const match = songs[0];
+        if (match && (match.videoId || match.id)) {
+          const fallbackId = String(match.videoId || match.id).replace(/^saavn_/, "").trim();
+          const fallbackData = await backendFetch(`stream/${fallbackId}`, {}, { timeout: 8000 });
+          if (fallbackData && fallbackData.stream_url) {
+            return {
+              stream_url: fallbackData.stream_url,
+              videoId: fallbackData.videoId || fallbackId,
+              id: fallbackData.id || `saavn_${fallbackId}`,
+              duration: fallbackData.duration || match.duration,
+            };
+          }
+        }
+      } catch (_) {}
+    }
+
     return { stream_url: null, proxy_url: null, videoId: cleanId, id: `saavn_${cleanId}` };
   },
 
-  getSaavnStream: async (id) => api.getStream(id),
+  getSaavnStream: async (id, retries, title, artist) => api.getStream(id, retries, title, artist),
 
   // ─── Track image resolution ───────────────────────────────────────────────
   getTrackImage: async (videoIdOrTrackId, title = "", artist = "") => {
@@ -690,7 +801,7 @@ export const api = {
       const data = await backendFetch("import", {}, {
         method: "POST",
         body: { url },
-        timeout: 15000,
+        timeout: 60000,
       });
       if (data?.success && data?.playlist?.tracks?.length > 0) {
         return data;

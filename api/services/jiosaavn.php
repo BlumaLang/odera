@@ -101,53 +101,88 @@ class JioSaavnService {
             }
             if (!empty($items)) {
                 $sections[] = [
+                    'id'    => 'new_releases',
                     'title' => 'New Releases',
                     'type'  => 'songs',
                     'items' => $items,
                 ];
             }
         }
-        
-        // Charts
+
+        // Trending Now (Real playable trending hits cached for high performance)
+        $cacheFile = sys_get_temp_dir() . '/staytup_trending_hits.json';
+        $trendingItems = null;
+        if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < 1800)) {
+            $cached = @json_decode(file_get_contents($cacheFile), true);
+            if (!empty($cached) && is_array($cached)) {
+                $trendingItems = $cached;
+            }
+        }
+        if (!$trendingItems) {
+            $trendData = self::searchSongs('Hindi Hits', 1, 30);
+            if (!empty($trendData['results'])) {
+                $trendingItems = $trendData['results'];
+                @file_put_contents($cacheFile, json_encode($trendingItems));
+            }
+        }
+        if (!empty($trendingItems)) {
+            $sections[] = [
+                'id'    => 'trending_now',
+                'title' => 'Trending Now',
+                'type'  => 'songs',
+                'items' => $trendingItems,
+            ];
+        }
+
+        // Charts (Playlists, NOT songs)
         if (!empty($data['charts'])) {
             $items = [];
             foreach ($data['charts'] as $item) {
-                $items[] = self::normalizeTrack($item);
+                $img = self::getBestImage($item['image'] ?? '');
+                $items[] = [
+                    'id'        => $item['id'] ?? '',
+                    'title'     => html_entity_decode($item['title'] ?? $item['name'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+                    'image'     => $img,
+                    'thumbnail' => $img,
+                    'type'      => 'playlist',
+                    'songCount' => (int)($item['song_count'] ?? $item['count'] ?? 0),
+                ];
             }
             if (!empty($items)) {
                 $sections[] = [
-                    'title' => 'Charts',
-                    'type'  => 'songs',
+                    'id'    => 'top_charts',
+                    'title' => 'Top Charts',
+                    'type'  => 'playlists',
                     'items' => $items,
                 ];
             }
         }
-        
-        // Top playlists
-        if (!empty($data['top_playlists'])) {
+
+        // Featured & Top playlists
+        $featuredPl = $data['featured_playlists'] ?? $data['top_playlists'] ?? [];
+        if (!empty($featuredPl)) {
             $items = [];
-            foreach ($data['top_playlists'] as $item) {
-                $img = $item['image'] ?? '';
-                if (is_array($img) && !empty($img)) {
-                    $img = end($img)['link'] ?? $img[0]['link'] ?? '';
-                }
+            foreach ($featuredPl as $item) {
+                $img = self::getBestImage($item['image'] ?? '');
                 $items[] = [
                     'id'        => $item['id'] ?? '',
-                    'title'     => $item['title'] ?? $item['name'] ?? '',
+                    'title'     => html_entity_decode($item['title'] ?? $item['name'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8'),
                     'image'     => $img,
+                    'thumbnail' => $img,
                     'type'      => 'playlist',
-                    'songCount' => $item['song_count'] ?? $item['count'] ?? 0,
+                    'songCount' => (int)($item['song_count'] ?? $item['count'] ?? 0),
                 ];
             }
             if (!empty($items)) {
                 $sections[] = [
+                    'id'    => 'featured_playlists',
                     'title' => 'Top Playlists',
                     'type'  => 'playlists',
                     'items' => $items,
                 ];
             }
         }
-        
+
         // Trending artists
         if (!empty($data['trending'])) {
             $items = [];
@@ -158,13 +193,14 @@ class JioSaavnService {
             }
             if (!empty($items)) {
                 $sections[] = [
+                    'id'    => 'trending_artists',
                     'title' => 'Trending Artists',
                     'type'  => 'artists',
                     'items' => $items,
                 ];
             }
         }
-        
+
         return ['sections' => $sections];
     }
     
@@ -212,21 +248,26 @@ class JioSaavnService {
     
     private static function decryptUrl($encrypted) {
         $key = STREAM_DECRYPT_KEY;
-        $iv = '';
         
         $ciphertext = base64_decode($encrypted);
         if ($ciphertext === false) return null;
         
-        $decrypted = openssl_decrypt($ciphertext, 'DES-ECB', $key, OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING);
-        if ($decrypted === false) return null;
-        
-        // Remove PKCS7 padding
-        $pad = ord($decrypted[strlen($decrypted) - 1]);
-        if ($pad >= 1 && $pad <= 8) {
-            $decrypted = substr($decrypted, 0, -$pad);
+        // In OpenSSL 3.0+ (PHP 8.1+), legacy single DES-ECB is disabled by default.
+        // des-ede3 (Triple DES ECB) works out of the box with the 8-byte key and automatic PKCS7 padding.
+        $decrypted = openssl_decrypt($ciphertext, 'des-ede3', $key, OPENSSL_RAW_DATA);
+        if ($decrypted === false) {
+            $decrypted = openssl_decrypt($ciphertext, 'DES-ECB', $key, OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING);
+            if ($decrypted !== false && strlen($decrypted) > 0) {
+                // Remove PKCS7 padding manually if zero-padded
+                $pad = ord($decrypted[strlen($decrypted) - 1]);
+                if ($pad >= 1 && $pad <= 8) {
+                    $decrypted = substr($decrypted, 0, -$pad);
+                }
+            }
         }
+        if ($decrypted === false || empty($decrypted)) return null;
         
-        $url = $decrypted;
+        $url = trim($decrypted);
         // Prefer highest quality
         $url = str_replace(['_96.mp4', '_160.mp4'], '_320.mp4', $url);
         $url = str_replace('http://', 'https://', $url);
@@ -239,76 +280,143 @@ class JioSaavnService {
     public static function getArtistSongs($artistId, $page = 1, $limit = 20, $artistName = null) {
         $page = max(1, (int)$page);
         $limit = max(1, min(50, (int)$limit));
-        
-        // First, try to get artist info to get the actual artist name
-        $data = self::callApi('artist.getArtistPageDetails', [
-            'artistId' => $artistId,
-            'p'        => 1,
-            'n'        => 1,
-        ]);
+        $originalInput = $artistId;
         
         $artist = null;
-        if (isset($data['artist'])) {
-            $artist = self::normalizeArtist($data['artist']);
+        // 1. If artistId is not numeric, search first to find the real JioSaavn artist ID and metadata
+        if (!ctype_digit((string)$artistId)) {
+            $searchRes = self::searchArtists((string)$artistId, 1);
+            if (!empty($searchRes['artists'][0])) {
+                $artist = $searchRes['artists'][0];
+                $artistId = $artist['id'];
+                $artistName = $artistName ?? $artist['name'];
+            }
         }
         
-        $artistName = $artistName ?? $artist['name'] ?? $artistId;
+        // 2. Fetch curated top songs from JioSaavn artist page details
+        $curatedTracks = [];
+        if (ctype_digit((string)$artistId)) {
+            $pageDetails = self::callApi('artist.getArtistPageDetails', [
+                'artistId' => $artistId,
+                'n_song'   => 50,
+                'n_album'  => 20,
+            ]);
+            if (!empty($pageDetails['topSongs'])) {
+                foreach ($pageDetails['topSongs'] as $s) {
+                    $curatedTracks[] = self::normalizeTrack($s);
+                }
+            }
+            if (!$artist && isset($pageDetails['name'])) {
+                $artist = [
+                    'id'        => $artistId,
+                    'name'      => html_entity_decode($pageDetails['name'], ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+                    'image'     => self::getBestImage($pageDetails['image'] ?? ''),
+                    'thumbnail' => self::getBestImage($pageDetails['image'] ?? ''),
+                    'type'      => 'artist',
+                ];
+            }
+        }
         
-        // Try to get artist songs directly from JioSaavn API if available
-        $artistSongsData = self::callApi('artist.getArtistSongs', [
-            'artistId' => $artistId,
-            'p'        => $page,
-            'n'        => $limit,
-        ]);
+        $artistName = $artistName ?? $artist['name'] ?? $originalInput;
         
-        $tracks = [];
-        if (!empty($artistSongsData['songs'])) {
-            // We have direct artist songs from API
-            foreach ($artistSongsData['songs'] as $song) {
-                $tracks[] = self::normalizeTrack($song);
+        // Helper to normalize title for server-side deduplication
+        $normTitle = function($t) {
+            $c = html_entity_decode($t ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $c = strtolower(preg_replace('/\s*[\(\[].*?[\)\]]/', '', $c));
+            $c = preg_replace('/[^a-z0-9]/', '', $c);
+            return trim($c);
+        };
+        
+        // Deduplicate curated tracks by clean title and ID
+        $dedupedCurated = [];
+        $seenCuratedIds = [];
+        $seenCuratedTitles = [];
+        foreach ($curatedTracks as $t) {
+            $vid = $t['videoId'] ?? $t['id'] ?? '';
+            $cleanT = $normTitle($t['title'] ?? '');
+            if ($vid && in_array($vid, $seenCuratedIds)) continue;
+            if (!empty($cleanT) && in_array($cleanT, $seenCuratedTitles)) continue;
+            
+            if ($vid) $seenCuratedIds[] = $vid;
+            if (!empty($cleanT)) $seenCuratedTitles[] = $cleanT;
+            $dedupedCurated[] = $t;
+        }
+        
+        // 3. Partitioning: Curated tracks provide the first batch (e.g. 30-40 hit songs)
+        $curatedCount = count($dedupedCurated);
+        $offset = ($page - 1) * $limit;
+        
+        $pageTracks = [];
+        $seenPageIds = [];
+        $seenPageTitles = [];
+        
+        if ($offset < $curatedCount) {
+            $fromCurated = array_slice($dedupedCurated, $offset, $limit);
+            foreach ($fromCurated as $ct) {
+                $vid = $ct['videoId'] ?? $ct['id'] ?? '';
+                $cleanT = $normTitle($ct['title'] ?? '');
+                if ($vid) $seenPageIds[] = $vid;
+                if (!empty($cleanT)) $seenPageTitles[] = $cleanT;
+                $pageTracks[] = $ct;
+            }
+        }
+        
+        // 4. Supplement with search results if needed or for subsequent pages
+        if (count($pageTracks) < $limit || $page >= 2) {
+            $searchPageStart = ($page === 1) ? 1 : max(1, $page * 2 - 2);
+            $searchPagesCount = ($page === 1) ? 2 : 3;
+            
+            $candidateSearch = [];
+            for ($sp = $searchPageStart; $sp < $searchPageStart + $searchPagesCount; $sp++) {
+                $searchData = self::searchSongs("{$artistName} songs", $sp, 30);
+                $filtered = self::filterSearchByArtist($searchData['results'] ?? [], $artistName);
+                $candidateSearch = array_merge($candidateSearch, $filtered);
+                
+                if ($page <= 2 && $sp === $searchPageStart) {
+                    $hitsData = self::searchSongs("{$artistName} hits", 1, 30);
+                    $hitsFiltered = self::filterSearchByArtist($hitsData['results'] ?? [], $artistName);
+                    $candidateSearch = array_merge($candidateSearch, $hitsFiltered);
+                }
             }
             
-            $total = $artistSongsData['total'] ?? count($tracks);
-            $hasMore = ($page * $limit) < $total;
+            // Deduplicate search candidates against already-seen titles/IDs in curated & current page
+            $allSeenIds = array_merge($seenCuratedIds, $seenPageIds);
+            $allSeenTitles = array_merge($seenCuratedTitles, $seenPageTitles);
             
-            return [
-                'tracks'   => $tracks,
-                'results'  => $tracks,
-                'has_more' => $hasMore,
-                'artist'   => $artist,
-                'total'    => $total,
-            ];
+            foreach ($candidateSearch as $st) {
+                if (count($pageTracks) >= $limit) break;
+                
+                $vid = $st['videoId'] ?? $st['id'] ?? '';
+                $cleanT = $normTitle($st['title'] ?? '');
+                
+                // Allow search items if they aren't on this page and weren't in curated
+                if ($vid && in_array($vid, $allSeenIds)) continue;
+                if (!empty($cleanT) && in_array($cleanT, $allSeenTitles)) continue;
+                
+                if ($vid) $allSeenIds[] = $vid;
+                if (!empty($cleanT)) $allSeenTitles[] = $cleanT;
+                $pageTracks[] = $st;
+            }
         }
         
-        // Fallback: Search for songs by this artist
-        // Use "artistName songs" query for better results
-        $searchQuery = "{$artistName} songs";
-        $searchData = self::searchSongs($searchQuery, $page, $limit);
-        $allSearchResults = $searchData['results'] ?? [];
-        
-        // Filter to only this artist's songs with more flexible matching
-        $filtered = self::filterSearchByArtist($allSearchResults, $artistName);
-        
-        // If we didn't get enough filtered results, try a broader search
-        if (count($filtered) < $limit && $page === 1) {
-            $broaderSearch = self::searchSongs($artistName, $page, $limit * 2);
-            $broaderResults = $broaderSearch['results'] ?? [];
-            $additionalFiltered = self::filterSearchByArtist($broaderResults, $artistName, $filtered);
-            $filtered = array_merge($filtered, $additionalFiltered);
+        // Ensure all HTML entities are decoded
+        foreach ($pageTracks as &$t) {
+            $t['title'] = html_entity_decode($t['title'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $t['artist'] = html_entity_decode($t['artist'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $t['album'] = html_entity_decode($t['album'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $t['subtitle'] = html_entity_decode($t['subtitle'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
         }
+        unset($t);
         
-        // Paginate through filtered results
-        $offset = ($page - 1) * $limit;
-        $pageTracks = array_slice($filtered, $offset, $limit);
-        
-        $hasMore = ($offset + $limit) < count($filtered);
+        $hasMore = count($pageTracks) >= $limit;
         
         return [
             'tracks'   => $pageTracks,
             'results'  => $pageTracks,
             'has_more' => $hasMore,
             'artist'   => $artist,
-            'total'    => count($filtered),
+            'page'     => $page,
+            'total'    => count($pageTracks),
         ];
     }
     
@@ -375,6 +483,22 @@ class JioSaavnService {
     }
     
     public static function getArtistImage($artistId) {
+        // If not numeric, search first to get real ID and 500x500 image
+        if (!ctype_digit((string)$artistId)) {
+            $search = self::searchArtists((string)$artistId, 1);
+            if (!empty($search['artists'][0])) {
+                $found = $search['artists'][0];
+                $img = $found['image'] ?? '';
+                if (!empty($img) && !str_contains($img, 'default') && !str_contains($img, 'share-image')) {
+                    return [
+                        'image' => self::getBestImage($img),
+                        'id'    => $found['id'],
+                    ];
+                }
+                $artistId = $found['id'];
+            }
+        }
+        
         $data = self::callApi('artist.getArtistPageDetails', [
             'artistId' => $artistId,
             'n'        => 1,
@@ -396,6 +520,13 @@ class JioSaavnService {
     }
     
     public static function getRelatedArtists($artistId, $limit = 10) {
+        if (!ctype_digit((string)$artistId)) {
+            $search = self::searchArtists((string)$artistId, 1);
+            if (!empty($search['artists'][0]['id'])) {
+                $artistId = $search['artists'][0]['id'];
+            }
+        }
+        
         $data = self::callApi('artist.getArtistPageDetails', [
             'artistId' => $artistId,
             'n'        => 1,
@@ -413,6 +544,13 @@ class JioSaavnService {
     }
     
     public static function getArtistInfo($artistId) {
+        if (!ctype_digit((string)$artistId)) {
+            $search = self::searchArtists((string)$artistId, 1);
+            if (!empty($search['artists'][0]['id'])) {
+                $artistId = $search['artists'][0]['id'];
+            }
+        }
+        
         $data = self::callApi('artist.getArtistPageDetails', [
             'artistId' => $artistId,
             'n'        => 1,
@@ -431,9 +569,10 @@ class JioSaavnService {
         
         // Add extra fields if we have artist data
         if ($artist) {
+            $artist['name'] = html_entity_decode($artist['name'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
             $artist['follower_count'] = $data['followerCount'] ?? $data['artist']['followerCount'] ?? 0;
             $artist['monthly_listeners'] = $data['monthlyListeners'] ?? $data['artist']['monthlyListeners'] ?? 0;
-            $artist['bio'] = $data['bio'] ?? $data['artist']['bio'] ?? '';
+            $artist['bio'] = html_entity_decode($data['bio'] ?? $data['artist']['bio'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
             $artist['fan_count'] = $data['fanCount'] ?? $data['artist']['fanCount'] ?? 0;
             
             // Ensure image is properly set
@@ -467,7 +606,7 @@ class JioSaavnService {
         if (!$artist && !empty($artistId) && !is_numeric($artistId)) {
             $artist = [
                 'id' => $artistId,
-                'name' => $artistId,
+                'name' => html_entity_decode($artistId, ENT_QUOTES | ENT_HTML5, 'UTF-8'),
                 'image' => '',
                 'thumbnail' => '',
                 'type' => 'artist'
@@ -501,8 +640,9 @@ class JioSaavnService {
     public static function batchGetArtistImages($artists) {
         $images = [];
         foreach ($artists as $artist) {
-            $name = $artist['name'] ?? $artist['id'] ?? '';
-            $id = $artist['id'] ?? $name;
+            $name = is_array($artist) ? ($artist['name'] ?? $artist['id'] ?? '') : (string)$artist;
+            $id = is_array($artist) ? ($artist['id'] ?? $name) : (string)$artist;
+            if (empty($name)) continue;
             
             $result = self::getArtistImage($id);
             if ($result && !empty($result['image'])) {
@@ -521,12 +661,27 @@ class JioSaavnService {
      */
     private static function getBestImage($image) {
         if (!is_array($image) || empty($image)) {
-            return (string)$image;
+            $url = (string)$image;
+            // Upgrade low-res JioSaavn CDN URLs to 500x500
+            if (!empty($url)) {
+                $url = str_replace(
+                    ['/50x50/', '/150x150/', '/250x250/', '_50x50.', '_150x150.', '_250x250.', '-50x50.', '-150x150.', '-250x250.'],
+                    ['/500x500/', '/500x500/', '/500x500/', '_500x500.', '_500x500.', '_500x500.', '-500x500.', '-500x500.', '-500x500.'],
+                    $url
+                );
+            }
+            return $url;
         }
         
         // If it's an associative array with 'link' key, return it directly
         if (isset($image['link'])) {
-            return $image['link'];
+            $url = $image['link'];
+            $url = str_replace(
+                ['/50x50/', '/150x150/', '/250x250/', '_50x50.', '_150x150.', '_250x250.', '-50x50.', '-150x150.', '-250x250.'],
+                ['/500x500/', '/500x500/', '/500x500/', '_500x500.', '_500x500.', '_500x500.', '-500x500.', '-500x500.', '-500x500.'],
+                $url
+            );
+            return $url;
         }
         
         // If it's a numeric array of {link, size} objects
@@ -556,13 +711,22 @@ class JioSaavnService {
             }
         }
         
+        // Upgrade the best link to 500x500 if it's a low-res URL
+        if (!empty($bestLink)) {
+            $bestLink = str_replace(
+                ['/50x50/', '/150x150/', '/250x250/', '_50x50.', '_150x150.', '_250x250.', '-50x50.', '-150x150.', '-250x250.'],
+                ['/500x500/', '/500x500/', '/500x500/', '_500x500.', '_500x500.', '_500x500.', '-500x500.', '-500x500.', '-500x500.'],
+                $bestLink
+            );
+        }
+        
         return $bestLink ?: '';
     }
     
     private static function normalizeTrack($song) {
         $videoId = $song['id'] ?? $song['videoId'] ?? '';
-        $title = $song['title'] ?? 'Unknown';
-        $subtitle = $song['subtitle'] ?? '';
+        $title = html_entity_decode($song['title'] ?? 'Unknown', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $subtitle = html_entity_decode($song['subtitle'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $image = $song['image'] ?? '';
         
         // Get best quality image
@@ -572,10 +736,11 @@ class JioSaavnService {
         $artists = [];
         if (!empty($song['more_info']['artistMap']['primary_artists'])) {
             foreach ($song['more_info']['artistMap']['primary_artists'] as $pa) {
-                $artists[] = $pa['name'] ?? '';
+                $artists[] = html_entity_decode($pa['name'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
             }
         }
         $artistStr = $artists ? implode(', ', $artists) : $subtitle;
+        $album = html_entity_decode($song['more_info']['album'] ?? $song['album'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
         
         return [
             'id'                   => "saavn_{$videoId}",
@@ -588,7 +753,7 @@ class JioSaavnService {
             'artwork_url'          => $image,
             'duration'             => (int)($song['more_info']['duration'] ?? 0),
             'duration_seconds'     => (int)($song['more_info']['duration'] ?? 0),
-            'album'                => $song['more_info']['album'] ?? '',
+            'album'                => $album,
             'encrypted_media_url'  => $song['more_info']['encrypted_media_url'] ?? '',
             'perma_url'            => $song['perma_url'] ?? '',
             'source'               => 'saavn',
@@ -598,7 +763,7 @@ class JioSaavnService {
     
     private static function normalizeArtist($artist) {
         $id = $artist['artistId'] ?? $artist['id'] ?? '';
-        $name = $artist['name'] ?? 'Unknown';
+        $name = html_entity_decode($artist['name'] ?? 'Unknown', ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $image = $artist['image'] ?? $artist['thumbnail'] ?? $artist['image_url'] ?? '';
         
         // Get best quality image
@@ -608,7 +773,7 @@ class JioSaavnService {
         if (empty($image) && !empty($id) && !empty($name)) {
             // Try to construct a default Saavn artist image URL
             $cleanName = preg_replace('/[^a-zA-Z0-9]/', '_', $name);
-            $image = "https://c.saavncdn.com/artists/{$cleanName}_50x50.jpg";
+            $image = "https://c.saavncdn.com/artists/{$cleanName}_500x500.jpg";
         }
         
         return [

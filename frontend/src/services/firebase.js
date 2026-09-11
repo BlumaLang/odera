@@ -1320,7 +1320,7 @@ export function subscribeLikedSongs(uid, callback) {
 // Realtime Database Playlists Operations
 // ----------------------------------------------------
 
-export async function createPlaylistRTDB(uid, name, description = "", initialTracks = [], coverUrl = "") {
+export async function createPlaylistRTDB(uid, name, description = "", initialTracks = [], coverUrl = "", forcedId = null) {
   if (!uid || !name) return null;
   try {
     const playlistsRef = ref(db, `users/${uid}/playlists`);
@@ -1329,7 +1329,7 @@ export async function createPlaylistRTDB(uid, name, description = "", initialTra
     const firstArtwork = initialTracks[0]?.artwork_url || initialTracks[0]?.thumbnail || "";
     const resolvedCover = coverUrl || firstArtwork || "";
     const newPlaylist = {
-      id: "pl_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4),
+      id: forcedId || ("pl_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4)),
       name: name.trim(),
       description: description.trim(),
       cover_url: resolvedCover,
@@ -1438,7 +1438,8 @@ export async function addTracksToPlaylistRTDB(uid, playlistId, newTracks) {
 
     if (addedCount > 0) {
       const firstTrackArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
-      const resolvedCover = pl.cover_url || pl.preview_artwork || firstTrackArtwork || "";
+      const isYtCover = pl.cover_url && (pl.cover_url.includes("ytimg.com") || pl.cover_url.includes("youtube"));
+      const resolvedCover = (!isYtCover && (pl.cover_url || pl.preview_artwork)) || firstTrackArtwork || "";
       list[idx] = {
         ...pl,
         tracks,
@@ -2502,17 +2503,126 @@ export async function createCollabPlaylist(ownerUid, ownerProfile = {}, playlist
 /**
  * Join an existing collaborative playlist
  */
-export async function joinCollabPlaylist(uid, userProfile = {}, collabId) {
-  if (!uid || !collabId) return { success: false, error: "Missing user ID or playlist ID" };
+export async function joinCollabPlaylist(uid, userProfile = {}, collabIdOrInvite) {
+  if (!uid || !collabIdOrInvite) return { success: false, error: "Missing user ID or playlist ID" };
 
   try {
-    const playlistRef = ref(db, `collab_playlists/${collabId}`);
-    const snap = await get(playlistRef);
-    if (!snap.exists()) {
+    let rawId = typeof collabIdOrInvite === "string"
+      ? collabIdOrInvite
+      : (collabIdOrInvite.collabId || collabIdOrInvite.playlistId || collabIdOrInvite.id || "");
+    rawId = String(rawId).replace(/^invite_/, "").replace(/[.#$\[\]]/g, "_").trim();
+
+    if (!rawId) return { success: false, error: "Invalid playlist ID" };
+
+    const inviteObj = typeof collabIdOrInvite === "object" ? collabIdOrInvite : null;
+
+    // Try multiple candidate keys to locate the playlist in collab_playlists
+    const candidates = [
+      rawId,
+      rawId.startsWith("collab_") ? rawId.replace(/^collab_/, "") : `collab_${rawId}`,
+      rawId.startsWith("collab_") ? `pl_${rawId.replace(/^collab_/, "")}` : `collab_${rawId.replace(/^pl_/, "")}`,
+      rawId.replace(/^pl_/, ""),
+    ];
+
+    let foundKey = null;
+    let playlist = null;
+
+    for (const key of candidates) {
+      if (!key) continue;
+      try {
+        const snap = await get(ref(db, `collab_playlists/${key}`));
+        if (snap.exists()) {
+          foundKey = key;
+          playlist = snap.val();
+          break;
+        }
+      } catch (_) {}
+    }
+
+    // Fallback: check sender's personal playlists if senderUid is present in invite
+    if (!playlist && inviteObj?.senderUid) {
+      const senderUid = inviteObj.senderUid;
+      for (const key of candidates) {
+        try {
+          const pSnap = await get(ref(db, `users/${senderUid}/playlists/${key}`));
+          if (pSnap.exists()) {
+            const personalPl = pSnap.val();
+            const createRes = await createCollabPlaylist(
+              senderUid,
+              {
+                username: inviteObj.senderName || "Friend",
+                avatar: inviteObj.senderAvatar,
+                avatarColor: inviteObj.senderAvatarColor,
+              },
+              {
+                ...personalPl,
+                id: key,
+                existingId: key,
+              }
+            );
+            if (createRes.success) {
+              foundKey = createRes.collabId;
+              playlist = createRes.playlist;
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    // Fallback: reconstruct collab playlist from invite metadata if not found in RTDB
+    if (!playlist && inviteObj) {
+      const senderUid = inviteObj.senderUid || "unknown_sender";
+      const resolvedId = rawId.startsWith("collab_") || rawId.startsWith("blend_") ? rawId : `collab_${rawId.replace(/^pl_/, "")}`;
+      const reconstructed = {
+        id: resolvedId,
+        collabId: resolvedId,
+        name: (inviteObj.playlistName || inviteObj.name || "Collaborative Playlist").trim(),
+        description: (inviteObj.description || "").trim(),
+        cover_url: inviteObj.coverUrl || inviteObj.cover_url || "",
+        preview_artwork: inviteObj.coverUrl || inviteObj.cover_url || "",
+        ownerUid: senderUid,
+        ownerName: inviteObj.senderName || "Friend",
+        ownerAvatar: inviteObj.senderAvatar || "memoji_0",
+        ownerAvatarColor: inviteObj.senderAvatarColor || "#1DB954",
+        collaborators: {
+          [senderUid]: {
+            uid: senderUid,
+            name: inviteObj.senderName || "Friend",
+            avatar: inviteObj.senderAvatar || "memoji_0",
+            avatarColor: inviteObj.senderAvatarColor || "#1DB954",
+            role: "owner",
+            joinedAt: inviteObj.createdAt || Date.now(),
+          },
+        },
+        tracks: Array.isArray(inviteObj.tracks) ? inviteObj.tracks : [],
+        track_count: (Array.isArray(inviteObj.tracks) ? inviteObj.tracks : []).length,
+        createdAt: inviteObj.createdAt || Date.now(),
+        updatedAt: Date.now(),
+        isBlend: Boolean(inviteObj.isBlend || inviteObj.type === "blend"),
+      };
+
+      await set(ref(db, `collab_playlists/${resolvedId}`), reconstructed);
+      await set(ref(db, `users/${senderUid}/collab_playlists/${resolvedId}`), {
+        collabId: resolvedId,
+        id: resolvedId,
+        name: reconstructed.name,
+        cover_url: reconstructed.cover_url,
+        preview_artwork: reconstructed.cover_url,
+        ownerUid: senderUid,
+        ownerName: reconstructed.ownerName,
+        role: "owner",
+        joinedAt: inviteObj.createdAt || Date.now(),
+      });
+      foundKey = resolvedId;
+      playlist = reconstructed;
+    }
+
+    if (!playlist || !foundKey) {
       return { success: false, error: "Collaborative playlist not found" };
     }
 
-    const playlist = snap.val();
+    const resolvedCollabId = foundKey;
     const userName = userProfile?.username || userProfile?.displayName || "Staytup Listener";
     const userAvatar = userProfile?.avatar || "memoji_0";
     const userAvatarColor = userProfile?.avatarColor || "#1DB954";
@@ -2526,25 +2636,37 @@ export async function joinCollabPlaylist(uid, userProfile = {}, collabId) {
       joinedAt: Date.now(),
     };
 
-    // Add to playlist's collaborators
-    await set(ref(db, `collab_playlists/${collabId}/collaborators/${uid}`), collaboratorInfo);
+    // Add to playlist's collaborators in Firebase RTDB
+    await set(ref(db, `collab_playlists/${resolvedCollabId}/collaborators/${uid}`), collaboratorInfo);
 
-    // Register on user's personal collab_playlists index
-    await set(ref(db, `users/${uid}/collab_playlists/${collabId}`), {
-      collabId,
+    // Register on user's personal collab_playlists index with cached metadata
+    await set(ref(db, `users/${uid}/collab_playlists/${resolvedCollabId}`), {
+      collabId: resolvedCollabId,
+      id: resolvedCollabId,
+      name: playlist.name || "Collab Playlist",
+      cover_url: playlist.cover_url || playlist.preview_artwork || "",
+      preview_artwork: playlist.preview_artwork || playlist.cover_url || "",
+      ownerUid: playlist.ownerUid,
+      ownerName: playlist.ownerName || "Friend",
+      track_count: playlist.track_count || (playlist.tracks || []).length,
+      isBlend: Boolean(playlist.isBlend),
+      isCollab: true,
       role: "editor",
       joinedAt: Date.now(),
     });
 
     const updatedPlaylist = {
       ...playlist,
+      id: resolvedCollabId,
+      collabId: resolvedCollabId,
+      isCollab: true,
       collaborators: {
         ...(playlist.collaborators || {}),
         [uid]: collaboratorInfo,
       },
     };
 
-    return { success: true, playlist: updatedPlaylist };
+    return { success: true, playlist: updatedPlaylist, collabId: resolvedCollabId };
   } catch (err) {
     console.warn("joinCollabPlaylist error:", err);
     return { success: false, error: err.message };
@@ -2820,7 +2942,20 @@ export function subscribeCollabPlaylists(uid, callback) {
         const plRef = ref(db, `collab_playlists/${cId}`);
         const plListener = onValue(plRef, (plSnap) => {
           if (plSnap.exists()) {
-            latestPlaylistsMap.set(cId, plSnap.val());
+            const plVal = plSnap.val();
+            latestPlaylistsMap.set(cId, {
+              ...plVal,
+              id: cId,
+              collabId: cId,
+              isCollab: true,
+            });
+          } else if (indexData[cId]?.name) {
+            latestPlaylistsMap.set(cId, {
+              ...indexData[cId],
+              id: cId,
+              collabId: cId,
+              isCollab: true,
+            });
           } else {
             latestPlaylistsMap.delete(cId);
           }
@@ -2856,47 +2991,85 @@ export function subscribeCollabPlaylists(uid, callback) {
 export async function sendCollabInvite(senderUid, senderProfile = {}, targetUid, playlistData = {}) {
   if (!senderUid || !targetUid) return { success: false, error: "Missing sender or target" };
   try {
+    const isBlend = playlistData.type === "blend" || Boolean(playlistData.isBlend);
     let collabId = playlistData.collabId || playlistData.playlistId || playlistData.id;
-    let playlist = playlistData.playlist || null;
+    if (!collabId && isBlend) {
+      const blendKey = [senderUid, targetUid].sort().join("_");
+      collabId = `blend_${blendKey}`;
+    }
+    if (collabId) {
+      collabId = String(collabId).replace(/[.#$\[\]]/g, "_");
+    }
 
-    // Check if collab playlist already exists
+    let existingCollab = null;
+
+    // Check if collab playlist already exists in Firebase RTDB
     if (collabId) {
       try {
         const snap = await get(ref(db, `collab_playlists/${collabId}`));
         if (snap.exists()) {
-          playlist = snap.val();
+          existingCollab = snap.val();
         }
       } catch (_) {}
     }
 
-    // If not found, create new collab playlist
-    if (!playlist) {
+    // Also check alternate candidate keys if not found
+    if (!existingCollab && collabId) {
+      const altCandidates = [
+        collabId.startsWith("collab_") ? collabId.replace(/^collab_/, "pl_") : `collab_${collabId.replace(/^pl_/, "")}`,
+        collabId.startsWith("collab_") ? collabId.replace(/^collab_/, "") : `collab_${collabId}`,
+      ];
+      for (const alt of altCandidates) {
+        try {
+          const snap = await get(ref(db, `collab_playlists/${alt}`));
+          if (snap.exists()) {
+            existingCollab = snap.val();
+            collabId = alt;
+            break;
+          }
+        } catch (_) {}
+      }
+    }
+
+    // If NOT found in Firebase collab_playlists, we MUST create it now!
+    let finalCollabPlaylist = existingCollab;
+    if (!existingCollab) {
       const createData = {
         ...playlistData,
-        name: playlistData.name || playlistData.playlistName || "Collaborative Blend",
+        existingId: playlistData.id || playlistData.playlistId || collabId,
+        name: playlistData.name || playlistData.playlistName || (isBlend ? "Blend #1" : "Collaborative Playlist"),
         tracks: playlistData.tracks || [],
+        cover_url: playlistData.cover_url || playlistData.preview_artwork || "",
+        preview_artwork: playlistData.preview_artwork || playlistData.cover_url || "",
+        isBlend,
       };
       const res = await createCollabPlaylist(senderUid, senderProfile, createData);
       if (!res.success) return res;
       collabId = res.collabId;
-      playlist = res.playlist;
+      finalCollabPlaylist = res.playlist;
     }
 
-    const inviteId = `invite_${collabId}`;
-    const pName = playlist?.name || playlistData.name || playlistData.playlistName || "Collaborative Blend";
-    const pDesc = playlist?.description || playlistData.description || "";
-    const pCover = playlist?.cover_url || playlistData.cover_url || playlistData.preview_artwork || "";
+    const cleanCollabId = String(collabId).replace(/[.#$\[\]]/g, "_");
+    const inviteId = `invite_${cleanCollabId}`;
+    const pName = finalCollabPlaylist?.name || playlistData.name || playlistData.playlistName || (isBlend ? "Blend" : "Collaborative Playlist");
+    const pDesc = finalCollabPlaylist?.description || playlistData.description || "";
+    const pCover = finalCollabPlaylist?.cover_url || finalCollabPlaylist?.preview_artwork || playlistData.cover_url || playlistData.preview_artwork || "";
 
     const inviteRecord = {
       id: inviteId,
       inviteId,
-      collabId,
-      playlistId: collabId,
+      collabId: cleanCollabId,
+      playlistId: cleanCollabId,
       playlistName: pName,
       description: pDesc,
       coverUrl: pCover,
-      matchPercentage: playlistData.matchPercentage || null,
-      type: playlistData.type || (pName.startsWith("Blend:") || /^Blend\s*#\d+$/.test(pName) ? "blend" : "collab"),
+      cover_url: pCover,
+      preview_artwork: pCover,
+      tracks: finalCollabPlaylist?.tracks || playlistData.tracks || [],
+      track_count: (finalCollabPlaylist?.tracks || playlistData.tracks || []).length,
+      matchPercentage: playlistData.matchPercentage || finalCollabPlaylist?.matchPercentage || null,
+      type: isBlend ? "blend" : (playlistData.type || (pName.startsWith("Blend:") || /^Blend\s*#\d+$/.test(pName) ? "blend" : "collab")),
+      isBlend,
       senderUid,
       senderName: senderProfile?.username || senderProfile?.displayName || "Friend",
       senderAvatar: senderProfile?.avatar || "memoji_0",
@@ -2904,8 +3077,8 @@ export async function sendCollabInvite(senderUid, senderProfile = {}, targetUid,
       createdAt: Date.now(),
     };
 
-    await set(ref(db, `users/${targetUid}/collab_invites/${collabId}`), inviteRecord);
-    return { success: true, collabId, playlist };
+    await set(ref(db, `users/${targetUid}/collab_invites/${cleanCollabId}`), inviteRecord);
+    return { success: true, collabId: cleanCollabId, playlist: finalCollabPlaylist };
   } catch (err) {
     console.warn("sendCollabInvite error:", err);
     return { success: false, error: err.message };
@@ -2946,13 +3119,20 @@ export async function acceptCollabInvite(uid, userProfile = {}, collabIdOrInvite
     const collabId = rawId.replace(/^invite_/, "").trim();
     if (!collabId) return { success: false, error: "Invalid collab ID" };
 
-    const res = await joinCollabPlaylist(uid, userProfile, collabId);
+    const res = await joinCollabPlaylist(uid, userProfile, collabIdOrInvite);
 
-    // Clean up invite under all possible keys
-    await set(ref(db, `users/${uid}/collab_invites/${collabId}`), null).catch(() => {});
-    await set(ref(db, `users/${uid}/collab_invites/invite_${collabId}`), null).catch(() => {});
-    if (rawId && rawId !== collabId) {
-      await set(ref(db, `users/${uid}/collab_invites/${rawId}`), null).catch(() => {});
+    if (res?.success) {
+      const resolvedId = res.collabId || collabId;
+      // Clean up invite under all possible keys
+      await set(ref(db, `users/${uid}/collab_invites/${collabId}`), null).catch(() => {});
+      await set(ref(db, `users/${uid}/collab_invites/invite_${collabId}`), null).catch(() => {});
+      if (resolvedId && resolvedId !== collabId) {
+        await set(ref(db, `users/${uid}/collab_invites/${resolvedId}`), null).catch(() => {});
+        await set(ref(db, `users/${uid}/collab_invites/invite_${resolvedId}`), null).catch(() => {});
+      }
+      if (rawId && rawId !== collabId && rawId !== resolvedId) {
+        await set(ref(db, `users/${uid}/collab_invites/${rawId}`), null).catch(() => {});
+      }
     }
 
     return res;

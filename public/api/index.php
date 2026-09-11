@@ -21,6 +21,7 @@
  *              GET  /api/artist/:id/songs?page=&limit=
  *              GET  /api/artist/:id/image
  *              GET  /api/artist/:id/related?limit=
+ *              GET  /api/artist/:id/info
  * 
  * Auth:        POST /api/auth/pin         { username, pin }
  *              POST /api/auth/phone       { phone, code }
@@ -133,11 +134,18 @@ try {
             require_once __DIR__ . '/routes/music.php';
             MusicRoutes::handle('lyrics', $method);
             break;
-        
+
         // ==================== STREAM ====================
         case 'stream':
             require_once __DIR__ . '/routes/music.php';
             MusicRoutes::handle('stream', $method, ['id' => $subresource]);
+            break;
+        
+        // ==================== IMAGE PROXY ====================
+        case 'proxy-image':
+        case 'image-proxy':
+            require_once __DIR__ . '/routes/music.php';
+            MusicRoutes::handle('proxy-image', $method);
             break;
         
         // ==================== TRACK ====================
@@ -145,6 +153,8 @@ try {
             require_once __DIR__ . '/routes/music.php';
             if ($subresource === 'image') {
                 MusicRoutes::handle('track', $method, ['id' => $id, 'subaction' => 'image']);
+            } elseif ($id === 'image') {
+                MusicRoutes::handle('track', $method, ['id' => $subresource, 'subaction' => 'image']);
             } else {
                 MusicRoutes::handle('track', $method, ['id' => $subresource]);
             }

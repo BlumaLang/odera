@@ -17,6 +17,7 @@ import { api } from "../api/client";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
 import { getCachedArtist, saveCachedArtist } from "../services/firebase";
+import { resolveLocalArtistImage } from "../theme/artistImages";
 
 // Curated starting artists by language with stable identifiers and official names
 const MUSIC_LANGUAGES = [
@@ -157,18 +158,24 @@ const PAGE_BATCH_SIZE = 8;
 const MAX_RECOMMENDATION_POOL = 24;
 
 export default function OnboardingScreen() {
-  const { completeOnboarding, userProfile } = useUser();
+  const { completeOnboarding, userProfile, currentUser } = useUser();
   const { isTablet, isDesktop } = useResponsive();
 
-  const [step, setStep] = useState(1); // 1 = Name & Language, 2 = Artists
-  const [username, setUsername] = useState(
-    userProfile?.username &&
-      userProfile.username !== "Staytup Listener" &&
-      userProfile.username !== "Music Lover" &&
-      !userProfile.username.startsWith("listener_")
-      ? userProfile.username
-      : ""
-  );
+  const [step, setStep] = useState(1); // 1 = Language Selection, 2 = Artists
+
+  // Resolve permanent username (Animikh / userProfile / displayName)
+  const effectiveUsername = useMemo(() => {
+    const up = userProfile?.username;
+    if (up && up !== "Staytup Listener" && up !== "Music Lover" && !up.startsWith("listener_")) {
+      return up;
+    }
+    const dp = currentUser?.displayName || currentUser?.username;
+    if (dp && dp !== "Staytup Listener" && dp !== "Music Lover" && !dp.startsWith("listener_")) {
+      return dp;
+    }
+    return "Animikh";
+  }, [userProfile?.username, currentUser?.displayName, currentUser?.username]);
+
   const [selectedLanguages, setSelectedLanguages] = useState(["Hindi", "Punjabi", "English"]);
 
   // Step 2: Artists state
@@ -203,7 +210,7 @@ export default function OnboardingScreen() {
     return ids;
   }, [selectedArtists]);
 
-  // Derive curated starter artists whenever chosen languages change
+  // Derive curated starter artists with instant high-res photos whenever chosen languages change
   useEffect(() => {
     const map = new Map();
     selectedLanguages.forEach((langId) => {
@@ -211,10 +218,11 @@ export default function OnboardingScreen() {
       if (langObj) {
         langObj.defaultArtists.forEach((a) => {
           if (!map.has(a.id)) {
+            const photo = resolveLocalArtistImage(a.name) || null;
             map.set(a.id, {
               id: String(a.id),
               name: a.name,
-              image: null,
+              image: photo,
               type: "artist",
             });
           }
@@ -222,12 +230,12 @@ export default function OnboardingScreen() {
       }
     });
 
-    const starters = Array.from(map.values()).slice(0, 16);
+    const starters = Array.from(map.values()).slice(0, 18);
     setRecommendedPool(starters);
     setVisibleCount(INITIAL_DISPLAY_LIMIT);
   }, [selectedLanguages]);
 
-  // Image retrieval helper: DB Cache -> Staytup API -> Local fallback
+  // Image retrieval helper: Local high-res -> DB Cache -> Staytup API
   const resolveArtistPhoto = useCallback(async (artist) => {
     if (!artist) return null;
     const id = artist.id ? String(artist.id) : null;
@@ -238,6 +246,12 @@ export default function OnboardingScreen() {
     if (artist.image) {
       setImageMap((prev) => ({ ...prev, [key]: artist.image, [name]: artist.image }));
       return artist.image;
+    }
+
+    const localPhoto = resolveLocalArtistImage(name);
+    if (localPhoto) {
+      setImageMap((prev) => ({ ...prev, [key]: localPhoto, [name]: localPhoto }));
+      return localPhoto;
     }
 
     // 1. Check Firebase Database Cache
@@ -493,8 +507,8 @@ export default function OnboardingScreen() {
     return "Popular & Recommended Artists";
   }, [artistSearchQuery, selectedArtists.length, lastSelectedArtistName, displayedArtists.length]);
 
-  // Step 1 -> Step 2 validation
-  const canGoToStep2 = username.trim().length > 0 && selectedLanguages.length > 0;
+  // Step 1 -> Step 2 validation (must select at least 1 language)
+  const canGoToStep2 = selectedLanguages.length > 0;
 
   // Final submission handler
   const handleFinish = async () => {
@@ -505,7 +519,7 @@ export default function OnboardingScreen() {
 
     setTimeout(() => {
       completeOnboarding({
-        username: username.trim(),
+        username: effectiveUsername,
         languages: selectedLanguages,
         favoriteArtists: artistNames,
       });
@@ -544,50 +558,8 @@ export default function OnboardingScreen() {
         >
           <Text style={styles.mainTitle}>Welcome to Staytup</Text>
           <Text style={styles.subtitle}>
-            Enter your name and pick the languages you love listening to.
+            Pick the languages you love listening to.
           </Text>
-
-          {/* User Name Input Card */}
-          <View style={styles.inputCard}>
-            <View style={[styles.avatarPreview, { overflow: "hidden" }]}>
-              {(() => {
-                const av = userProfile?.avatar;
-                if (av && av.startsWith("memoji_")) {
-                  const memojiMap = {
-                    memoji_0: require("../../assets/memoji/pastel_0.jpg"),
-                    memoji_1: require("../../assets/memoji/pastel_1.jpg"),
-                    memoji_2: require("../../assets/memoji/pastel_2.jpg"),
-                    memoji_3: require("../../assets/memoji/pastel_3.jpg"),
-                    memoji_4: require("../../assets/memoji/pastel_4.jpg"),
-                    memoji_5: require("../../assets/memoji/pastel_5.jpg"),
-                    memoji_6: require("../../assets/memoji/pastel_6.jpg"),
-                    memoji_7: require("../../assets/memoji/pastel_7.jpg"),
-                    memoji_8: require("../../assets/memoji/pastel_8.jpg"),
-                    memoji_9: require("../../assets/memoji/pastel_9.jpg"),
-                  };
-                  const src = memojiMap[av];
-                  if (src) return <Image source={src} style={{ width: "100%", height: "100%" }} resizeMode="cover" />;
-                }
-                if (av && av.startsWith("http")) {
-                  return <Image source={{ uri: av }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />;
-                }
-                if (username.trim()) {
-                  return <Text style={styles.avatarLetter}>{username.trim().charAt(0).toUpperCase()}</Text>;
-                }
-                return <Ionicons name="person" size={18} color="#000000" />;
-              })()}
-            </View>
-            <TextInput
-              style={styles.textInput}
-              placeholder="What should we call you?"
-              placeholderTextColor={colors.textMuted}
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="words"
-              autoCorrect={false}
-              maxLength={25}
-            />
-          </View>
 
           {/* Languages Section */}
           <View style={styles.sectionHeaderRow}>

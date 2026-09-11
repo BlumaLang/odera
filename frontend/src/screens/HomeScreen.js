@@ -719,122 +719,141 @@ export default function HomeScreen({ onNavigate } = {}) {
     };
   }, [feed?.sections, hasPunjabiAffinity, isTrackPunjabi]);
 
-  // 6. Intelligent Daily Mix (tailored dynamically to user's active languages & genres)
+  // 6. Intelligent Daily Mix (tailored dynamically to user's active languages, artists & genres)
   const dailyMixSection = useMemo(() => {
-    const sections = feed?.sections || [];
-    if (sections.length === 0 && recentlyPlayed.length === 0 && appTrending.length === 0) return null;
+    // 1. Gather all strictly validated playable tracks across user profile, followings, history and feed
+    const pool = [];
+    const poolSeen = new Set();
 
-    const getTracksForGenre = (keyword, fallbackIndex) => {
-      const matched = sections.filter((s) =>
-        s.id?.toLowerCase().includes(keyword) || s.title?.toLowerCase().includes(keyword)
-      );
-      let tracks = matched.flatMap((s) => s.items || s.tracks || []);
-      if (tracks.length < 5 && sections[fallbackIndex]) {
-        tracks = [...tracks, ...(sections[fallbackIndex].items || sections[fallbackIndex].tracks || [])];
+    const addSafeTracks = (list) => {
+      if (!Array.isArray(list)) return;
+      for (const t of list) {
+        if (!t || t.type === "playlist") continue;
+        const vid = t.videoId || t.video_id;
+        if (vid && !poolSeen.has(vid)) {
+          if (!hasPunjabiAffinity && isTrackPunjabi(t)) continue;
+          poolSeen.add(vid);
+          pool.push(t);
+        }
       }
-      return tracks;
     };
 
-    const genreMixConfigs = [];
-    let mixNum = 1;
+    addSafeTracks(allFollowingTracks);
+    addSafeTracks(recentlyPlayed);
+    addSafeTracks(likedSongs);
+    addSafeTracks(appTrending);
+    (feed?.sections || []).forEach((sec) => {
+      if (sec.type === "songs" || (!sec.type && Array.isArray(sec.items))) {
+        addSafeTracks(sec.items || sec.tracks || []);
+      }
+    });
 
-    if (hasHindiAffinity) {
-      genreMixConfigs.push({
-        id: "daily_mix_bollywood",
-        title: `Daily Mix ${mixNum++}`,
-        genreKeyword: "bollywood",
-        fallbackIndex: 0,
+    if (pool.length === 0) return null;
+
+    // 2. Define intelligent mix configs for Daily Mix 1, 2, 3, 4, 5, 6
+    const mixConfigs = [
+      {
+        id: "daily_mix_1",
+        title: "Daily Mix 1",
         badgeColor: "#1DB954",
-        defaultGenre: "Bollywood & Hindi Hits",
-      });
-      genreMixConfigs.push({
-        id: "daily_mix_romantic",
-        title: `Daily Mix ${mixNum++}`,
-        genreKeyword: "romantic",
-        fallbackIndex: 1,
+        defaultGenre: "Bollywood & Romantic Melodies",
+        filter: (t) => {
+          const a = (t.artist || "").toLowerCase();
+          const target = affinityArtists.slice(0, 2).map((x) => x.toLowerCase());
+          if (target.some((x) => a.includes(x))) return true;
+          return /romantic|love|dil|ishq|tum|tere|aashiqui|humsafar|khairiyat|kesariya|shayad/i.test((t.title || "") + " " + a);
+        },
+      },
+      {
+        id: "daily_mix_2",
+        title: "Daily Mix 2",
         badgeColor: "#E91E63",
-        defaultGenre: "Romantic Melodies",
-      });
-    }
-
-    // Only create Punjabi mix if user selected Punjabi or follows Punjabi artists
-    if (hasPunjabiAffinity) {
-      genreMixConfigs.push({
-        id: "daily_mix_punjabi",
-        title: `Daily Mix ${mixNum++}`,
-        genreKeyword: "punjabi",
-        fallbackIndex: 2,
-        badgeColor: "#FF9800",
-        defaultGenre: "Punjabi Bangers",
-      });
-    }
-
-    genreMixConfigs.push({
-      id: "daily_mix_indie",
-      title: `Daily Mix ${mixNum++}`,
-      genreKeyword: "indie",
-      fallbackIndex: 3,
-      badgeColor: "#9C27B0",
-      defaultGenre: "Indie Pop & Acoustic",
-    });
-
-    genreMixConfigs.push({
-      id: "daily_mix_lofi",
-      title: `Daily Mix ${mixNum++}`,
-      genreKeyword: "lofi",
-      fallbackIndex: 4,
-      badgeColor: "#00BCD4",
-      defaultGenre: "Lo-Fi Chill & Beats",
-    });
-
-    if (hasEnglishAffinity) {
-      genreMixConfigs.push({
-        id: "daily_mix_english",
-        title: `Daily Mix ${mixNum++}`,
-        genreKeyword: "english",
-        fallbackIndex: 5,
+        defaultGenre: "Trending Chartbusters & Energy",
+        filter: (t) => {
+          const a = (t.artist || "").toLowerCase();
+          const target = affinityArtists.slice(2, 5).map((x) => x.toLowerCase());
+          if (target.some((x) => a.includes(x))) return true;
+          return /dance|party|dhamaka|nach|tauba|bhangra|groove|hit|chart|jawan|animal|war/i.test((t.title || "") + " " + a);
+        },
+      },
+      {
+        id: "daily_mix_3",
+        title: "Daily Mix 3",
         badgeColor: "#3A86FF",
-        defaultGenre: "Global & English Pop",
-      });
-    } else if (hasHindiAffinity) {
-      genreMixConfigs.push({
-        id: "daily_mix_hiphop",
-        title: `Daily Mix ${mixNum++}`,
-        genreKeyword: "hip_hop",
-        fallbackIndex: 5,
+        defaultGenre: "Indie Pop & Acoustic Vibe",
+        filter: (t) => {
+          const a = (t.artist || "").toLowerCase();
+          return /indie|acoustic|unplugged|chitta|baarish|kho|alvida|kasoor|jeena|anuv|prateek/i.test((t.title || "") + " " + a);
+        },
+      },
+      {
+        id: "daily_mix_4",
+        title: "Daily Mix 4",
+        badgeColor: "#9C27B0",
+        defaultGenre: "Chill Beats & Lo-Fi Vibes",
+        filter: (t) => {
+          const a = (t.artist || "").toLowerCase();
+          return /lofi|lo-fi|chill|slowed|midnight|raat|sukoon|peace|vibes|samjho|hona/i.test((t.title || "") + " " + a);
+        },
+      },
+      {
+        id: "daily_mix_5",
+        title: "Daily Mix 5",
+        badgeColor: hasPunjabiAffinity ? "#FF9800" : "#00BCD4",
+        defaultGenre: hasPunjabiAffinity ? "Punjabi Bangers" : "Global Pop & English Hits",
+        filter: (t) => {
+          if (hasPunjabiAffinity) return isTrackPunjabi(t);
+          return /[a-z]/i.test(t.title) && !/[\u0900-\u097F]/.test(t.title);
+        },
+      },
+      {
+        id: "daily_mix_6",
+        title: "Daily Mix 6",
         badgeColor: "#FF5722",
-        defaultGenre: "Desi Hip Hop & Energy",
-      });
-    }
+        defaultGenre: "Discover Fresh Mix",
+        filter: () => true,
+      },
+    ];
 
+    const usedInMixes = new Set();
     const usedArtworks = new Set();
     const mixes = [];
 
-    for (const config of genreMixConfigs) {
-      let rawTracks = getTracksForGenre(config.genreKeyword, config.fallbackIndex);
+    for (let c = 0; c < mixConfigs.length; c++) {
+      const config = mixConfigs[c];
 
-      // If user has NO Punjabi affinity, strictly filter out Punjabi tracks
-      if (!hasPunjabiAffinity) {
-        rawTracks = rawTracks.filter((t) => !isTrackPunjabi(t));
+      // Match tracks matching the genre/artist filter
+      let matched = pool.filter((t) => config.filter(t));
+      // Deduplicate against tracks used in earlier mixes for maximum diversity
+      let fresh = matched.filter((t) => !usedInMixes.has(t.videoId || t.video_id));
+      let mixTracks = fresh.length >= 8 ? fresh : [...fresh, ...matched];
+
+      // If still fewer than 8 tracks, backfill with shifted pool
+      if (mixTracks.length < 8) {
+        const offset = (c * 7) % Math.max(1, pool.length);
+        const rotated = [...pool.slice(offset), ...pool.slice(0, offset)];
+        mixTracks = [...mixTracks, ...rotated];
       }
 
-      // Deduplicate tracks within the mix
-      const seenTrackIds = new Set();
-      const mixTracks = [];
-      for (const t of rawTracks) {
-        const tid = t.videoId || t.video_id || t.id;
-        if (tid && !seenTrackIds.has(tid)) {
-          seenTrackIds.add(tid);
-          mixTracks.push(t);
+      // Deduplicate within the mix & cap at 25 playable songs
+      const seen = new Set();
+      const finalTracks = [];
+      for (const t of mixTracks) {
+        const vid = t.videoId || t.video_id;
+        if (vid && !seen.has(vid)) {
+          seen.add(vid);
+          usedInMixes.add(vid);
+          finalTracks.push(t);
+          if (finalTracks.length >= 25) break;
         }
       }
 
-      if (mixTracks.length === 0) continue;
+      if (finalTracks.length < 3) continue;
 
-      // Find an artwork that hasn't been used yet to guarantee NO DUPLICATE COVERS
+      // Select unique cover artwork
       let chosenArtwork = null;
-      let leadTrack = mixTracks[0];
-      for (const t of mixTracks) {
+      let leadTrack = finalTracks[0];
+      for (const t of finalTracks) {
         const art = t.artwork_url || t.thumbnail;
         if (art && !usedArtworks.has(art)) {
           chosenArtwork = art;
@@ -844,13 +863,13 @@ export default function HomeScreen({ onNavigate } = {}) {
         }
       }
       if (!chosenArtwork) {
-        chosenArtwork = mixTracks[0]?.artwork_url || mixTracks[0]?.thumbnail;
+        chosenArtwork = finalTracks[0]?.artwork_url || finalTracks[0]?.thumbnail;
       }
 
-      // Collect top distinct artists
+      // Top distinct artists for subtitle
       const artists = Array.from(
         new Set(
-          mixTracks
+          finalTracks
             .map((t) => t.artist)
             .filter(Boolean)
             .flatMap((a) => a.split(/,|&|feat\./i).map((s) => s.trim()))
@@ -860,12 +879,12 @@ export default function HomeScreen({ onNavigate } = {}) {
 
       mixes.push({
         id: config.id,
-        videoId: leadTrack?.videoId || leadTrack?.video_id || config.id,
+        videoId: leadTrack?.videoId || leadTrack?.video_id || `mix_${c}`,
         title: config.title,
         artist: artists ? `${artists} and more` : config.defaultGenre,
         artwork_url: chosenArtwork,
         thumbnail: chosenArtwork,
-        mixTracks: mixTracks.slice(0, 25),
+        mixTracks: finalTracks,
         badgeColor: config.badgeColor,
       });
     }
@@ -878,7 +897,7 @@ export default function HomeScreen({ onNavigate } = {}) {
       description: "Curated specifically for your taste and favorite artists",
       items: mixes,
     };
-  }, [hasHindiAffinity, hasPunjabiAffinity, hasEnglishAffinity, isTrackPunjabi, recentlyPlayed, appTrending, feed?.sections]);
+  }, [allFollowingTracks, recentlyPlayed, likedSongs, appTrending, feed?.sections, affinityArtists, hasPunjabiAffinity, isTrackPunjabi]);
 
   // 7. Dynamic "Because You Listen To [Top Artist]" Section
   const topAffinityArtist = affinityArtists[0];

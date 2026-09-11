@@ -1,246 +1,170 @@
 ﻿# Staytup - Real-Time Music Streaming & Social Listening Platform
 
-**Staytup** is a modern, high-performance, full-stack music streaming and collaborative listening application built with **React Native (Expo)**, **PHP Backend**, and **Firebase Realtime Database**. It combines fluid audio streaming with real-time social presence, collaborative playlists, and music taste matching.
+[![Staytup](https://img.shields.io/badge/Staytup-PWA%20v2.5.0-1DB954?style=for-the-badge&logo=music)](https://staytup.odireca.com)
+[![React Native](https://img.shields.io/badge/React_Native-Expo%20SDK%2052-61DAFB?style=for-the-badge&logo=react)](https://reactnative.dev)
+[![PHP](https://img.shields.io/badge/PHP-8.x%20Backend-777BB4?style=for-the-badge&logo=php)](https://php.net)
+[![Firebase](https://img.shields.io/badge/Firebase-Realtime%20Database-FFCA28?style=for-the-badge&logo=firebase)](https://firebase.google.com)
+
+**Staytup** is a modern, high-performance, full-stack music streaming and collaborative listening application built with **React Native (Expo)**, a lightweight **PHP 8.x backend**, and **Firebase Realtime Database**. It pairs studio-grade audio streaming with real-time social presence, collaborative playlists, friend listening sync, and live synchronized lyrics.
 
 ---
 
-## Key Features
+## Key Features & Capabilities
 
-### 1. Seamless Audio Streaming & Player Engine
-- **Direct Audio Streaming**: High-quality streaming with server-side DES decryption for JioSaavn stream URLs.
-- **Lock Screen & Background Playback**: Full iOS & Android background audio integration.
-- **Synchronized Lyrics**: Live synchronized (karaoke-style) and plain lyrics powered by LRCLIB.
-- **Player Controls**: Persistent bottom Mini Player with gesture controls.
+### 1. High-Fidelity Audio Engine & Smart Playback
+- **Direct Audio Decryption**: Instant server-side DES-ECB decryption for high-bitrate JioSaavn media streams.
+- **Smart Stream Pre-Caching**: Background pre-caching of upcoming tracks in queue for instantaneous, gapless track transitions.
+- **MediaSession API & Background Audio**: Native lock screen controls, playback notifications, artwork metadata, and media key support across iOS, Android, macOS, and Windows.
+- **Adaptive Queue System**: Full queue drawer with drag-and-drop reordering, remove-from-queue, and subtle "Up Next" notice banners.
+- **Repeat & Shuffle**: Authentic playback loop (Repeat All, Repeat One, Shuffle mode).
+- **Sleep Timer**: Built-in countdown sleep timer (15m, 30m, 45m, 1h, End of Track) with gentle audio fade-out.
 
-### 2. Social Listening & Friends Hub
-- **Live Activity & Waveform Presence**: Real-time visibility of what friends are listening to.
-- **Listen Along**: Jump directly into any friend's currently playing track.
-- **Music Match & Shared Blend**: Calculates taste compatibility percentage.
+### 2. Synchronized Karaoke Lyrics
+- **Live Synchronized Lyrics**: Real-time karaoke-style lyrics synced to timestamps via LRCLIB integration.
+- **Smooth Auto-Scroll**: Highlights active lines with smooth auto-scroll to keep the current vocal front and center.
+- **3D Album Flip Player**: Tap artwork to flip 180 degrees directly into full-card synchronized lyrics.
+- **Plain Text Fallback**: Graceful fallback to static plain lyrics when timestamp synchronization is unavailable.
 
-### 3. Playlists & Real-Time Collaboration
-- **Personal Playlists**: Create, rename, customize, and manage playlists.
-- **Collaborative Playlists**: Invite friends to collaborate in real-time.
+### 3. Social Listening & Friends Hub
+- **Live Friend Presence**: See what friends are listening to in real-time with animated waveform indicators.
+- **Listen Along (Sync Listening)**: One-tap synchronization to listen in real-time with a friend's active playback.
+- **Music Taste Match & Blend**: Algorithmic taste compatibility score calculated between friends based on genre and artist listening history.
+- **Custom 3D Memoji Avatars**: 10+ custom 3D pastel avatars and customizable profile headers.
 
-### 4. Fast Search & Discovery
-- **Instant Search**: Fast autocomplete query suggestions across tracks, artists, and albums.
-- **Explore & Browse**: Daily personalized home feed with trending tracks.
+### 4. Playlist Import Engine (Spotify & YouTube)
+- **Instant Playlist Link Importer**: Paste any public Spotify playlist URL or YouTube Music link to automatically match and import all tracks into Staytup.
+- **Real-Time Import Progress**: Live track matching feedback with fallback search algorithms.
+- **Collaborative Playlists**: Real-time multi-user collaborative playlist editing powered by Firebase.
 
-### 5. User Profiles & Personalization
-- **Avatars & Themes**: Customizable character avatars with vibrant color selector.
-- **Onboarding & Taste Tuning**: Interactive onboarding to select preferred genres and languages.
+### 5. Multi-Artist Exploration & Discography
+- **Smart Multi-Artist Parsing**: Intelligently parses collaborated tracks (e.g. `Vishal Mishra, Raj Shekhar`) and displays individual artist pills.
+- **Artist Bottom Sheet & Discography**: Tap any artist name to view popular songs, related artists, and full discography.
+- **Automated High-Res Artist Imagery**: Dynamic artist photo resolution with caching and CDN fallbacks.
+
+### 6. Progressive Web App (PWA) & Responsive Design
+- **Full PWA Ready**: Installable on iOS (Safari Add to Home Screen), Android (Chrome PWA), and Desktop (Chrome/Edge/Brave).
+- **Dual Manifest Architecture**: Native support for both `manifest.webmanifest` and `manifest.json` with strict MIME headers and explicit permission overrides.
+- **Service Worker Caching**: Versioned cache invalidation (`sw.js`) ensuring lightning-fast offline startup and instant app updates.
+- **Fluid Desktop & Mobile UI**:
+  - **Desktop**: 3-column Spotify-inspired layout with collapsible navigation sidebar, persistent deck player, and expandable queue/lyrics sidebar.
+  - **Mobile**: Single-hand optimized navigation bar, swipeable bottom MiniPlayer, and full-screen gestures.
 
 ---
 
 ## Tech Stack & Architecture
 
-### Frontend
-- **Framework**: React Native with Expo SDK (Web, iOS, Android).
-- **State Management**: React Context API (`UserContext`, `AudioContext`, `ResponsiveContext`).
-- **Audio Engine**: `expo-av` + Web Audio API + HTML5 Audio.
-
-### Backend (PHP)
-- **Server**: PHP 8.x with custom router.
-- **API Proxy**: JioSaavn API proxy with server-side stream URL decryption.
-- **Lyrics Service**: LRCLIB API integration.
-- **Storage**: Local JSON file storage (easily replaceable with MySQL/Firebase).
+| Layer | Technology |
+|---|---|
+| **Frontend** | React Native (Expo Web / Mobile SDK 52), React Context, Animated API |
+| **Styling & Fonts** | Clean Modern System Sans-Serif (`-apple-system`, `Segoe UI`, `Roboto`), Dark Mode Obsidian Palette |
+| **Audio** | Web Audio API, HTML5 Audio, `expo-av` |
+| **Realtime Social** | Firebase Realtime Database & Auth |
+| **Backend API** | PHP 8.x, cURL, OpenSSL (DES-ECB decryption) |
+| **Data Sources** | JioSaavn API Proxy, LRCLIB Synced Lyrics, YouTube Search |
+| **PWA & Deployment**| Service Worker v22, Dual WebManifest, Apache `.htaccess` with SPA rewriting |
 
 ---
 
-## Directory Structure
+## Project Structure
 
 ```
-odera/
-├── api/                    # PHP Backend API
-│   ├── config/             # Configuration
-│   │   └── config.php      # App configuration
-│   ├── middleware/          # Request middleware
-│   │   ├── auth.php        # Authentication middleware
-│   │   └── cors.php        # CORS headers
-│   ├── routes/             # Route handlers
-│   │   ├── artist.php      # Artist endpoints
-│   │   ├── auth.php        # Authentication endpoints
-│   │   ├── music.php       # Music/track endpoints
-│   │   ├── referral.php    # Referral endpoints
-│   │   ├── search.php      # Search endpoints
-│   │   └── user.php        # User/profile endpoints
-│   ├── services/           # External API integrations
-│   │   ├── jiosaavn.php    # JioSaavn API service
-│   │   └── lyrics.php      # LRCLIB lyrics service
-│   ├── utils/              # Utility functions
-│   │   ├── http.php        # HTTP client
-│   │   ├── response.php    # Response helpers
-│   │   └── storage.php     # Local file storage
-│   └── index.php           # Main API router
+staytup/
+├── api/                        # PHP Micro-Backend Router & Services
+│   ├── config/                 # App configuration & versioning
+│   ├── routes/
+│   │   ├── artist.php          # Artist discography & images
+│   │   ├── import.php          # Spotify & YouTube playlist scraper
+│   │   ├── music.php           # Stream, lyrics, and home feed endpoints
+│   │   ├── search.php          # Fast autocomplete and track search
+│   │   └── user.php            # User profiles, favorites, and history
+│   ├── services/
+│   │   ├── jiosaavn.php        # JioSaavn API integration with DES decryption
+│   │   └── lyrics.php          # LRCLIB synchronized lyrics client
+│   └── index.php               # Unified API gateway & CORS dispatcher
 │
-├── data/                   # Local data storage (auto-created)
-│   ├── users/              # User data
-│   ├── pin_users/          # PIN-based auth users
-│   ├── qr_sessions/        # QR login sessions
-│   └── referrals/          # Referral codes
-│
-├── frontend/               # Expo / React Native App
+├── frontend/                   # Expo React Native Application
+│   ├── public/                 # PWA Static Template (index.html, manifest, sw.js)
 │   ├── src/
-│   │   ├── components/     # UI Components
-│   │   ├── context/        # State Providers
-│   │   ├── screens/        # Main Screens
-│   │   ├── services/       # Firebase & API clients
-│   │   └── theme/          # Color palettes
-│   ├── app.json            # Expo configuration
-│   └── package.json        # Frontend dependencies
+│   │   ├── api/                # API client with automatic retry & proxy fallbacks
+│   │   ├── components/         # Modular UI (FullPlayerModal, MiniPlayer, SongCard, etc.)
+│   │   ├── context/            # AudioContext, UserContext, ResponsiveContext
+│   │   ├── screens/            # HomeScreen, SearchScreen, LibraryScreen, FriendsScreen
+│   │   ├── services/           # Firebase Realtime presence & Navigation handlers
+│   │   └── theme/              # Obsidian color tokens & typography
+│   ├── app.json                # Expo configuration
+│   └── package.json            # Frontend dependencies
 │
-├── .htaccess               # Apache URL rewriting
-├── index.php               # Main entry point
-└── README.md               # Project Documentation
+├── public/                     # Production Web Root (Apache DocumentRoot)
+│   ├── api/                    # Synced PHP API gateway
+│   ├── _expo/                  # Compiled React Native Web JS bundles & assets
+│   ├── index.html              # Entry HTML with PWA tags & font preloads
+│   ├── manifest.json           # Web App Manifest (JSON)
+│   ├── manifest.webmanifest    # Modern Web App Manifest (RFC standard)
+│   ├── sw.js                   # Service Worker cache controller (v22)
+│   └── .htaccess               # Apache SPA rewrite engine & CORS headers
+│
+├── .htaccess                   # Root Apache rewriting rules & security overrides
+├── manifest.json               # Root manifest fallback
+├── manifest.webmanifest        # Root webmanifest fallback
+└── README.md                   # Project Documentation
 ```
 
 ---
 
 ## Getting Started
 
-### Prerequisites
-- **PHP 8.x** with `curl` extension enabled
-- **Apache/Nginx** with mod_rewrite (for `.htaccess` support)
-
-### Backend Setup
-
-1. Place the project in your web server's document root (e.g., `/var/www/html/odera/`)
-
-2. Ensure PHP has write permissions to the `data/` directory:
+### 1. Backend Setup
+1. Clone the repository into your web server document root:
    ```bash
-   chmod -R 755 data/
+   git clone https://github.com/BlumaLang/odera.git staytup
+   ```
+2. Verify Apache is running and rewrite rules are active. The API responds at:
+   ```
+   http://localhost/staytup/api/index.php/health
    ```
 
-3. The API is accessible at:
+### 2. Frontend Setup
+1. Navigate into the frontend workspace:
+   ```bash
+   cd frontend
+   npm install
    ```
-   http://localhost/odera/api/
+2. Start the development server:
+   ```bash
+   npx expo start --web
    ```
-
-### Frontend Setup
-
-```bash
-cd frontend
-npm install
-npx expo start --web
-```
-
-The application opens in your browser at `http://localhost:8081`.
+3. To produce a production build for deployment:
+   ```bash
+   npm run build
+   ```
+   Build artifacts will compile to `frontend/dist/` and automatically deploy to `public/`.
 
 ---
 
-## API Endpoints
+## Core API Reference
 
-### Health Check
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/health` | Server health check |
-
-### Music & Search
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/search?q=&offset=&limit=` | Search songs |
-| GET | `/api/suggestions?q=` | Get search suggestions |
-| GET | `/api/home?user_id=&force=` | Get home feed |
-| GET | `/api/feed/personalized?user_id=` | Get personalized feed |
-| GET | `/api/lyrics?title=&artist=&video_id=` | Get lyrics |
-| GET | `/api/stream/:videoId` | Get stream URL |
-| GET | `/api/track/:id` | Get track details |
-| GET | `/api/track/:id/image` | Get track image |
-
-### Artists
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/artists/search?q=&limit=` | Search artists |
-| GET | `/api/artists/popular?lang=&limit=` | Get popular artists |
-| POST | `/api/artists/batch-images` | Batch fetch artist images |
-| GET | `/api/artist/:id/songs?page=&limit=` | Get artist songs |
-| GET | `/api/artist/:id/image` | Get artist image |
-| GET | `/api/artist/:id/related?limit=` | Get related artists |
-
-### Authentication
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/pin` | PIN-based login |
-| POST | `/api/qr/create` | Create QR session |
-| GET | `/api/qr/poll/:sessionId` | Poll QR session |
-| POST | `/api/qr/claim` | Claim QR session |
-
-### User Data
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/user/onboard` | Save user profile |
-| GET | `/api/user/profile?user_id=` | Get user profile |
-| POST | `/api/play/record` | Record play event |
-| GET | `/api/history?user_id=` | Get play history |
-
-### Favorites
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/favorites/toggle` | Toggle favorite |
-| GET | `/api/favorites?user_id=` | Get favorites |
-
-### Playlists
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/playlists?user_id=` | List playlists |
-| POST | `/api/playlists/create` | Create playlist |
-| GET | `/api/playlists/:id?user_id=` | Get playlist |
-| PUT | `/api/playlists/:id?user_id=` | Update playlist |
-| POST | `/api/playlists/:id/tracks` | Add track |
-| DELETE | `/api/playlists/:id/tracks/:videoId` | Remove track |
-| DELETE | `/api/playlists/:id` | Delete playlist |
-
-### Premium
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/premium/save` | Save premium subscription |
-
-### Referrals
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/referral/create` | Create referral code |
-| POST | `/api/referral/claim` | Claim referral code |
-| GET | `/api/referral/stats?user_id=` | Get referral stats |
+|---|---|---|
+| `GET` | `/api/index.php/health` | Server status and version check |
+| `GET` | `/api/index.php/home` | Personalized home feed (trending, fresh drops, curated charts) |
+| `GET` | `/api/index.php/search?q={query}` | Search songs, albums, and artists |
+| `GET` | `/api/index.php/suggestions?q={query}` | Real-time autocomplete suggestions |
+| `GET` | `/api/index.php/stream/{id}` | Resolve and decrypt high-speed audio stream URL |
+| `GET` | `/api/index.php/lyrics?title={title}&artist={artist}` | Fetch synchronized and plain lyrics |
+| `GET` | `/api/index.php/track/{id}` | Get full track metadata |
+| `GET` | `/api/index.php/artist/{id}/songs` | Get top tracks for an artist |
+| `POST` | `/api/index.php/import` | Parse and import public Spotify / YouTube playlist |
+| `GET` | `/api/index.php/proxy-image?url={url}` | High-speed CORS-safe image proxy |
 
 ---
 
-## Frontend Integration
-
-The frontend API client (`frontend/src/api/client.js`) automatically communicates with the PHP backend. Ensure the API base URL is configured correctly:
-
-```javascript
-const API_BASE = 'http://localhost/odera/api';
-```
-
-For production, update the API base URL to your deployed domain.
-
----
-
-## Data Storage
-
-User data is stored locally in the `data/` directory using JSON files:
-
-```
-data/
-└── users/
-    └── {userId}/
-        ├── profile.json
-        ├── favorites.json
-        ├── playlists.json
-        ├── recently_played.json
-        ├── stats.json
-        └── premium.json
-```
-
-For production, replace `api/utils/storage.php` with Firebase Admin SDK or MySQL integration.
+## Security & PWA Best Practices
+- **Privacy-First**: No external telemetry or trackers injected.
+- **MIME Compliance**: `.webmanifest` and `.json` explicitly served with `application/manifest+json; charset=utf-8`.
+- **CORS Configured**: Wildcard and method headers enabled for smooth media streaming.
+- **Cache Management**: Instant PWA updates via service worker cache invalidation.
 
 ---
 
 ## License
-Private & Proprietary Staytup. All rights reserved.
-
-
-
-
-fix the artist fetching things properly fix beacuse it not fixing find some methdo how can solved this and solved this 
-
-and also import forom link cant working why i dont know but cant working so fix this make working just fix this issue and all done 
+Staytup is developed for personal and educational music streaming purposes. All audio copyrights belong to their respective artists and record labels.

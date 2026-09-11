@@ -34,24 +34,29 @@ export default function ImportPlaylistLinkModal({
   const [matchedSongs, setMatchedSongs] = useState([]);
   const urlInputRef = useRef(null);
   const listScrollRef = useRef(null);
+  const isBackgroundImportRef = useRef(false);
 
   useEffect(() => {
     if (visible) {
       setUrl("");
       setError(null);
-      setFetching(false);
-      setMatchProgress(null);
-      setMatchedSongs([]);
+      if (!isBackgroundImportRef.current) {
+        setFetching(false);
+        setMatchProgress(null);
+        setMatchedSongs([]);
+      }
       const timer = setTimeout(() => {
         urlInputRef.current?.focus();
       }, 150);
       return () => clearTimeout(timer);
     } else {
-      setUrl("");
-      setError(null);
-      setFetching(false);
-      setMatchProgress(null);
-      setMatchedSongs([]);
+      if (!isBackgroundImportRef.current) {
+        setUrl("");
+        setError(null);
+        setFetching(false);
+        setMatchProgress(null);
+        setMatchedSongs([]);
+      }
     }
   }, [visible]);
 
@@ -73,6 +78,7 @@ export default function ImportPlaylistLinkModal({
     setFetching(true);
     setError(null);
     setMatchedSongs([]);
+    isBackgroundImportRef.current = false;
     setMatchProgress({ current: 0, total: 0, matched: 0, title: "Connecting to playlist..." });
 
     try {
@@ -92,125 +98,265 @@ export default function ImportPlaylistLinkModal({
         current: 0,
         total: rawTracks.length,
         matched: 0,
-        title: "Scanning playlist tracks...",
+        title: `Found ${rawTracks.length} tracks. Matching with catalog...`,
       });
+
+      // Helper to extract clean title and primary artist from YouTube title/channel
+      const extractCleanTitleAndArtist = (rawTitle, rawArtist = "") => {
+        if (!rawTitle) return { title: "", artist: "" };
+
+        let clean = rawTitle
+          .replace(/[\(\[](Official\s*(Music\s*)?Video|Lyrics|Lyric\s*Video|Audio|Official\s*Audio|4K|HD|HQ|Visualizer|Full\s*Song|Video|Official|Lyrical|Remix|Slowed\s*\+?\s*Reverb|8D\s*Audio|Live|Hindi|Telugu|Tamil|Punjabi|English)[\)\]]/gi, "")
+          .replace(/[\(\[]\s*feat\.?.*?[\]\)]/gi, "")
+          .replace(/[\(\[]\s*ft\.?.*?[\]\)]/gi, "")
+          .replace(/[\(\[]\s*prod\.?.*?[\]\)]/gi, "")
+          .replace(/-\s*YouTube$/i, "")
+          .replace(/\s+/g, " ")
+          .trim();
+
+        const recordLabels = /^(t-series|sony\s*music|zee\s*music|tips\s*official|yrf|saregama|speed\s*records|white\s*hill|eros\s*now|times\s*music|venus|geet\s*mp3)/i;
+
+        let channelArtist = "";
+        if (rawArtist && !recordLabels.test(rawArtist) && !/topic|vevo|records|music|company/i.test(rawArtist)) {
+          channelArtist = rawArtist.replace(/-?\s*topic/i, "").trim();
+        }
+
+        const segments = clean.split(/\s*[|–—]\s*/).map((s) => s.trim()).filter((s) => s.length > 0);
+
+        let titleCandidate = "";
+        let artistCandidate = channelArtist;
+
+        if (segments.length >= 1) {
+          if (segments[0].includes(" - ")) {
+            const sub = segments[0].split(" - ");
+            artistCandidate = sub[0].trim();
+            titleCandidate = sub[1].trim();
+          } else if (/^([^:]+):\s*(.+)$/.test(segments[0])) {
+            const match = segments[0].match(/^([^:]+):\s*(.+)$/);
+            artistCandidate = match[1].trim();
+            titleCandidate = match[2].trim();
+          } else {
+            titleCandidate = segments[0];
+            if (!artistCandidate && segments.length > 1) {
+              for (let i = segments.length - 1; i >= 1; i--) {
+                const seg = segments[i];
+                if (!recordLabels.test(seg) && seg.length > 2) {
+                  artistCandidate = seg;
+                  break;
+                }
+              }
+            }
+          }
+        } else {
+          titleCandidate = clean;
+        }
+
+        titleCandidate = titleCandidate.replace(/\b(Full\s*Song|Song|Video|Teaser)\b/gi, "").replace(/["']/g, "").trim();
+
+        let primaryArtist = "";
+        if (artistCandidate) {
+          const parts = artistCandidate.split(/[,&|]/);
+          primaryArtist = parts[0].trim();
+          if (/topic|records|vevo/i.test(primaryArtist)) {
+            primaryArtist = "";
+          }
+        }
+
+        return {
+          title: titleCandidate || rawTitle,
+          artist: primaryArtist,
+        };
+      };
+
+      // Helper to score match relevance between JioSaavn candidate and target
+      const scoreMatch = (candidate, targetTitle, targetArtist) => {
+        if (!candidate || !candidate.title) return 0;
+        const cTitle = (candidate.title || "")
+          .toLowerCase()
+          .replace(/[\(\[](from\s*["'].*?["']|remix|version)[\)\]]/gi, "")
+          .replace(/[^a-z0-9\s]/g, "")
+          .trim();
+        const tTitle = targetTitle.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+        const cArtist = (candidate.artist || candidate.subtitle || "").toLowerCase();
+        const tArtist = (targetArtist || "").toLowerCase();
+
+        let score = 0;
+        if (cTitle === tTitle) {
+          score += 60;
+        } else if (cTitle.includes(tTitle) || tTitle.includes(cTitle)) {
+          score += 40;
+        }
+
+        const tWords = tTitle.split(/\s+/).filter((w) => w.length >= 3);
+        let matchedWords = 0;
+        for (const w of tWords) {
+          if (cTitle.includes(w)) matchedWords++;
+        }
+        if (tWords.length > 0) {
+          score += (matchedWords / tWords.length) * 30;
+        }
+
+        if (tArtist && tArtist.length > 2) {
+          if (cArtist.includes(tArtist) || tArtist.includes(cArtist)) {
+            score += 30;
+          }
+        }
+
+        return score;
+      };
+
+      const matchSingleTrack = async (raw) => {
+        const rawTitle = (raw?.title || "").trim();
+        const rawArtist = (raw?.artist || "").trim();
+        if (!rawTitle) return null;
+
+        const { title: cleanTitle, artist: parsedArtist } = extractCleanTitleAndArtist(rawTitle, rawArtist);
+        if (!cleanTitle) return null;
+
+        const query = parsedArtist && !cleanTitle.toLowerCase().includes(parsedArtist.toLowerCase())
+          ? `${cleanTitle} ${parsedArtist}`.trim()
+          : cleanTitle;
+
+        try {
+          let searchRes = await api.search(query, 0, 10);
+          let candidates = searchRes?.results || searchRes?.tracks || [];
+
+          if (candidates.length === 0 && query !== cleanTitle) {
+            searchRes = await api.search(cleanTitle, 0, 8);
+            candidates = searchRes?.results || searchRes?.tracks || [];
+          }
+
+          if (candidates.length > 0) {
+            let best = null;
+            let bestScore = 0;
+
+            for (const cand of candidates) {
+              const s = scoreMatch(cand, cleanTitle, parsedArtist);
+              if (s > bestScore) {
+                bestScore = s;
+                best = cand;
+              }
+            }
+
+            // Only accept candidate if score is >= 30 (has meaningful title/artist match)
+            if (best && bestScore >= 30) {
+              const sid = best.videoId || best.video_id || best.id;
+              // Guarantee 500x500 high-res API image from JioSaavn CDN
+              const rawImg = best.artwork_url || best.thumbnail || best.image || "";
+              const apiArtwork = rawImg
+                ? String(rawImg).replace(/(?:50x50|150x150|250x250)\.jpg/i, "500x500.jpg")
+                : "";
+
+              return {
+                id: String(sid).startsWith("saavn_") ? String(sid) : `saavn_${sid}`,
+                videoId: String(sid).replace(/^saavn_/, ""),
+                video_id: String(sid).replace(/^saavn_/, ""),
+                title: best.title || cleanTitle,
+                artist: best.artist || best.subtitle || parsedArtist || "Staytup",
+                artwork_url: apiArtwork,
+                thumbnail: apiArtwork,
+                duration: best.duration || best.duration_seconds || raw.duration || 0,
+                duration_seconds: best.duration_seconds || best.duration || raw.duration || 0,
+                stream_url: best.stream_url || best.audio_url || "",
+                encrypted_media_url: best.encrypted_media_url || "",
+                source: "saavn",
+              };
+            }
+          }
+        } catch (_) {}
+        return null;
+      };
 
       const matchedTracks = [];
       const seenIds = new Set();
+      const CONCURRENCY = 10;
 
-      for (let i = 0; i < rawTracks.length; i++) {
-        const raw = rawTracks[i];
-        const rawTitle = (raw?.title || "").trim();
-        const rawArtist = (raw?.artist || "").trim();
+      for (let i = 0; i < rawTracks.length; i += CONCURRENCY) {
+        const chunk = rawTracks.slice(i, i + CONCURRENCY);
+        const results = await Promise.allSettled(chunk.map((raw) => matchSingleTrack(raw)));
 
-        setMatchProgress({
-          current: i + 1,
-          total: rawTracks.length,
-          matched: matchedTracks.length,
-          title: rawTitle || `Track #${i + 1}`,
-        });
-
-        if (rawTitle) {
-          const cleanTitle = rawTitle
-            .replace(/[\(\[](Official\s*(Music\s*)?Video|Lyrics|Lyric\s*Video|Audio|Official\s*Audio|4K|HD|HQ|Visualizer|Full\s*Song|Video)[\)\]]/gi, "")
-            .replace(/[\(\[]\s*feat\.?.*?[\]\)]/gi, "")
-            .replace(/[\(\[]\s*ft\.?.*?[\]\)]/gi, "")
-            .replace(/[\(\[]\s*prod\.?.*?[\]\)]/gi, "")
-            .replace(/\|.*$/g, "")
-            .replace(/\s+/g, " ")
-            .trim();
-
-          let query = cleanTitle;
-          const isGenericArtist =
-            !rawArtist ||
-            rawArtist.toLowerCase().includes("topic") ||
-            rawArtist.toLowerCase().includes("youtube") ||
-            rawArtist.toLowerCase().includes("various") ||
-            cleanTitle.toLowerCase().includes(rawArtist.toLowerCase());
-
-          if (!isGenericArtist) {
-            query = `${cleanTitle} ${rawArtist}`.trim();
-          }
-
-          let found = null;
-          try {
-            const searchRes = await api.search(query, 0, 5);
-            const candidates = searchRes?.results || searchRes?.tracks || [];
-            if (candidates.length > 0) {
-              found = candidates[0];
-            } else if (query !== cleanTitle) {
-              const fallbackRes = await api.search(cleanTitle, 0, 5);
-              const fallbackCandidates = fallbackRes?.results || fallbackRes?.tracks || [];
-              if (fallbackCandidates.length > 0) {
-                found = fallbackCandidates[0];
-              }
-            }
-          } catch (e) {
-            console.warn("Search error for track:", rawTitle, e);
-          }
-
-          if (found) {
-            const sid = found.videoId || found.video_id || found.id;
-            if (sid && !seenIds.has(sid)) {
-              seenIds.add(sid);
-              const artwork = found.artwork_url || found.thumbnail || "";
-              const matchedItem = {
-                id: sid,
-                videoId: sid,
-                video_id: sid,
-                title: found.title || cleanTitle,
-                artist: found.artist || found.subtitle || rawArtist || "Staytup",
-                artwork_url: artwork,
-                thumbnail: artwork,
-                duration: found.duration || found.duration_seconds || raw.duration || 0,
-                duration_seconds: found.duration_seconds || found.duration || raw.duration || 0,
-                stream_url: found.stream_url || found.audio_url || "",
-              };
-              matchedTracks.push(matchedItem);
-              setMatchedSongs([...matchedTracks]);
-
-              // Auto-scroll to the bottom of the list as each song is added
-              setTimeout(() => {
-                try {
-                  listScrollRef.current?.scrollToEnd({ animated: true });
-                } catch (_) {}
-              }, 40);
+        let newlyFound = 0;
+        for (const res of results) {
+          if (res.status === "fulfilled" && res.value) {
+            const track = res.value;
+            const tid = track.videoId || track.video_id || track.id;
+            if (tid && !seenIds.has(tid)) {
+              seenIds.add(tid);
+              matchedTracks.push(track);
+              newlyFound++;
             }
           }
         }
 
-        if (i < rawTracks.length - 1) {
-          await new Promise((r) => setTimeout(r, 60));
+        const currentCount = Math.min(i + CONCURRENCY, rawTracks.length);
+        const lastTitle = chunk[chunk.length - 1]?.title || `Track #${currentCount}`;
+
+        setMatchProgress({
+          current: currentCount,
+          total: rawTracks.length,
+          matched: matchedTracks.length,
+          title: lastTitle,
+        });
+
+        if (newlyFound > 0) {
+          setMatchedSongs([...matchedTracks]);
+
+          // Auto-scroll list smoothly as items arrive
+          setTimeout(() => {
+            try {
+              listScrollRef.current?.scrollToEnd({ animated: true });
+            } catch (_) {}
+          }, 20);
+
+          // If running in background, incrementally update playlist every 20 songs
+          if (isBackgroundImportRef.current && matchedTracks.length % 20 < CONCURRENCY && onSuccess) {
+            onSuccess([...matchedTracks], playlist?.name).catch(() => {});
+          }
         }
       }
 
       if (matchedTracks.length === 0) {
-        setError("No matching songs found in the Staytup catalog for this playlist.");
+        if (!isBackgroundImportRef.current) {
+          setError("No matching songs found in the Staytup catalog for this playlist.");
+        }
         setFetching(false);
         setMatchProgress(null);
+        isBackgroundImportRef.current = false;
       } else {
-        await new Promise((r) => setTimeout(r, 450));
         if (onSuccess) {
-          await onSuccess(matchedTracks);
+          await onSuccess(matchedTracks, playlist?.name);
         }
+        setFetching(false);
+        setMatchProgress(null);
+        isBackgroundImportRef.current = false;
         onClose();
       }
     } catch (err) {
       console.warn("handleImport error:", err);
-      setError(err?.message || "Failed to load playlist. Check your internet connection.");
+      if (!isBackgroundImportRef.current) {
+        setError(err?.message || "Failed to load playlist. Check your internet connection.");
+      }
       setFetching(false);
       setMatchProgress(null);
+      isBackgroundImportRef.current = false;
     }
   };
 
-  if (!visible) return null;
+  if (!visible && !isBackgroundImportRef.current) return null;
+
+  const handleUserDismiss = () => {
+    if (fetching) {
+      isBackgroundImportRef.current = true;
+    }
+    onClose();
+  };
 
   return (
     <Modal
       visible={visible}
       transparent={false}
       animationType="slide"
-      onRequestClose={fetching ? undefined : onClose}
+      onRequestClose={handleUserDismiss}
       statusBarTranslucent={true}
     >
       <View style={styles.fullPageContainer}>
@@ -220,8 +366,7 @@ export default function ImportPlaylistLinkModal({
         <View style={[styles.topHeaderBar, (isDesktop || isTablet) && styles.desktopTopBar]}>
           <TouchableOpacity
             style={styles.navCloseBtn}
-            onPress={onClose}
-            disabled={fetching}
+            onPress={handleUserDismiss}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             activeOpacity={0.7}
             accessibilityLabel="Back"
@@ -400,32 +545,42 @@ export default function ImportPlaylistLinkModal({
 
         {/* Bottom Fixed Footer with Import Button */}
         <View style={[styles.bottomFixedFooter, (isDesktop || isTablet) && styles.desktopFooter]}>
-          <TouchableOpacity
-            style={[
-              styles.importBtn,
-              (!url.trim() || fetching) && styles.disabledBtn,
-            ]}
-            onPress={handleImport}
-            disabled={!url.trim() || fetching}
-            activeOpacity={0.85}
-          >
-            {fetching ? (
-              <View style={styles.btnLoadingRow}>
-                <ActivityIndicator size="small" color="#000000" style={{ marginRight: 8 }} />
-                <Text style={styles.importBtnText}>Importing Songs...</Text>
+          {fetching ? (
+            <View style={styles.fetchingBtnRow}>
+              <View style={styles.importingStatusPill}>
+                <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 8 }} />
+                <Text style={styles.importingStatusText}>
+                  {matchProgress ? `${matchProgress.matched}/${matchProgress.total} matched` : "Importing..."}
+                </Text>
               </View>
-            ) : (
-              <>
-                <Ionicons
-                  name="cloud-download-outline"
-                  size={20}
-                  color="#000000"
-                  style={{ marginRight: 8 }}
-                />
-                <Text style={styles.importBtnText}>Import Songs</Text>
-              </>
-            )}
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.importBtnBackground}
+                onPress={handleUserDismiss}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="layers-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.backgroundBtnText}>Run in Background</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[
+                styles.importBtn,
+                !url.trim() && styles.disabledBtn,
+              ]}
+              onPress={handleImport}
+              disabled={!url.trim()}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name="cloud-download-outline"
+                size={20}
+                color="#000000"
+                style={{ marginRight: 8 }}
+              />
+              <Text style={styles.importBtnText}>Import Songs</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     </Modal>
@@ -731,5 +886,42 @@ const styles = StyleSheet.create({
   },
   disabledBtn: {
     opacity: 0.5,
+  },
+  fetchingBtnRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    gap: 12,
+  },
+  importingStatusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+  },
+  importingStatusText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: "#FFFFFF",
+  },
+  importBtnBackground: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.25)",
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  backgroundBtnText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: "#FFFFFF",
   },
 });

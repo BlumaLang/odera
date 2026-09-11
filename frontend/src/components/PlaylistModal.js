@@ -148,6 +148,7 @@ export default function PlaylistModal({
     sendCollabInvite,
     renamePlaylist,
     setPlaylists,
+    getCollabPlaylistDetails,
   } = useUser() || {};
 
   const [playlistData, setPlaylistData] = useState(playlist || null);
@@ -163,22 +164,72 @@ export default function PlaylistModal({
   const [enablingCollab, setEnablingCollab] = useState(false);
   const playlistListRef = useRef(null);
   const playlistScrollOffsetRef = useRef(0);
+  const savedScrollOffsetRef = useRef(0);
+  const isSubmodalOpenRef = useRef(false);
+
+  const freezeScrollPosition = useCallback(() => {
+    isSubmodalOpenRef.current = true;
+    savedScrollOffsetRef.current = playlistScrollOffsetRef.current;
+  }, []);
+
+  const restoreScrollPosition = useCallback(() => {
+    const targetOffset = savedScrollOffsetRef.current;
+    const restore = () => {
+      try {
+        playlistListRef.current?.scrollToOffset({
+          offset: targetOffset,
+          animated: false,
+        });
+      } catch (_) {}
+    };
+    restore();
+    setTimeout(restore, 50);
+    setTimeout(restore, 150);
+    setTimeout(() => {
+      restore();
+      isSubmodalOpenRef.current = false;
+    }, 350);
+  }, []);
 
   const openCollabModal = useCallback(() => {
+    freezeScrollPosition();
     setShowCollabModal(true);
-  }, []);
+  }, [freezeScrollPosition]);
 
   const closeCollabModal = useCallback(() => {
     setShowCollabModal(false);
-    // The web modal can return FlatList to its measured end. Restore the
-    // listener's last position after the closing transition is complete.
-    setTimeout(() => {
-      playlistListRef.current?.scrollToOffset({
-        offset: playlistScrollOffsetRef.current,
-        animated: false,
-      });
-    }, 350);
-  }, []);
+    restoreScrollPosition();
+  }, [restoreScrollPosition]);
+
+  const openRenameModal = useCallback(() => {
+    freezeScrollPosition();
+    setShowRenameModal(true);
+  }, [freezeScrollPosition]);
+
+  const closeRenameModal = useCallback(() => {
+    setShowRenameModal(false);
+    restoreScrollPosition();
+  }, [restoreScrollPosition]);
+
+  const openImportModal = useCallback(() => {
+    freezeScrollPosition();
+    setShowImportModal(true);
+  }, [freezeScrollPosition]);
+
+  const closeImportModal = useCallback(() => {
+    setShowImportModal(false);
+    restoreScrollPosition();
+  }, [restoreScrollPosition]);
+
+  const openDeleteModal = useCallback(() => {
+    freezeScrollPosition();
+    setShowDeleteModal(true);
+  }, [freezeScrollPosition]);
+
+  const closeDeleteModal = useCallback(() => {
+    setShowDeleteModal(false);
+    restoreScrollPosition();
+  }, [restoreScrollPosition]);
 
   // Android hardware back button handler stack
   useEffect(() => {
@@ -246,39 +297,71 @@ export default function PlaylistModal({
 
   // Sync state with playlist prop and refresh details from backend
   useEffect(() => {
-    if (!visible || !playlist?.id) return;
+    if (!visible || (!playlist?.id && !playlist?.collabId)) return;
 
     setPlaylistData(playlist);
     let isMounted = true;
     setIsLoadingTracks(true);
 
-    api
-      .getPlaylistDetails(playlist.id)
-      .then((res) => {
-        if (isMounted && res?.playlist) {
-          setPlaylistData((prev) => ({
-            ...prev,
-            ...res.playlist,
-            // retain isCollab flag or collaborators if already present
-            isCollab: prev?.isCollab || res.playlist?.isCollab || Boolean(res.playlist?.collaborators),
-            collaborators: res.playlist?.collaborators || prev?.collaborators,
-          }));
-          if (onPlaylistUpdated) {
-            onPlaylistUpdated(res.playlist);
+    const collabId = playlist?.collabId || (playlist?.isCollab ? playlist?.id : null);
+    if (collabId && typeof getCollabPlaylistDetails === "function") {
+      getCollabPlaylistDetails(collabId)
+        .then((collabData) => {
+          if (isMounted && collabData) {
+            setPlaylistData((prev) => ({
+              ...prev,
+              ...collabData,
+              isCollab: true,
+              collaborators: collabData.collaborators || prev?.collaborators,
+              tracks: collabData.tracks || prev?.tracks || [],
+            }));
+            if (onPlaylistUpdated) {
+              onPlaylistUpdated(collabData);
+            }
           }
-        }
-      })
-      .catch((err) => {
-        console.warn("Failed to load playlist details in modal:", err);
-      })
-      .finally(() => {
-        if (isMounted) setIsLoadingTracks(false);
-      });
+        })
+        .catch((err) => {
+          console.warn("Failed to load collab playlist details:", err);
+        })
+        .finally(() => {
+          if (isMounted) setIsLoadingTracks(false);
+        });
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    if (playlist?.id) {
+      api
+        .getPlaylistDetails(playlist.id)
+        .then((res) => {
+          if (isMounted && res?.playlist) {
+            setPlaylistData((prev) => ({
+              ...prev,
+              ...res.playlist,
+              // retain isCollab flag or collaborators if already present
+              isCollab: prev?.isCollab || res.playlist?.isCollab || Boolean(res.playlist?.collaborators),
+              collaborators: res.playlist?.collaborators || prev?.collaborators,
+            }));
+            if (onPlaylistUpdated) {
+              onPlaylistUpdated(res.playlist);
+            }
+          }
+        })
+        .catch((err) => {
+          console.warn("Failed to load playlist details in modal:", err);
+        })
+        .finally(() => {
+          if (isMounted) setIsLoadingTracks(false);
+        });
+    } else {
+      setIsLoadingTracks(false);
+    }
 
     return () => {
       isMounted = false;
     };
-  }, [visible, playlist?.id]);
+  }, [visible, playlist?.id, playlist?.collabId]);
 
   const isCollab = Boolean(playlistData?.isCollab || playlistData?.collaborators);
   const isBlend = Boolean(playlistData?.isBlend || playlistData?.type === "blend" || String(playlistData?.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(playlistData?.name || "")));
@@ -386,8 +469,8 @@ export default function PlaylistModal({
   }, [playlistData?.id, playlistData?.collabId, isCollab, deleteCollabPlaylist, onDeletePlaylist, onClose]);
 
   const handleDelete = useCallback(() => {
-    setShowDeleteModal(true);
-  }, []);
+    openDeleteModal();
+  }, [openDeleteModal]);
 
   const handleRemoveTrack = useCallback(
     async (videoId) => {
@@ -424,7 +507,7 @@ export default function PlaylistModal({
   const handleRenamePlaylist = useCallback(
     async (newName, newCover = "") => {
       const trimmed = (newName || "").trim();
-      const pId = playlistData?.id || playlistData?.collabId;
+      const pId = playlistData?.collabId || playlistData?.id;
       if (!pId || !trimmed) return;
       try {
         const coverUpdate = newCover ? { cover_url: newCover, preview_artwork: newCover } : {};
@@ -452,7 +535,7 @@ export default function PlaylistModal({
   );
 
   const handleImportSuccess = useCallback(
-    async (matchedTracks) => {
+    async (matchedTracks, sourcePlaylistName) => {
       if (!matchedTracks || matchedTracks.length === 0 || !playlistData?.id) return;
 
       const currentTracks = Array.isArray(playlistData.tracks) ? [...playlistData.tracks] : [];
@@ -485,23 +568,39 @@ export default function PlaylistModal({
       if (newlyAdded.length === 0) return;
 
       const firstArt = currentTracks[0]?.artwork_url || currentTracks[0]?.thumbnail || "";
-      const cover = playlistData.cover_url || playlistData.preview_artwork || firstArt || "";
+      const isDefaultName = !playlistData.name ||
+        /^My Playlist #\d+$/i.test(playlistData.name) ||
+        playlistData.name.toLowerCase() === "new playlist" ||
+        playlistData.name.toLowerCase() === "playlist";
+
+      const targetName = (isDefaultName && sourcePlaylistName && sourcePlaylistName.trim())
+        ? sourcePlaylistName.trim()
+        : playlistData.name;
+
+      const isYtCover = playlistData.cover_url && (playlistData.cover_url.includes("ytimg.com") || playlistData.cover_url.includes("youtube"));
+      const currentCover = (!isYtCover && (playlistData.cover_url || playlistData.preview_artwork)) || firstArt || "";
 
       const updated = {
         ...playlistData,
+        name: targetName,
         tracks: currentTracks,
         track_count: currentTracks.length,
-        cover_url: cover,
-        preview_artwork: cover,
+        cover_url: currentCover,
+        preview_artwork: currentCover,
       };
 
       setPlaylistData(updated);
 
+      const targetPlaylistId = playlistData.collabId || playlistData.id;
+
       try {
+        if (targetName !== playlistData.name && renamePlaylist) {
+          await renamePlaylist(targetPlaylistId, targetName, currentCover);
+        }
         if (isCollab && addTracksToCollabPlaylist) {
-          await addTracksToCollabPlaylist(playlistData.id, newlyAdded);
+          await addTracksToCollabPlaylist(targetPlaylistId, newlyAdded);
         } else if (addTracksToPlaylist) {
-          await addTracksToPlaylist(playlistData.id, newlyAdded);
+          await addTracksToPlaylist(targetPlaylistId, newlyAdded);
         }
       } catch (err) {
         console.warn("Error saving imported tracks to playlist:", err);
@@ -511,7 +610,7 @@ export default function PlaylistModal({
         onPlaylistUpdated(updated);
       }
     },
-    [playlistData, isCollab, addTracksToCollabPlaylist, addTracksToPlaylist, onPlaylistUpdated]
+    [playlistData, isCollab, addTracksToCollabPlaylist, addTracksToPlaylist, renamePlaylist, onPlaylistUpdated]
   );
 
   // Copy Collaboration Share Link
@@ -566,8 +665,11 @@ export default function PlaylistModal({
     setInvitingUids((prev) => new Set([...prev, friend.uid]));
     try {
       const targetId = playlistData?.collabId || playlistData?.id;
+      let newCollabId = targetId;
+      let createdPl = null;
+
       if (sendCollabInvite) {
-        await sendCollabInvite(friend.uid, {
+        const res = await sendCollabInvite(friend.uid, {
           collabId: targetId,
           playlistId: targetId,
           name: playlistData?.name || "Collab Playlist",
@@ -575,10 +677,16 @@ export default function PlaylistModal({
           tracks: playlistData?.tracks || [],
           playlist: playlistData,
         });
+        if (res?.success) {
+          newCollabId = res.collabId || targetId;
+          createdPl = res.playlist || null;
+        }
       }
-      // Optimistically add to collaborators
+
+      // Add to collaborators and persist collab status
       const newCollabs = {
         ...collaboratorsObj,
+        ...(createdPl?.collaborators || {}),
         [friend.uid]: {
           uid: friend.uid,
           name: friend.username || friend.displayName || "Friend",
@@ -587,11 +695,18 @@ export default function PlaylistModal({
           role: "Collaborator",
         },
       };
-      setPlaylistData((prev) => ({
-        ...prev,
+
+      const updated = {
+        ...playlistData,
+        ...(createdPl || {}),
+        id: newCollabId || playlistData?.id,
+        collabId: newCollabId || playlistData?.collabId,
         isCollab: true,
         collaborators: newCollabs,
-      }));
+      };
+
+      setPlaylistData(updated);
+      if (onPlaylistUpdated) onPlaylistUpdated(updated);
     } catch (err) {
       console.warn("handleInviteFriend error:", err);
     } finally {
@@ -704,8 +819,9 @@ export default function PlaylistModal({
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             onScroll={(event) => {
-              if (!showCollabModal) {
-                playlistScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+              const y = event?.nativeEvent?.contentOffset?.y;
+              if (typeof y === "number" && !isSubmodalOpenRef.current) {
+                playlistScrollOffsetRef.current = y;
               }
             }}
             scrollEventThrottle={16}
@@ -747,7 +863,7 @@ export default function PlaylistModal({
 
                     <TouchableOpacity
                       style={styles.heroTitleRow}
-                      onPress={() => setShowRenameModal(true)}
+                      onPress={openRenameModal}
                       activeOpacity={0.7}
                       accessibilityRole="button"
                       accessibilityLabel="Rename Playlist"
@@ -861,7 +977,7 @@ export default function PlaylistModal({
 
                   <TouchableOpacity
                     style={styles.renameActionButton}
-                    onPress={() => setShowRenameModal(true)}
+                    onPress={openRenameModal}
                     activeOpacity={0.8}
                     accessibilityRole="button"
                     accessibilityLabel="Edit Playlist"
@@ -872,7 +988,7 @@ export default function PlaylistModal({
                   {/* Import Songs from Link Button */}
                   <TouchableOpacity
                     style={styles.importActionButton}
-                    onPress={() => setShowImportModal(true)}
+                    onPress={openImportModal}
                     activeOpacity={0.8}
                     accessibilityRole="button"
                     accessibilityLabel="Import from link"
@@ -904,7 +1020,10 @@ export default function PlaylistModal({
                     showDuration={false}
                     isActive={currentTrack?.videoId === (item.video_id || item.videoId)}
                     onPress={() => handlePlayAll(index)}
-                    onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                    onAddToPlaylist={(t) => {
+                      freezeScrollPosition();
+                      setAddToPlaylistTrack(t);
+                    }}
                   />
                 </View>
 
@@ -933,7 +1052,7 @@ export default function PlaylistModal({
                   </Text>
                   <TouchableOpacity
                     style={styles.emptyImportBtn}
-                    onPress={() => setShowImportModal(true)}
+                    onPress={openImportModal}
                     activeOpacity={0.8}
                     accessibilityRole="button"
                     accessibilityLabel="Import from link"
@@ -960,14 +1079,17 @@ export default function PlaylistModal({
         {/* Add to Playlist Modal */}
         <AddToPlaylistModal
           visible={!!addToPlaylistTrack}
-          onClose={() => setAddToPlaylistTrack(null)}
+          onClose={() => {
+            setAddToPlaylistTrack(null);
+            restoreScrollPosition();
+          }}
           track={addToPlaylistTrack}
         />
 
         {/* Rename / Edit Playlist Modal */}
         <CreatePlaylistModal
           visible={showRenameModal}
-          onClose={() => setShowRenameModal(false)}
+          onClose={closeRenameModal}
           onSubmit={handleRenamePlaylist}
           initialName={playlistData?.name}
           initialCover={playlistData?.cover_url || playlistData?.preview_artwork || ""}
@@ -977,7 +1099,7 @@ export default function PlaylistModal({
         {/* Import Playlist from Link Modal */}
         <ImportPlaylistLinkModal
           visible={showImportModal}
-          onClose={() => setShowImportModal(false)}
+          onClose={closeImportModal}
           onSuccess={handleImportSuccess}
           playlistName={playlistData?.name || "Playlist"}
         />
@@ -988,13 +1110,13 @@ export default function PlaylistModal({
           visible={showDeleteModal}
           transparent={true}
           animationType="slide"
-          onRequestClose={() => setShowDeleteModal(false)}
+          onRequestClose={closeDeleteModal}
         >
           <View style={styles.deleteModalBackdrop}>
             <TouchableOpacity
               style={StyleSheet.absoluteFillObject}
               activeOpacity={1}
-              onPress={() => setShowDeleteModal(false)}
+              onPress={closeDeleteModal}
             />
             <View style={styles.deleteModalCard} onStartShouldSetResponder={() => true}>
               <View style={styles.dragHandle} />
@@ -1008,7 +1130,7 @@ export default function PlaylistModal({
               <View style={styles.deleteModalActions}>
                 <TouchableOpacity
                   style={styles.deleteModalCancelBtn}
-                  onPress={() => setShowDeleteModal(false)}
+                  onPress={closeDeleteModal}
                   activeOpacity={0.8}
                 >
                   <Text style={styles.deleteModalCancelText}>Cancel</Text>
@@ -1016,7 +1138,7 @@ export default function PlaylistModal({
                 <TouchableOpacity
                   style={styles.deleteModalConfirmBtn}
                   onPress={() => {
-                    setShowDeleteModal(false);
+                    closeDeleteModal();
                     doDelete();
                   }}
                   activeOpacity={0.8}
