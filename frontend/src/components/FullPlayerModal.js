@@ -1463,14 +1463,15 @@ export default function FullPlayerModal() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={toggleRepeat}
+                onPress={() => setShowSleepModal(true)}
                 style={styles.desktopControlIconBtn}
                 hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityLabel="Sleep timer"
               >
                 <Ionicons
-                  name="repeat"
-                  size={20}
-                  color={isRepeat ? colors.primary : "#888888"}
+                  name={sleepSecondsLeft !== null || sleepEndOnTrack ? "stopwatch" : "stopwatch-outline"}
+                  size={21}
+                  color={sleepSecondsLeft !== null || sleepEndOnTrack ? colors.primary : "#888888"}
                 />
               </TouchableOpacity>
             </View>
@@ -1829,21 +1830,21 @@ export default function FullPlayerModal() {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={toggleRepeat}
+              onPress={() => setShowSleepModal(true)}
               style={styles.controlIcon}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              accessibilityLabel="Repeat track"
+              accessibilityLabel="Sleep timer"
             >
-              <MaterialCommunityIcons
-                name="repeat"
+              <Ionicons
+                name={sleepSecondsLeft !== null || sleepEndOnTrack ? "stopwatch" : "stopwatch-outline"}
                 size={24}
-                color={isRepeat ? colors.primary : "#8E8E93"}
+                color={sleepSecondsLeft !== null || sleepEndOnTrack ? colors.primary : "#8E8E93"}
               />
-              {isRepeat && <View style={styles.activeRepeatDot} />}
+              {(sleepSecondsLeft !== null || sleepEndOnTrack) && <View style={styles.activeRepeatDot} />}
             </TouchableOpacity>
           </View>
 
-          {/* Bottom Utilities Row (Device Indicator on left, Sleep Timer & Queue on right) */}
+          {/* Bottom Utilities Row (Device Indicator on left, Queue on right) */}
           <View style={styles.bottomUtilitiesRow}>
             {/* Dynamic Device Indicator - clicking opens Spotify-style Connect modal */}
             <TouchableOpacity
@@ -1859,25 +1860,7 @@ export default function FullPlayerModal() {
             </TouchableOpacity>
 
             <View style={styles.rightUtilitiesGroup}>
-              {/* Sleep Timer Trigger Button with Stopwatch Icon */}
-              <TouchableOpacity
-                style={styles.utilityButton}
-                onPress={() => setShowSleepModal(true)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                activeOpacity={0.7}
-                accessibilityLabel="Sleep timer"
-              >
-                <Ionicons
-                  name={sleepSecondsLeft !== null || sleepEndOnTrack ? "stopwatch" : "stopwatch-outline"}
-                  size={21}
-                  color={sleepSecondsLeft !== null || sleepEndOnTrack ? colors.primary : "#A7A7A7"}
-                />
-                {(sleepSecondsLeft !== null || sleepEndOnTrack) && (
-                  <View style={styles.sleepActiveDot} />
-                )}
-              </TouchableOpacity>
-
-              {/* Queue Button directly after Sleep Button */}
+              {/* Queue Button */}
               <TouchableOpacity
                 style={styles.utilityButton}
                 onPress={() => setShowQueue(!showQueue)}
