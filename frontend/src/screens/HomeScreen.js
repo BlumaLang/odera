@@ -1451,51 +1451,66 @@ export default function HomeScreen({ onNavigate } = {}) {
                             currentTrack.id === track.id);
 
                         return (
-                          <View key={`live_user_circle_${friend.uid}`} style={styles.liveUserCircleItem}>
-                            {/* Circle Avatar with Active Border & Icon */}
-                            <TouchableOpacity
-                              style={styles.liveCircleTouchArea}
-                              onPress={() => {
-                                if (track) {
-                                  playTrack(
-                                    {
-                                      ...track,
-                                      videoId: track.videoId || track.video_id || track.id,
-                                    },
-                                    [track],
-                                    0
-                                  );
-                                }
-                              }}
-                              activeOpacity={0.8}
-                            >
-                              <View
-                                style={[
-                                  styles.liveCircleRing,
-                                  isCurrentPlayingThis && styles.liveCircleRingActive,
-                                ]}
-                              >
-                                <UserAvatar user={friend} size={56} fontSize={19} />
+                          <View key={`live_user_card_${friend.uid}`} style={styles.liveFriendCard}>
+                            {/* Card Top Row: Avatar with Live Badge + Name + Listen Button */}
+                            <View style={styles.liveFriendCardTop}>
+                              <View style={styles.liveFriendAvatarWrap}>
+                                <UserAvatar user={friend} size={44} fontSize={16} />
+                                <View style={styles.liveFriendActiveDot} />
                               </View>
 
-                              {/* Active Icon: Equalizer Waveform */}
-                              <View style={styles.liveActiveBadge}>
-                                <MaterialCommunityIcons
-                                  name={isCurrentPlayingThis ? "volume-high" : "waveform"}
-                                  size={13}
-                                  color="#000000"
-                                />
+                              <View style={styles.liveFriendMeta}>
+                                <Text style={styles.liveFriendName} numberOfLines={1}>
+                                  {formatPersonName(friend.displayName || friend.name || friend.username || "")}
+                                </Text>
+                                <View style={styles.liveFriendLiveRow}>
+                                  <MaterialCommunityIcons
+                                    name="waveform"
+                                    size={13}
+                                    color="#1DB954"
+                                    style={{ marginRight: 4 }}
+                                  />
+                                  <Text style={styles.liveFriendListeningTag}>
+                                    Listening now
+                                  </Text>
+                                </View>
                               </View>
-                            </TouchableOpacity>
 
-                            {/* User Name */}
-                            <Text style={styles.liveCircleName} numberOfLines={1}>
-                              {formatPersonName(friend.displayName || friend.name || friend.username || "")}
-                            </Text>
+                              {/* Listen Button */}
+                              {track && (
+                                <TouchableOpacity
+                                  style={[
+                                    styles.liveFriendListenBtn,
+                                    isCurrentPlayingThis && styles.liveFriendListenBtnActive,
+                                  ]}
+                                  onPress={() => {
+                                    playTrack(
+                                      {
+                                        ...track,
+                                        videoId: track.videoId || track.video_id || track.id,
+                                      },
+                                      [track],
+                                      0
+                                    );
+                                  }}
+                                  activeOpacity={0.8}
+                                >
+                                  <Ionicons
+                                    name={isCurrentPlayingThis ? "volume-high" : "play"}
+                                    size={12}
+                                    color="#000000"
+                                  />
+                                  <Text style={styles.liveFriendListenBtnText}>
+                                    {isCurrentPlayingThis ? "Listening" : "Listen"}
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
 
-                            {/* Track Name */}
+                            {/* Playing Track Info */}
                             {track ? (
                               <TouchableOpacity
+                                style={styles.liveFriendTrackRow}
                                 onPress={() => {
                                   playTrack(
                                     {
@@ -1507,35 +1522,52 @@ export default function HomeScreen({ onNavigate } = {}) {
                                   );
                                 }}
                                 activeOpacity={0.7}
-                                style={{ maxWidth: 88 }}
                               >
-                                <Text style={styles.liveCircleTrack} numberOfLines={1}>
+                                <Ionicons
+                                  name="musical-note"
+                                  size={13}
+                                  color="#1DB954"
+                                  style={{ marginRight: 5 }}
+                                />
+                                <Text style={styles.liveFriendTrackTitle} numberOfLines={1}>
                                   {track.title}
                                 </Text>
+                                {track.artist ? (
+                                  <Text style={styles.liveFriendTrackArtist} numberOfLines={1}>
+                                    {"  "}• {track.artist}
+                                  </Text>
+                                ) : null}
                               </TouchableOpacity>
                             ) : null}
 
-                            {/* Quick Airbuds Reaction Bursts on Home */}
-                            <View style={styles.liveCircleReactionsRow}>
-                              {["🔥", "😭", "🫶", "💀"].map((emoji) => (
-                                <TouchableOpacity
-                                  key={emoji}
-                                  style={[
-                                    styles.liveCircleReactionBtn,
-                                    sentHomeReactions[friend.uid] === emoji && styles.liveCircleReactionBtnActive,
-                                  ]}
-                                  onPress={() => handleTriggerHomeReaction(friend, emoji, track)}
-                                  activeOpacity={0.65}
-                                  hitSlop={{ top: 4, bottom: 4, left: 3, right: 3 }}
-                                  accessibilityLabel={`React with ${emoji}`}
-                                >
-                                  <Text style={styles.liveCircleReactionEmoji}>{emoji}</Text>
-                                </TouchableOpacity>
-                              ))}
-                            </View>
-                            {sentHomeReactions[friend.uid] ? (
-                              <Text style={styles.liveCircleSentText}>Sent!</Text>
-                            ) : null}
+                            {/* Airbuds Live Reaction Emoji Bar */}
+                            {track && (
+                              <View style={styles.liveFriendReactionBar}>
+                                <Text style={styles.liveFriendReactionLabel}>REACT</Text>
+                                <View style={styles.liveFriendEmojiRow}>
+                                  {["🔥", "😭", "💀", "🫶", "🕺", "💔"].map((emoji) => (
+                                    <TouchableOpacity
+                                      key={emoji}
+                                      style={[
+                                        styles.liveFriendEmojiBtn,
+                                        sentHomeReactions[friend.uid] === emoji && styles.liveFriendEmojiBtnActive,
+                                      ]}
+                                      onPress={() => handleTriggerHomeReaction(friend, emoji, track)}
+                                      activeOpacity={0.7}
+                                      hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                                      accessibilityLabel={`React with ${emoji}`}
+                                    >
+                                      <Text style={styles.liveFriendEmojiText}>{emoji}</Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </View>
+                                {sentHomeReactions[friend.uid] ? (
+                                  <View style={styles.liveFriendSentBadge}>
+                                    <Text style={styles.liveFriendSentText}>Sent {sentHomeReactions[friend.uid]}!</Text>
+                                  </View>
+                                ) : null}
+                              </View>
+                            )}
                           </View>
                         );
                       })}
@@ -1955,99 +1987,152 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-start",
   },
-  liveUserCircleItem: {
-    alignItems: "center",
-    width: 86,
-  },
-  liveCircleTouchArea: {
-    position: "relative",
-    alignItems: "center",
-    justifyContent: "center",
+  liveFriendCard: {
+    width: 295,
+    backgroundColor: "#161616",
+    borderRadius: 16,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 4,
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  liveCircleRing: {
-    width: 66,
-    height: 66,
-    borderRadius: 33,
-    borderWidth: 2.5,
-    borderColor: "#1DB954",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#121212",
-    shadowColor: "#1DB954",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.45,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  liveCircleRingActive: {
-    borderColor: "#FFFFFF",
-    shadowColor: "#FFFFFF",
-    shadowOpacity: 0.7,
-  },
-  liveActiveBadge: {
-    position: "absolute",
-    bottom: -2,
-    right: -2,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "#1DB954",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: "#000000",
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 3,
-    elevation: 4,
-  },
-  liveCircleName: {
-    fontFamily: fonts.semiBold,
-    fontSize: 12,
-    color: "#FFFFFF",
-    marginTop: 7,
-    textAlign: "center",
-    width: "100%",
-  },
-  liveCircleTrack: {
-    fontFamily: fonts.regular,
-    fontSize: 10.5,
-    color: "#1DB954",
-    marginTop: 2,
-    textAlign: "center",
-    width: "100%",
-  },
-  liveCircleReactionsRow: {
+  liveFriendCardTop: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-    marginTop: 6,
+    width: "100%",
   },
-  liveCircleReactionBtn: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
+  liveFriendAvatarWrap: {
+    position: "relative",
+    marginRight: 10,
+  },
+  liveFriendActiveDot: {
+    position: "absolute",
+    bottom: -1,
+    right: -1,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#1DB954",
+    borderWidth: 2,
+    borderColor: "#161616",
+  },
+  liveFriendMeta: {
+    flex: 1,
+    justifyContent: "center",
+  },
+  liveFriendName: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13.5,
+    color: "#FFFFFF",
+    letterSpacing: -0.2,
+  },
+  liveFriendLiveRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 2,
+  },
+  liveFriendListeningTag: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: "#1DB954",
+  },
+  liveFriendListenBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1DB954",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 16,
+    gap: 4,
+    marginLeft: 8,
+  },
+  liveFriendListenBtnActive: {
+    backgroundColor: "#FFFFFF",
+  },
+  liveFriendListenBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    color: "#000000",
+  },
+  liveFriendTrackRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginTop: 10,
+    width: "100%",
+  },
+  liveFriendTrackTitle: {
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    color: "#FFFFFF",
+    flexShrink: 1,
+  },
+  liveFriendTrackArtist: {
+    fontFamily: fonts.regular,
+    fontSize: 11,
+    color: "rgba(255, 255, 255, 0.5)",
+    flexShrink: 1,
+  },
+  liveFriendReactionBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 9,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255, 255, 255, 0.06)",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  liveFriendReactionLabel: {
+    fontFamily: fonts.semiBold,
+    fontSize: 9.5,
+    color: "#777777",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginRight: 2,
+  },
+  liveFriendEmojiRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  liveFriendEmojiBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(255, 255, 255, 0.07)",
     alignItems: "center",
     justifyContent: "center",
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.06)",
   },
-  liveCircleReactionBtnActive: {
-    backgroundColor: "rgba(29, 185, 84, 0.35)",
-    transform: [{ scale: 1.2 }],
+  liveFriendEmojiBtnActive: {
+    backgroundColor: "rgba(29, 185, 84, 0.25)",
+    borderColor: "#1DB954",
+    transform: [{ scale: 1.15 }],
   },
-  liveCircleReactionEmoji: {
-    fontSize: 10.5,
+  liveFriendEmojiText: {
+    fontSize: 14,
   },
-  liveCircleSentText: {
-    fontFamily: fonts.bold,
-    fontSize: 9.5,
+  liveFriendSentBadge: {
+    backgroundColor: "rgba(29, 185, 84, 0.16)",
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    marginLeft: 4,
+  },
+  liveFriendSentText: {
     color: "#1DB954",
-    marginTop: 3,
-    textAlign: "center",
+    fontSize: 10,
+    fontFamily: fonts.bold,
   },
 
   // Following Friends Live Activity
