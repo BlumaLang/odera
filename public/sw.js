@@ -1,5 +1,5 @@
 // Staytup Service Worker for PWA
-const CACHE_NAME = 'staytup-pwa-v38';
+const CACHE_NAME = 'staytup-pwa-v39';
 
 const PRECACHE_ASSETS = [
   '/',
