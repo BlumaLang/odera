@@ -224,19 +224,16 @@ export default function HomeScreen({ onNavigate } = {}) {
   const [appTrending, setAppTrending] = useState([]);
   const [artistImages, setArtistImages] = useState({});
   const [friendsActivity, setFriendsActivity] = useState({});
-  const [sentHomeReactions, setSentHomeReactions] = useState({});
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
 
-  // Trigger Airbuds live reaction burst to a friend from Home
+  // Trigger Airbuds live reaction burst to a friend from Home (zero home re-render lag)
   const handleTriggerHomeReaction = useCallback((targetFriend, emoji, track) => {
     if (!targetFriend?.uid || !emoji) return;
     const targetUid = targetFriend.uid;
-    setSentHomeReactions((prev) => ({ ...prev, [targetUid]: emoji }));
 
     // Trigger immediate tactile and visual burst for sender!
     triggerLocalReactionBurst({
       emoji,
-      senderName: "You",
       trackTitle: track?.title || "",
     });
 
@@ -248,14 +245,6 @@ export default function HomeScreen({ onNavigate } = {}) {
       trackTitle: track?.title || "",
       trackId: track?.videoId || track?.id || "",
     });
-
-    setTimeout(() => {
-      setSentHomeReactions((prev) => {
-        const copy = { ...prev };
-        delete copy[targetUid];
-        return copy;
-      });
-    }, 2200);
   }, [userProfile]);
 
   // Modal state & swipe-down gesture for Live Friend popup
@@ -1678,10 +1667,7 @@ export default function HomeScreen({ onNavigate } = {}) {
                                   {["🔥", "😭", "💀", "🫶", "🕺", "💔"].map((emoji) => (
                                     <TouchableOpacity
                                       key={emoji}
-                                      style={[
-                                        styles.liveFriendEmojiBtn,
-                                        sentHomeReactions[friend.uid] === emoji && styles.liveFriendEmojiBtnActive,
-                                      ]}
+                                      style={styles.liveFriendEmojiBtn}
                                       onPress={() => handleTriggerHomeReaction(friend, emoji, track)}
                                       activeOpacity={0.7}
                                       hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
@@ -1691,11 +1677,6 @@ export default function HomeScreen({ onNavigate } = {}) {
                                     </TouchableOpacity>
                                   ))}
                                 </View>
-                                {sentHomeReactions[friend.uid] ? (
-                                  <View style={styles.liveFriendSentBadge}>
-                                    <Text style={styles.liveFriendSentText}>Sent {sentHomeReactions[friend.uid]}!</Text>
-                                  </View>
-                                ) : null}
                               </View>
                             )}
                           </View>
@@ -1772,140 +1753,122 @@ export default function HomeScreen({ onNavigate } = {}) {
                 {/* Drag Handle */}
                 <View style={styles.friendModalDragHandle} />
 
-                {/* Header: Avatar, Display Name, Status */}
-                <View style={styles.friendModalHeaderRow}>
-                  <View style={styles.friendModalAvatarWrap}>
-                    <UserAvatar user={friend} size={58} fontSize={20} />
-                    <View style={[styles.friendModalStatusDot, isPlaying && styles.friendModalStatusDotLive]} />
-                  </View>
-
-                  <View style={styles.friendModalHeaderInfo}>
-                    <Text style={styles.friendModalName} numberOfLines={1}>
-                      {formatPersonName(friend.displayName || friend.name || friend.username || "Friend")}
-                    </Text>
-                    <Text style={styles.friendModalUsername} numberOfLines={1}>
-                      @{friend.username || "listener"}
-                    </Text>
-                    <View style={styles.friendModalLiveRow}>
-                      <MaterialCommunityIcons
-                        name="waveform"
-                        size={13}
-                        color="#1DB954"
-                        style={{ marginRight: 4 }}
+                {/* Same Card as Friends Page, with emojis and without close button */}
+                <View style={styles.friendModalCardWrapper}>
+                  <View style={styles.friendModalUserRow}>
+                    {/* Avatar & Online Dot */}
+                    <View style={styles.friendModalAvatarWrap}>
+                      <UserAvatar user={friend} size={46} fontSize={16} />
+                      <View
+                        style={[
+                          styles.friendModalStatusDot,
+                          isPlaying ? styles.friendModalStatusDotLive : styles.friendModalStatusDotOffline,
+                        ]}
                       />
-                      <Text style={styles.friendModalLiveStatusText}>
-                        {isPlaying ? "Listening right now" : "Online now"}
-                      </Text>
                     </View>
-                  </View>
 
-                  <TouchableOpacity
-                    style={styles.friendModalCloseBtn}
-                    onPress={() => setSelectedLiveFriend(null)}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    accessibilityLabel="Close modal"
-                  >
-                    <Ionicons name="close" size={20} color="#AAAAAA" />
-                  </TouchableOpacity>
-                </View>
+                    {/* Friend Info & Song */}
+                    <View style={styles.friendModalUserInfo}>
+                      <Text style={styles.friendModalUserName} numberOfLines={1}>
+                        {formatPersonName(friend.displayName || friend.name || friend.username || "")}
+                      </Text>
 
-                {/* Playing Track Card */}
-                {track ? (
-                  <View style={styles.friendModalTrackCard}>
-                    <View style={styles.friendModalTrackTopRow}>
-                      {track.artwork_url || track.thumbnail ? (
-                        <Image
-                          source={{ uri: getHighResArtwork(track.artwork_url || track.thumbnail) }}
-                          style={styles.friendModalTrackArtwork}
-                          resizeMode="cover"
-                        />
-                      ) : (
-                        <View style={[styles.friendModalTrackArtwork, styles.friendModalTrackArtworkFallback]}>
-                          <Ionicons name="musical-notes" size={24} color="#1DB954" />
+                      {isPlaying && track ? (
+                        <View style={styles.friendModalTrackRow}>
+                          <MaterialCommunityIcons
+                            name="waveform"
+                            size={14}
+                            color="#1DB954"
+                            style={{ marginRight: 4 }}
+                          />
+                          <Text style={styles.friendModalTrackTitle} numberOfLines={1}>
+                            {track.title}
+                          </Text>
+                          {track.artist ? (
+                            <Text style={styles.friendModalTrackArtist} numberOfLines={1}>
+                              {"  "}• {track.artist}
+                            </Text>
+                          ) : null}
                         </View>
+                      ) : (act?.lastPlayback?.track || friend?.lastPlayback?.track || friend?.lastPlayback || friend?.lastPlayed) ? (
+                        (() => {
+                          const s = act?.lastPlayback?.track || friend?.lastPlayback?.track || friend?.lastPlayback || friend?.lastPlayed;
+                          const sTitle = s?.title || s?.name || "";
+                          const sArtist = s?.artist || s?.subtitle || "";
+                          return (
+                            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+                              <Ionicons name="musical-note" size={12} color="#888888" style={{ marginRight: 4 }} />
+                              <Text style={styles.friendModalSubText} numberOfLines={1}>
+                                {sTitle}{sArtist ? ` • ${sArtist}` : ""}
+                              </Text>
+                            </View>
+                          );
+                        })()
+                      ) : (
+                        <Text style={styles.friendModalSubText} numberOfLines={1}>
+                          {isPlaying ? "Listening right now" : "Online now"}
+                        </Text>
                       )}
-
-                      <View style={styles.friendModalTrackMeta}>
-                        <Text style={styles.friendModalTrackTitle} numberOfLines={1}>
-                          {track.title}
-                        </Text>
-                        <Text style={styles.friendModalTrackArtist} numberOfLines={1}>
-                          {track.artist || "Unknown Artist"}
-                        </Text>
-                      </View>
                     </View>
 
-                    {/* Listen Along Button */}
-                    <TouchableOpacity
-                      style={[
-                        styles.friendModalListenAlongBtn,
-                        isCurrentPlayingThis && styles.friendModalListenAlongBtnActive,
-                      ]}
-                      onPress={() => {
-                        playTrack(
-                          {
-                            ...track,
-                            videoId: track.videoId || track.video_id || track.id,
-                          },
-                          [track],
-                          0
-                        );
-                      }}
-                      activeOpacity={0.85}
-                    >
-                      <Ionicons
-                        name={isCurrentPlayingThis ? "volume-high" : "play"}
-                        size={16}
-                        color="#000000"
-                        style={{ marginRight: 6 }}
-                      />
-                      <Text style={styles.friendModalListenAlongText}>
-                        {isCurrentPlayingThis ? "Listening Along" : "Listen Along"}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <View style={styles.friendModalNoTrackCard}>
-                    <Ionicons name="musical-note-outline" size={28} color="#666666" />
-                    <Text style={styles.friendModalNoTrackText}>Not playing a song right now</Text>
-                  </View>
-                )}
-
-                {/* Airbuds Live Reaction Bar */}
-                {track && (
-                  <View style={styles.friendModalReactionSection}>
-                    <View style={styles.friendModalReactionTitleRow}>
-                      <Ionicons name="flash" size={13} color="#1DB954" style={{ marginRight: 5 }} />
-                      <Text style={styles.friendModalReactionTitle}>REACT TO THIS SONG</Text>
-                    </View>
-
-                    <View style={styles.friendModalEmojiRow}>
-                      {["🔥", "😭", "💀", "🫶", "🕺", "💔"].map((emoji) => (
+                    {/* Action: Listen Along Button (NO close button) */}
+                    <View style={styles.friendModalActionsRow}>
+                      {track && (
                         <TouchableOpacity
-                          key={emoji}
                           style={[
-                            styles.friendModalEmojiBtn,
-                            sentHomeReactions[friend.uid] === emoji && styles.friendModalEmojiBtnActive,
+                            styles.friendModalListenBtn,
+                            isCurrentPlayingThis && styles.friendModalListenBtnActive,
                           ]}
-                          onPress={() => handleTriggerHomeReaction(friend, emoji, track)}
-                          activeOpacity={0.7}
-                          hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-                          accessibilityLabel={`React with ${emoji}`}
+                          onPress={(e) => {
+                            e?.stopPropagation?.();
+                            playTrack(
+                              {
+                                ...track,
+                                videoId: track.videoId || track.video_id || track.id,
+                              },
+                              [track],
+                              0
+                            );
+                          }}
+                          activeOpacity={0.8}
                         >
-                          <Text style={styles.friendModalEmojiText}>{emoji}</Text>
+                          <Ionicons
+                            name={isCurrentPlayingThis ? "volume-high" : "play"}
+                            size={12}
+                            color="#000000"
+                          />
+                          <Text style={styles.friendModalListenBtnText}>
+                            {isCurrentPlayingThis ? "Listening" : "Listen"}
+                          </Text>
                         </TouchableOpacity>
-                      ))}
+                      )}
                     </View>
-
-                    {sentHomeReactions[friend.uid] && (
-                      <View style={styles.friendModalSentBadge}>
-                        <Text style={styles.friendModalSentText}>
-                          Sent reaction {sentHomeReactions[friend.uid]} to {formatPersonName(friend.displayName || friend.username)}!
-                        </Text>
-                      </View>
-                    )}
                   </View>
-                )}
+
+                  {/* Airbuds Live Reaction Quick Emoji Bar (no sent text badge) */}
+                  {track && (
+                    <View style={styles.friendModalReactionBar}>
+                      <Text style={styles.friendModalReactionLabel}>REACT</Text>
+                      <View style={styles.friendModalEmojiRow}>
+                        {["🔥", "😭", "💀", "🫶", "🕺", "💔"].map((emoji) => (
+                          <TouchableOpacity
+                            key={emoji}
+                            style={styles.friendModalEmojiBtn}
+                            onPress={(e) => {
+                              e?.stopPropagation?.();
+                              handleTriggerHomeReaction(friend, emoji, track);
+                            }}
+                            activeOpacity={0.65}
+                            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                            accessibilityLabel={`React with ${emoji}`}
+                          >
+                            <Text style={styles.friendModalEmojiText}>{emoji}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+                  )}
+                </View>
               </Animated.View>
             </TouchableOpacity>
           );
@@ -2566,157 +2529,116 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     marginBottom: 16,
   },
-  friendModalHeaderRow: {
+  friendModalCardWrapper: {
+    width: "100%",
+    paddingVertical: 2,
+  },
+  friendModalUserRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 16,
+    paddingVertical: 10,
+    width: "100%",
   },
   friendModalAvatarWrap: {
     position: "relative",
-    marginRight: 14,
   },
   friendModalStatusDot: {
     position: "absolute",
     bottom: -1,
     right: -1,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "#777777",
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     borderWidth: 2,
     borderColor: "#16161A",
   },
   friendModalStatusDotLive: {
     backgroundColor: "#1DB954",
   },
-  friendModalHeaderInfo: {
+  friendModalStatusDotOffline: {
+    backgroundColor: "#555555",
+  },
+  friendModalUserInfo: {
     flex: 1,
-  },
-  friendModalName: {
-    fontFamily: fonts.bold,
-    fontSize: 18,
-    color: "#FFFFFF",
-    letterSpacing: -0.2,
-  },
-  friendModalUsername: {
-    fontFamily: fonts.regular,
-    fontSize: 13,
-    color: "#8E8E93",
-    marginTop: 1,
-  },
-  friendModalLiveRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 3,
-  },
-  friendModalLiveStatusText: {
-    fontFamily: fonts.medium,
-    fontSize: 12,
-    color: "#1DB954",
-  },
-  friendModalCloseBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    alignItems: "center",
+    marginLeft: 12,
     justifyContent: "center",
   },
-  friendModalTrackCard: {
-    backgroundColor: "#202025",
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.06)",
-  },
-  friendModalTrackTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  friendModalTrackArtwork: {
-    width: 52,
-    height: 52,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  friendModalTrackArtworkFallback: {
-    backgroundColor: "#2C2C32",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  friendModalTrackMeta: {
-    flex: 1,
-  },
-  friendModalTrackTitle: {
+  friendModalUserName: {
     fontFamily: fonts.semiBold,
     fontSize: 15,
     color: "#FFFFFF",
-    marginBottom: 2,
+  },
+  friendModalTrackRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 2,
+  },
+  friendModalTrackTitle: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "#1DB954",
+    maxWidth: 180,
   },
   friendModalTrackArtist: {
     fontFamily: fonts.regular,
-    fontSize: 12.5,
-    color: "#8E8E93",
+    fontSize: 12,
+    color: "#999999",
+    maxWidth: 140,
   },
-  friendModalListenAlongBtn: {
+  friendModalSubText: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: "#888888",
+    marginTop: 2,
+  },
+  friendModalActionsRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#1DB954",
-    borderRadius: 22,
-    paddingVertical: 10,
+    marginLeft: 8,
   },
-  friendModalListenAlongBtnActive: {
-    backgroundColor: "#FFFFFF",
+  friendModalListenBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    paddingHorizontal: 10,
+    height: 28,
+    borderRadius: 14,
+    gap: 4,
   },
-  friendModalListenAlongText: {
-    fontFamily: fonts.bold,
-    fontSize: 13.5,
+  friendModalListenBtnActive: {
+    backgroundColor: "#169c46",
+  },
+  friendModalListenBtnText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
     color: "#000000",
   },
-  friendModalNoTrackCard: {
-    backgroundColor: "#202025",
-    borderRadius: 14,
-    paddingVertical: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    marginBottom: 16,
-  },
-  friendModalNoTrackText: {
-    fontFamily: fonts.medium,
-    fontSize: 13,
-    color: "#8E8E93",
-  },
-  friendModalReactionSection: {
-    backgroundColor: "#202025",
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.06)",
-  },
-  friendModalReactionTitleRow: {
+  friendModalReactionBar: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 10,
+    paddingLeft: 58,
+    paddingBottom: 8,
+    marginTop: -2,
+    gap: 6,
+    flexWrap: "wrap",
   },
-  friendModalReactionTitle: {
-    fontFamily: fonts.bold,
-    fontSize: 11,
-    color: "#8E8E93",
-    letterSpacing: 0.6,
+  friendModalReactionLabel: {
+    fontFamily: fonts.semiBold,
+    fontSize: 10,
+    color: "#777777",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginRight: 2,
   },
   friendModalEmojiRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: 6,
   },
   friendModalEmojiBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: "rgba(255, 255, 255, 0.08)",
     alignItems: "center",
     justifyContent: "center",
@@ -2724,26 +2646,8 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 255, 255, 0.06)",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  friendModalEmojiBtnActive: {
-    backgroundColor: "rgba(29, 185, 84, 0.25)",
-    borderColor: "#1DB954",
-    transform: [{ scale: 1.15 }],
-  },
   friendModalEmojiText: {
-    fontSize: 22,
-  },
-  friendModalSentBadge: {
-    backgroundColor: "rgba(29, 185, 84, 0.15)",
-    borderRadius: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    marginTop: 10,
-    alignItems: "center",
-  },
-  friendModalSentText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 11.5,
-    color: "#1DB954",
+    fontSize: 15,
   },
 
   // Following Friends Live Activity

@@ -17,69 +17,60 @@ const localBurstListeners = new Set();
 export function triggerLocalReactionBurst(payload) {
   localBurstListeners.forEach((fn) => {
     try {
-      fn(payload);
+      fn({ ...payload, isLocalSender: true });
     } catch (_) {}
   });
 }
 
-// Web CSS Keyframes injection (runs once on browser load for pure GPU 60fps animations)
-let stylesInjected = false;
-function injectKeyframesOnce() {
-  if (Platform.OS !== "web" || stylesInjected || typeof document === "undefined") return;
-  stylesInjected = true;
-  const styleEl = document.createElement("style");
-  styleEl.textContent = `
-    @keyframes airbudsHeroPop {
-      0% {
-        transform: scale(0.2) rotate(-15deg);
-        opacity: 0;
-      }
-      20% {
-        transform: scale(1.4) rotate(8deg);
-        opacity: 1;
-      }
-      45% {
-        transform: scale(1.1) rotate(-4deg);
-        opacity: 0.95;
-      }
-      80% {
-        transform: scale(1.3) translateY(-40px);
-        opacity: 0.8;
-      }
-      100% {
-        transform: scale(1.6) translateY(-100px);
-        opacity: 0;
-      }
-    }
-
-    @keyframes airbudsFountainFloat {
-      0% {
-        transform: translate3d(0, 0, 0) scale(0.3) rotate(0deg);
-        opacity: 0;
-      }
-      12% {
-        transform: translate3d(calc(var(--dx) * 0.3), -80px, 0) scale(1.25) rotate(calc(var(--rot) * 0.5));
-        opacity: 1;
-      }
-      50% {
-        transform: translate3d(calc(var(--dx) * 0.7), calc(var(--dy) * 0.55), 0) scale(1.05) rotate(calc(var(--rot) * 0.9));
-        opacity: 0.95;
-      }
-      85% {
-        opacity: 0.7;
-      }
-      100% {
-        transform: translate3d(var(--dx), var(--dy), 0) scale(0.8) rotate(var(--rot));
-        opacity: 0;
-      }
-    }
-  `;
-  document.head.appendChild(styleEl);
-}
-
 function WebParticle({ particle }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    if (typeof el.animate === "function") {
+      const anim = el.animate(
+        [
+          {
+            transform: "translate3d(0, 0, 0) scale(0.35) rotate(0deg)",
+            opacity: 0,
+          },
+          {
+            transform: `translate3d(${particle.driftX * 0.28}px, -70px, 0) scale(1.3) rotate(${particle.rotation * 0.4}deg)`,
+            opacity: 1,
+            offset: 0.14,
+          },
+          {
+            transform: `translate3d(${particle.driftX * 0.68}px, ${particle.targetY * 0.55}px, 0) scale(1.08) rotate(${particle.rotation * 0.8}deg)`,
+            opacity: 0.95,
+            offset: 0.55,
+          },
+          {
+            transform: `translate3d(${particle.driftX}px, ${particle.targetY}px, 0) scale(0.8) rotate(${particle.rotation}deg)`,
+            opacity: 0,
+            offset: 1,
+          },
+        ],
+        {
+          duration: particle.duration,
+          delay: particle.delay,
+          easing: "cubic-bezier(0.2, 0.8, 0.25, 1)",
+          fill: "forwards",
+        }
+      );
+
+      return () => {
+        try {
+          anim.cancel();
+        } catch (_) {}
+      };
+    }
+  }, [particle]);
+
   return (
     <div
+      ref={ref}
       style={{
         position: "fixed",
         left: `${particle.startX}px`,
@@ -89,15 +80,63 @@ function WebParticle({ particle }) {
         pointerEvents: "none",
         zIndex: 999999,
         userSelect: "none",
-        animation: `airbudsFountainFloat ${particle.duration}ms cubic-bezier(0.2, 0.8, 0.25, 1) ${particle.delay}ms forwards`,
-        filter: "drop-shadow(0 4px 12px rgba(0, 0, 0, 0.6))",
+        textShadow: "0 2px 8px rgba(0, 0, 0, 0.45)",
         willChange: "transform, opacity",
-        "--dx": `${particle.driftX}px`,
-        "--dy": `${particle.targetY}px`,
-        "--rot": `${particle.rotation}deg`,
+        opacity: 0,
       }}
     >
       {particle.emoji}
+    </div>
+  );
+}
+
+function WebHero({ hero }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof el.animate !== "function") return;
+
+    const anim = el.animate(
+      [
+        { transform: "scale(0.2) rotate(-15deg)", opacity: 0 },
+        { transform: "scale(1.45) rotate(8deg)", opacity: 1, offset: 0.2 },
+        { transform: "scale(1.1) rotate(-4deg)", opacity: 0.95, offset: 0.45 },
+        { transform: "scale(1.3) translateY(-40px)", opacity: 0.85, offset: 0.8 },
+        { transform: "scale(1.6) translateY(-100px)", opacity: 0, offset: 1 },
+      ],
+      {
+        duration: 1300,
+        easing: "cubic-bezier(0.18, 0.89, 0.32, 1.28)",
+        fill: "forwards",
+      }
+    );
+
+    return () => {
+      try {
+        anim.cancel();
+      } catch (_) {}
+    };
+  }, [hero]);
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: "fixed",
+        left: `${hero.x}px`,
+        bottom: `${hero.y}px`,
+        fontSize: "64px",
+        lineHeight: 1,
+        pointerEvents: "none",
+        zIndex: 999998,
+        userSelect: "none",
+        textShadow: "0 0 20px rgba(29, 185, 84, 0.6)",
+        willChange: "transform, opacity",
+        opacity: 0,
+      }}
+    >
+      {hero.emoji}
     </div>
   );
 }
@@ -195,7 +234,7 @@ export default function LiveReactionOverlay() {
   const spawnBurst = useCallback(
     (reaction) => {
       const emoji = reaction.emoji || "🔥";
-      const count = 16;
+      const count = 9;
       const centerX = (windowWidth || 360) / 2 - 20;
       const bottomY = Math.max(120, (windowHeight || 600) * 0.28);
 
@@ -215,23 +254,23 @@ export default function LiveReactionOverlay() {
       });
       setTimeout(() => {
         setHeroEmoji(null);
-      }, 1600);
+      }, 1400);
 
-      // 16 Particle fountain
+      // 9 Particle fountain
       const newItems = [];
       for (let i = 0; i < count; i++) {
-        const driftX = (Math.random() - 0.5) * Math.min(windowWidth * 0.85, 340);
-        const targetY = -(260 + Math.random() * 320);
-        const delay = i * 35 + Math.random() * 30;
-        const duration = 1800 + Math.random() * 700;
-        const size = Math.floor(30 + Math.random() * 24);
-        const rotation = Math.floor((Math.random() - 0.5) * 60);
+        const driftX = (Math.random() - 0.5) * Math.min(windowWidth * 0.82, 320);
+        const targetY = -(240 + Math.random() * 260);
+        const delay = i * 45 + Math.random() * 25;
+        const duration = 1500 + Math.random() * 400;
+        const size = Math.floor(28 + Math.random() * 20);
+        const rotation = Math.floor((Math.random() - 0.5) * 50);
 
         newItems.push({
           id: `p_${Date.now()}_${i}_${Math.random()}`,
           emoji,
-          startX: centerX + (Math.random() - 0.5) * 80,
-          startY: bottomY + (Math.random() - 0.5) * 40,
+          startX: centerX + (Math.random() - 0.5) * 60,
+          startY: bottomY + (Math.random() - 0.5) * 30,
           driftX,
           targetY,
           delay,
@@ -241,10 +280,10 @@ export default function LiveReactionOverlay() {
         });
       }
 
-      setParticles((prev) => [...prev.slice(-24), ...newItems]);
+      setParticles((prev) => [...prev.slice(-18), ...newItems]);
 
-      // Top Toast Banner
-      if (reaction.senderName) {
+      // Top Toast Banner: Only show when a friend reacted, never for local sender
+      if (reaction.senderName && !reaction.isLocalSender && reaction.senderName !== "You") {
         setActiveBanner({
           emoji,
           senderName: reaction.senderName,
@@ -289,7 +328,7 @@ export default function LiveReactionOverlay() {
       // Auto-cleanup particles after animation completes
       setTimeout(() => {
         setParticles((prev) => prev.filter((p) => !newItems.some((n) => n.id === p.id)));
-      }, 3000);
+      }, 2400);
     },
     [bannerAnimY, bannerOpacity, windowHeight, windowWidth]
   );
@@ -357,22 +396,7 @@ export default function LiveReactionOverlay() {
       {/* Central Hero Pop Emoji */}
       {heroEmoji && (
         Platform.OS === "web" ? (
-          <div
-            style={{
-              position: "fixed",
-              left: `${heroEmoji.x}px`,
-              bottom: `${heroEmoji.y}px`,
-              fontSize: "68px",
-              lineHeight: 1,
-              pointerEvents: "none",
-              zIndex: 999998,
-              userSelect: "none",
-              animation: "airbudsHeroPop 1400ms cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards",
-              filter: "drop-shadow(0 0 24px rgba(29, 185, 84, 0.7))",
-            }}
-          >
-            {heroEmoji.emoji}
-          </div>
+          <WebHero hero={heroEmoji} />
         ) : null
       )}
 

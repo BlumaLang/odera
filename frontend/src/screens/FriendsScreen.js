@@ -307,12 +307,10 @@ export default function FriendsScreen({ onNavigate }) {
   const handleTriggerReaction = useCallback((targetFriend, emoji, track) => {
     if (!targetFriend?.uid || !emoji) return;
     const targetUid = targetFriend.uid;
-    setSentReactions((prev) => ({ ...prev, [targetUid]: emoji }));
 
     // Immediately trigger local tactile burst for the sender!
     triggerLocalReactionBurst({
       emoji,
-      senderName: "You",
       trackTitle: track?.title || "",
     });
 
@@ -324,14 +322,6 @@ export default function FriendsScreen({ onNavigate }) {
       trackTitle: track?.title || "",
       trackId: track?.videoId || track?.id || "",
     });
-
-    setTimeout(() => {
-      setSentReactions((prev) => {
-        const copy = { ...prev };
-        delete copy[targetUid];
-        return copy;
-      });
-    }, 2200);
   }, [currentUser, userProfile]);
 
   // Focused user for Friend Profile Modal
@@ -1552,11 +1542,6 @@ export default function FriendsScreen({ onNavigate }) {
                                     </TouchableOpacity>
                                   ))}
                                 </View>
-                                {sentReactions[friend.uid] ? (
-                                  <View style={styles.reactionSentBadge}>
-                                    <Text style={styles.reactionSentText}>Sent {sentReactions[friend.uid]}!</Text>
-                                  </View>
-                                ) : null}
                               </View>
                             )}
                           </View>
@@ -2156,13 +2141,6 @@ export default function FriendsScreen({ onNavigate }) {
                           </TouchableOpacity>
                         ))}
                       </View>
-                      {sentReactions[selectedUserProfile?.uid] ? (
-                        <View style={[styles.reactionSentBadge, { marginTop: 6 }]}>
-                          <Text style={styles.reactionSentText}>
-                            Sent {sentReactions[selectedUserProfile?.uid]} to {formatPersonName(selectedUserProfile?.displayName || selectedUserProfile?.name || selectedUserProfile?.username || "")}!
-                          </Text>
-                        </View>
-                      ) : null}
                     </View>
                   )}
                 </View>
