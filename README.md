@@ -1,53 +1,62 @@
-﻿# Staytup - Real-Time Music Streaming & Social Listening Platform
+# Staytup - Real-Time Music Streaming & Social Listening Platform
 
-[![Staytup](https://img.shields.io/badge/Staytup-PWA%20v2.5.0-1DB954?style=for-the-badge&logo=music)](https://staytup.odireca.com)
-[![React Native](https://img.shields.io/badge/React_Native-Expo%20SDK%2052-61DAFB?style=for-the-badge&logo=react)](https://reactnative.dev)
+[![Staytup](https://img.shields.io/badge/Staytup-PWA%20v2.8.2-1DB954?style=for-the-badge&logo=music)](https://staytup.odireca.com)
+[![React Native](https://img.shields.io/badge/React_Native-Expo%20SDK%2057-61DAFB?style=for-the-badge&logo=react)](https://reactnative.dev)
 [![PHP](https://img.shields.io/badge/PHP-8.x%20Backend-777BB4?style=for-the-badge&logo=php)](https://php.net)
 [![Firebase](https://img.shields.io/badge/Firebase-Realtime%20Database-FFCA28?style=for-the-badge&logo=firebase)](https://firebase.google.com)
+[![Service Worker](https://img.shields.io/badge/Service_Worker-staytup--pwa--v33-blue?style=for-the-badge)](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API)
 
-**Staytup** is a modern, high-performance, full-stack music streaming and collaborative listening application built with **React Native (Expo)**, a lightweight **PHP 8.x backend**, and **Firebase Realtime Database**. It pairs studio-grade audio streaming with real-time social presence, collaborative playlists, friend listening sync, and live synchronized lyrics.
+**Staytup** is a modern, high-performance music streaming and collaborative listening Progressive Web App (PWA) built with **React Native for Web (Expo SDK 57)**, a lightweight **PHP 8.x backend**, and **Firebase Realtime Database**. It pairs studio-grade audio streaming with real-time social presence, collaborative and blend playlists, friend listening sync, live synchronized karaoke lyrics, and multi-device hardware management.
 
 ---
 
 ## Key Features & Capabilities
 
 ### 1. High-Fidelity Audio Engine & Smart Playback
-- **Direct Audio Decryption**: Instant server-side DES-ECB decryption for high-bitrate JioSaavn media streams.
+- **Direct Audio Decryption**: Instant server-side DES-ECB decryption for high-bitrate media streams.
 - **Smart Stream Pre-Caching**: Background pre-caching of upcoming tracks in queue for instantaneous, gapless track transitions.
-- **MediaSession API & Background Audio**: Native lock screen controls, playback notifications, artwork metadata, and media key support across iOS, Android, macOS, and Windows.
+- **MediaSession API & Background Audio**: Native lock screen controls, playback notifications, high-resolution artwork metadata, and media key support across iOS, Android, macOS, and Windows.
 - **Adaptive Queue System**: Full queue drawer with drag-and-drop reordering, remove-from-queue, and subtle "Up Next" notice banners.
-- **Repeat & Shuffle**: Authentic playback loop (Repeat All, Repeat One, Shuffle mode).
-- **Sleep Timer**: Built-in countdown sleep timer (15m, 30m, 45m, 1h, End of Track) with gentle audio fade-out.
+- **Refined Full Player Modal**:
+  - Direct, reliable scrubber slider without gesture interference.
+  - Smooth fade animations and clean modal dismissal via the top-left chevron down button.
+  - Flippable 3D album art that transitions directly into synchronized karaoke lyrics.
+  - Sleep timer with built-in countdown presets (15m, 30m, 45m, 1h, End of Track) and gentle audio fade-out.
 
-### 2. Synchronized Karaoke Lyrics
+### 2. Live Airbuds-Style Reaction Bursts
+- **Cross-Page Reactions**: React to friends' active listening across any page (Home feed, Friends hub, profile cards, and full player).
+- **GPU-Accelerated Animations**: Powered by Web Animations API (WAAPI) for smooth 60fps floating emoji bursts with zero dropped frames.
+- **Real-Time Delivery**: Realtime sync via Firebase RTDB delivering reactions instantly with sender details, track attribution, and animated burst particles.
+
+### 3. Active Devices Management & Session Control
+- **Genuine Hardware & Platform Detection**: Automatically detects client OS (`macOS`, `iOS`, `iPadOS`, `Windows`, `Android`, `Linux`, `ChromeOS`) and browser (`Chrome`, `Safari`, `Edge`, `Firefox`, `Brave`, `Opera`, or standalone PWA). Zero fabricated data.
+- **Real-Time Presence & Heartbeat**: Synchronized with Firebase Realtime Database with 45-second liveness heartbeats and `.onDisconnect()` cleanup.
+- **Device Switching & Remote Revocation**: View active listening devices in real-time, inspect playback hardware, and revoke unauthorized sessions with a single tap.
+
+### 4. Spotify-Inspired Desktop Experience
+- **Left-Oriented Hero Layout**: Covers art anchored on the left (220×220px with drop shadows) with playlist title, description, participant avatars, and song metadata immediately adjacent.
+- **Left-Aligned Action Controls**: `Play All`, `Shuffle`, `Collaborate / Blend`, `Import from Link`, and `More Options` aligned directly with the tracks table.
+- **Unified 3-Dot Options Popover**: Clean options menu for editing metadata, managing collaborators, importing songs, or deleting playlists without cluttered duplicate badges.
+
+### 5. Social Listening, Friends Hub & Blend
+- **Live Friend Presence**: Track what friends are listening to in real-time with pulsing live status indicators and waveform animations.
+- **Listen Along (Sync Listening)**: One-tap synchronization to listen in real-time with a friend's active playback.
+- **Blend & Collab Playlists**: Real-time collaborative playlist editing powered by Firebase with blend compatibility scores.
+- **Standardized Confirmation Modals**: Consistent confirmation dialogs with clear button hierarchy (`#E53935` primary confirm on top, subtle secondary cancel on bottom).
+
+### 6. Synchronized Karaoke Lyrics
 - **Live Synchronized Lyrics**: Real-time karaoke-style lyrics synced to timestamps via LRCLIB integration.
 - **Smooth Auto-Scroll**: Highlights active lines with smooth auto-scroll to keep the current vocal front and center.
-- **3D Album Flip Player**: Tap artwork to flip 180 degrees directly into full-card synchronized lyrics.
 - **Plain Text Fallback**: Graceful fallback to static plain lyrics when timestamp synchronization is unavailable.
 
-### 3. Social Listening & Friends Hub
-- **Live Friend Presence**: See what friends are listening to in real-time with animated waveform indicators.
-- **Listen Along (Sync Listening)**: One-tap synchronization to listen in real-time with a friend's active playback.
-- **Music Taste Match & Blend**: Algorithmic taste compatibility score calculated between friends based on genre and artist listening history.
-- **Custom 3D Memoji Avatars**: 10+ custom 3D pastel avatars and customizable profile headers.
-
-### 4. Playlist Import Engine (Spotify & YouTube)
+### 7. Playlist Import Engine (Spotify & YouTube)
 - **Instant Playlist Link Importer**: Paste any public Spotify playlist URL or YouTube Music link to automatically match and import all tracks into Staytup.
 - **Real-Time Import Progress**: Live track matching feedback with fallback search algorithms.
-- **Collaborative Playlists**: Real-time multi-user collaborative playlist editing powered by Firebase.
 
-### 5. Multi-Artist Exploration & Discography
-- **Smart Multi-Artist Parsing**: Intelligently parses collaborated tracks (e.g. `Vishal Mishra, Raj Shekhar`) and displays individual artist pills.
-- **Artist Bottom Sheet & Discography**: Tap any artist name to view popular songs, related artists, and full discography.
-- **Automated High-Res Artist Imagery**: Dynamic artist photo resolution with caching and CDN fallbacks.
-
-### 6. Progressive Web App (PWA) & Responsive Design
+### 8. Progressive Web App (PWA) & Offline Resilience
 - **Full PWA Ready**: Installable on iOS (Safari Add to Home Screen), Android (Chrome PWA), and Desktop (Chrome/Edge/Brave).
 - **Dual Manifest Architecture**: Native support for both `manifest.webmanifest` and `manifest.json` with strict MIME headers and explicit permission overrides.
-- **Service Worker Caching**: Versioned cache invalidation (`sw.js`) ensuring lightning-fast offline startup and instant app updates.
-- **Fluid Desktop & Mobile UI**:
-  - **Desktop**: 3-column Spotify-inspired layout with collapsible navigation sidebar, persistent deck player, and expandable queue/lyrics sidebar.
-  - **Mobile**: Single-hand optimized navigation bar, swipeable bottom MiniPlayer, and full-screen gestures.
+- **Service Worker Caching**: Versioned cache invalidation (`sw.js`, `staytup-pwa-v33`) ensuring lightning-fast offline startup and instant app updates.
 
 ---
 
@@ -55,13 +64,13 @@
 
 | Layer | Technology |
 |---|---|
-| **Frontend** | React Native (Expo Web / Mobile SDK 52), React Context, Animated API |
-| **Styling & Fonts** | Clean Modern System Sans-Serif (`-apple-system`, `Segoe UI`, `Roboto`), Dark Mode Obsidian Palette |
+| **Frontend** | React Native (Expo Web / Mobile SDK 57), React Context, Animated API |
+| **Styling & Fonts** | Poppins Google Font, Dark Mode Obsidian Palette (`#000000`, `#121212`, `#1DB954`) |
 | **Audio** | Web Audio API, HTML5 Audio, `expo-av` |
-| **Realtime Social** | Firebase Realtime Database & Auth |
+| **Realtime Social & Presence** | Firebase Realtime Database & Auth |
 | **Backend API** | PHP 8.x, cURL, OpenSSL (DES-ECB decryption) |
 | **Data Sources** | JioSaavn API Proxy, LRCLIB Synced Lyrics, YouTube Search |
-| **PWA & Deployment**| Service Worker v22, Dual WebManifest, Apache `.htaccess` with SPA rewriting |
+| **PWA & Deployment** | Service Worker v33, Dual WebManifest, Apache `.htaccess` with SPA rewriting |
 
 ---
 
@@ -86,13 +95,13 @@ staytup/
 │   ├── public/                 # PWA Static Template (index.html, manifest, sw.js)
 │   ├── src/
 │   │   ├── api/                # API client with automatic retry & proxy fallbacks
-│   │   ├── components/         # Modular UI (FullPlayerModal, MiniPlayer, SongCard, etc.)
+│   │   ├── components/         # ActiveDevicesModal, FullPlayerModal, LiveReactionOverlay, PlaylistModal, etc.
 │   │   ├── context/            # AudioContext, UserContext, ResponsiveContext
-│   │   ├── screens/            # HomeScreen, SearchScreen, LibraryScreen, FriendsScreen
+│   │   ├── screens/            # HomeScreen, SearchScreen, LibraryScreen, FriendsScreen, ProfileScreen
 │   │   ├── services/           # Firebase Realtime presence & Navigation handlers
 │   │   └── theme/              # Obsidian color tokens & typography
 │   ├── app.json                # Expo configuration
-│   └── package.json            # Frontend dependencies
+│   └── package.json            # Frontend dependencies (v2.8.2)
 │
 ├── public/                     # Production Web Root (Apache DocumentRoot)
 │   ├── api/                    # Synced PHP API gateway
@@ -100,12 +109,15 @@ staytup/
 │   ├── index.html              # Entry HTML with PWA tags & font preloads
 │   ├── manifest.json           # Web App Manifest (JSON)
 │   ├── manifest.webmanifest    # Modern Web App Manifest (RFC standard)
-│   ├── sw.js                   # Service Worker cache controller (v22)
+│   ├── sw.js                   # Service Worker cache controller (v33)
 │   └── .htaccess               # Apache SPA rewrite engine & CORS headers
 │
+├── dist/                       # Production Distribution Directory
+├── CHANGELOG.md                # Release notes and history
 ├── .htaccess                   # Root Apache rewriting rules & security overrides
 ├── manifest.json               # Root manifest fallback
 ├── manifest.webmanifest        # Root webmanifest fallback
+├── sw.js                       # Root service worker controller
 └── README.md                   # Project Documentation
 ```
 
@@ -123,7 +135,7 @@ staytup/
    http://localhost/staytup/api/index.php/health
    ```
 
-### 2. Frontend Setup
+### 2. Frontend Development
 1. Navigate into the frontend workspace:
    ```bash
    cd frontend
@@ -133,11 +145,10 @@ staytup/
    ```bash
    npx expo start --web
    ```
-3. To produce a production build for deployment:
+3. To bump versions and stamp builds:
    ```bash
-   npm run build
+   node scripts/bump-version.js
    ```
-   Build artifacts will compile to `frontend/dist/` and automatically deploy to `public/`.
 
 ---
 
@@ -155,14 +166,6 @@ staytup/
 | `GET` | `/api/index.php/artist/{id}/songs` | Get top tracks for an artist |
 | `POST` | `/api/index.php/import` | Parse and import public Spotify / YouTube playlist |
 | `GET` | `/api/index.php/proxy-image?url={url}` | High-speed CORS-safe image proxy |
-
----
-
-## Security & PWA Best Practices
-- **Privacy-First**: No external telemetry or trackers injected.
-- **MIME Compliance**: `.webmanifest` and `.json` explicitly served with `application/manifest+json; charset=utf-8`.
-- **CORS Configured**: Wildcard and method headers enabled for smooth media streaming.
-- **Cache Management**: Instant PWA updates via service worker cache invalidation.
 
 ---
 

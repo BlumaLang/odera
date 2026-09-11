@@ -161,48 +161,6 @@ export default function FullPlayerModal() {
   const [artistPhotos, setArtistPhotos] = useState({});
   const artistPanY = useRef(new Animated.Value(0)).current;
 
-  // Swipe-down dismiss PanResponder for mobile FullPlayerModal on iOS & Android
-  const playerPanY = useRef(new Animated.Value(0)).current;
-  const playerPanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Intercept downward drag when dy > 8 and vertical drag dominates horizontal drag
-        return gestureState.dy > 8 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.4;
-      },
-      onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dy > 0) {
-          playerPanY.setValue(gestureState.dy);
-        }
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy > 110 || gestureState.vy > 0.6) {
-          Animated.timing(playerPanY, {
-            toValue: height || 850,
-            duration: 180,
-            useNativeDriver: Platform.OS !== "web",
-          }).start(() => {
-            setFullPlayerVisible(false);
-            playerPanY.setValue(0);
-          });
-        } else {
-          Animated.spring(playerPanY, {
-            toValue: 0,
-            tension: 70,
-            friction: 9,
-            useNativeDriver: Platform.OS !== "web",
-          }).start();
-        }
-      },
-      onPanResponderTerminate: () => {
-        Animated.spring(playerPanY, {
-          toValue: 0,
-          friction: 9,
-          useNativeDriver: Platform.OS !== "web",
-        }).start();
-      },
-    })
-  ).current;
 
   // Connect Modal State & Swipe Dismiss
   const [showConnectModal, setShowConnectModal] = useState(false);
@@ -241,36 +199,6 @@ export default function FullPlayerModal() {
   // Track Options / Share Modal State & Swipe Dismiss
   const [showTrackOptionsModal, setShowTrackOptionsModal] = useState(false);
   const [shareToastMessage, setShareToastMessage] = useState(null);
-  const trackOptionsPanY = useRef(new Animated.Value(0)).current;
-  const trackOptionsPanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return gestureState.dy > 6 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
-      },
-      onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dy > 0) trackOptionsPanY.setValue(gestureState.dy);
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy > 70 || gestureState.vy > 0.5) {
-          Animated.timing(trackOptionsPanY, {
-            toValue: 450,
-            duration: 180,
-            useNativeDriver: Platform.OS !== "web",
-          }).start(() => {
-            setShowTrackOptionsModal(false);
-            trackOptionsPanY.setValue(0);
-          });
-        } else {
-          Animated.spring(trackOptionsPanY, {
-            toValue: 0,
-            friction: 8,
-            useNativeDriver: Platform.OS !== "web",
-          }).start();
-        }
-      },
-    })
-  ).current;
 
   const handleShareTrack = async () => {
     setShowTrackOptionsModal(false);
@@ -1184,10 +1112,7 @@ export default function FullPlayerModal() {
 
             <TouchableOpacity
               style={styles.desktopSleepBtn}
-              onPress={() => {
-                trackOptionsPanY.setValue(0);
-                setShowTrackOptionsModal(true);
-              }}
+              onPress={() => setShowTrackOptionsModal(true)}
               activeOpacity={0.8}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               accessibilityLabel="Song options"
@@ -1567,24 +1492,9 @@ export default function FullPlayerModal() {
   };
 
   const renderMobilePlayer = () => (
-    <Animated.View
-      style={[
-        styles.mobilePlayerRoot,
-        {
-          transform: [{ translateY: playerPanY }],
-        },
-      ]}
-    >
-      {/* Top Drag Handle for Smooth Swipe Down Dismiss (iOS & Android) */}
-      <View
-        style={styles.mobileTopDragBar}
-        {...playerPanResponder.panHandlers}
-      >
-        <View style={styles.mobileTopDragHandle} />
-      </View>
-
+    <View style={styles.mobilePlayerRoot}>
       {/* Top Header Bar */}
-      <View style={styles.topBar} {...playerPanResponder.panHandlers}>
+      <View style={styles.topBar}>
         <TouchableOpacity
           style={styles.topBarButton}
           onPress={() => setFullPlayerVisible(false)}
@@ -1603,10 +1513,7 @@ export default function FullPlayerModal() {
 
         <TouchableOpacity
           style={styles.topBarButton}
-          onPress={() => {
-            trackOptionsPanY.setValue(0);
-            setShowTrackOptionsModal(true);
-          }}
+          onPress={() => setShowTrackOptionsModal(true)}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           accessibilityLabel="Song options"
         >
@@ -1988,7 +1895,7 @@ export default function FullPlayerModal() {
           </View>
         </View>
       )}
-    </Animated.View>
+    </View>
   );
 
   return (
