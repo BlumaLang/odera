@@ -1,0 +1,10 @@
+{
+  "name": "staytup",
+  "version": "2.8.8",
+  "description": "Staytup Music Platform",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build-dist.js",
+    "build:dist": "node scripts/build-dist.js"
+  }
+}
