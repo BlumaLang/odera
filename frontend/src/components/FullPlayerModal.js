@@ -2211,7 +2211,7 @@ export default function FullPlayerModal() {
                 <TouchableOpacity
                   style={styles.optionsActionRow}
                   onPress={() => {
-                    toggleLike();
+                    handleToggleFavorite();
                   }}
                   activeOpacity={0.7}
                 >

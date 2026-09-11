@@ -19,6 +19,7 @@ import Header from "../components/Header";
 import SectionList from "../components/SectionList";
 import SongCard from "../components/SongCard";
 import ArtistModal from "../components/ArtistModal";
+import PlaylistModal from "../components/PlaylistModal";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
 import { useAudioPlayback } from "../context/AudioContext";
@@ -36,6 +37,7 @@ import {
   subscribeAppTrendingRTDB,
   subscribeFriendActivity,
   sendLiveReaction,
+  subscribePublicPlaylists,
 } from "../services/firebase";
 import { triggerLocalReactionBurst } from "../components/LiveReactionOverlay";
 import { getHighResArtwork } from "../utils/imageUtils";
@@ -221,7 +223,7 @@ export default function HomeScreen({ onNavigate } = {}) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
-  const { userProfile, friends, likedSongs, userArtistMovements, recordArtistMovement } = useUser() || {};
+  const { userProfile, friends, likedSongs, userArtistMovements, recordArtistMovement, userPlaylists, collabPlaylists } = useUser() || {};
   const favoriteArtists = userProfile?.favoriteArtists || userProfile?.favorite_artists || [];
   const friendsList = friends || [];
   const [followingSections, setFollowingSections] = useState([]);
@@ -233,6 +235,30 @@ export default function HomeScreen({ onNavigate } = {}) {
   const [artistImages, setArtistImages] = useState({});
   const [friendsActivity, setFriendsActivity] = useState({});
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
+  const [publicPlaylists, setPublicPlaylists] = useState([]);
+  const [selectedPlaylistModal, setSelectedPlaylistModal] = useState(null);
+
+  // Subscribe to community public playlists from Firebase RTDB
+  useEffect(() => {
+    const unsub = subscribePublicPlaylists((list) => {
+      setPublicPlaylists(list || []);
+    });
+    return () => {
+      try { unsub?.(); } catch (_) {}
+    };
+  }, []);
+
+  // Listen for playlist modal open requests
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleOpenModal = (e) => {
+      if (e?.detail) {
+        setSelectedPlaylistModal(e.detail);
+      }
+    };
+    window.addEventListener("staytup-open-playlist-modal", handleOpenModal);
+    return () => window.removeEventListener("staytup-open-playlist-modal", handleOpenModal);
+  }, []);
 
   // Trigger Airbuds live reaction burst to a friend from Home (zero home re-render lag)
   const handleTriggerHomeReaction = useCallback((targetFriend, emoji, track) => {
@@ -1187,6 +1213,15 @@ export default function HomeScreen({ onNavigate } = {}) {
         if (section.id === "trending_now" || section.title?.toLowerCase().includes("trending")) return false;
         if (section.id === "trending_global" || section.title?.toLowerCase().includes("global")) return false;
         if (section.id === "trending_india" || section.title?.toLowerCase().includes("youtube india")) return false;
+        // Explicitly remove 3rd-party JioSaavn charts and playlists per user request
+        if (
+          section.id === "top_charts" ||
+          section.id === "featured_playlists" ||
+          section.id?.includes("chart") ||
+          section.type === "playlists" ||
+          section.title?.toLowerCase().includes("top chart") ||
+          section.title?.toLowerCase().includes("top playlist")
+        ) return false;
         if (
           section.id?.startsWith("mood_") ||
           section.id?.includes("morning") ||
@@ -1249,13 +1284,181 @@ export default function HomeScreen({ onNavigate } = {}) {
     });
   }, [feed?.sections, hasPunjabiAffinity, hasTamilAffinity, hasTeluguAffinity, hasEnglishAffinity, isTrackPunjabi]);
 
+  // Staytup Community Playlists (Created and uploaded by users in Staytup)
+  const communityPlaylists = useMemo(() => {
+    const combined = [...(publicPlaylists || [])];
+    const seen = new Set(combined.map((p) => p.id || p.collabId));
+    (collabPlaylists || []).forEach((cp) => {
+      const cid = cp.collabId || cp.id;
+      if (cid && !seen.has(cid)) {
+        seen.add(cid);
+        combined.push({
+          id: cid,
+          collabId: cid,
+          name: cp.name || cp.title || "Collaborative Mix",
+          creatorName: cp.ownerName || "Staytup User",
+          tracks: cp.tracks || [],
+          image: cp.coverImage || cp.image || cp.artwork_url,
+          isPublic: true,
+        });
+      }
+    });
+
+    return combined.map((p) => {
+      const rawTracks = p.tracks ? (Array.isArray(p.tracks) ? p.tracks : Object.values(p.tracks)) : [];
+      const count = p.songCount || rawTracks.length;
+      const firstArt = rawTracks[0]?.artwork_url || rawTracks[0]?.thumbnail || rawTracks[0]?.image;
+      return {
+        ...p,
+        id: p.id || p.collabId || `pl_${Math.random()}`,
+        title: p.name || p.title || "Community Playlist",
+        artist: p.creatorName ? `By @${p.creatorName}` : (count > 0 ? `${count} songs` : "Staytup Playlist"),
+        subtitle: count > 0 ? `${count} songs` : "Community Mix",
+        image: p.coverImage || p.image || p.artwork_url || firstArt || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&q=80",
+        tracks: rawTracks,
+        mixTracks: rawTracks,
+        type: "playlist",
+        isPlaylist: true,
+      };
+    }).filter((p) => p.tracks && p.tracks.length > 0);
+  }, [publicPlaylists, collabPlaylists]);
+
+  const communityPlaylistsSection = useMemo(() => {
+    if (communityPlaylists.length === 0) return null;
+    return {
+      id: "community_playlists_section",
+      title: "Community Playlists",
+      description: "Curated playlists uploaded and shared by Staytup users",
+      type: "playlists",
+      items: communityPlaylists,
+    };
+  }, [communityPlaylists]);
+
+  // Software Auto-Generated Playlists (Dynamically generated by Staytup software)
+  const autoGeneratedPlaylists = useMemo(() => {
+    const pool = [
+      ...(appTrending || []),
+      ...(trendingNowSection?.items || []),
+      ...(dailyMixSection?.items || []),
+      ...(jumpBackInSection?.items || []),
+      ...(freshNewReleasesSection?.items || []),
+    ].filter(Boolean);
+
+    if (pool.length === 0) return [];
+
+    const seen = new Set();
+    const uniquePool = [];
+    for (const t of pool) {
+      const vid = t.videoId || t.video_id || t.id;
+      if (vid && !seen.has(vid)) {
+        seen.add(vid);
+        uniquePool.push(t);
+      }
+    }
+
+    if (uniquePool.length < 5) return [];
+
+    const daySeed = getDaySeed();
+    const top50Tracks = uniquePool.slice(0, 50);
+    const dailyTracks = seededShuffle(uniquePool, daySeed).slice(0, 25);
+    const viralTracks = seededShuffle(uniquePool, daySeed + 71).slice(0, 25);
+
+    const chillTracks = uniquePool.filter((t) => {
+      const s = `${t.title || ""} ${t.artist || ""}`.toLowerCase();
+      return s.includes("lofi") || s.includes("chill") || s.includes("acoustic") || s.includes("slow") || s.includes("love") || s.includes("reverb");
+    });
+    const finalChillTracks = (chillTracks.length >= 6 ? chillTracks : uniquePool.slice(6, 26)).slice(0, 25);
+
+    const partyTracks = uniquePool.filter((t) => {
+      const s = `${t.title || ""} ${t.artist || ""}`.toLowerCase();
+      return s.includes("remix") || s.includes("party") || s.includes("dance") || s.includes("club") || s.includes("banger") || s.includes("beat");
+    });
+    const finalPartyTracks = (partyTracks.length >= 6 ? partyTracks : seededShuffle(uniquePool, daySeed + 555).slice(0, 25)).slice(0, 25);
+
+    return [
+      {
+        id: "auto_top_50",
+        title: "Staytup Top 50",
+        artist: "Platform Charts • Most Played",
+        subtitle: `${top50Tracks.length} tracks`,
+        image: top50Tracks[0]?.artwork_url || top50Tracks[0]?.thumbnail || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80",
+        tracks: top50Tracks,
+        mixTracks: top50Tracks,
+        type: "playlist",
+        isPlaylist: true,
+        isAutoGenerated: true,
+      },
+      {
+        id: "auto_daily_vibe",
+        title: "Daily Vibe Mix",
+        artist: "Auto-Curated • Daily Rotation",
+        subtitle: `${dailyTracks.length} tracks`,
+        image: dailyTracks[0]?.artwork_url || dailyTracks[0]?.thumbnail || "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80",
+        tracks: dailyTracks,
+        mixTracks: dailyTracks,
+        type: "playlist",
+        isPlaylist: true,
+        isAutoGenerated: true,
+      },
+      {
+        id: "auto_viral_2026",
+        title: "Viral Hits 2026",
+        artist: "High Velocity Trending",
+        subtitle: `${viralTracks.length} tracks`,
+        image: viralTracks[0]?.artwork_url || viralTracks[0]?.thumbnail || "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=500&q=80",
+        tracks: viralTracks,
+        mixTracks: viralTracks,
+        type: "playlist",
+        isPlaylist: true,
+        isAutoGenerated: true,
+      },
+      {
+        id: "auto_late_night",
+        title: "Late Night Chill",
+        artist: "Acoustic & Ambient Sounds",
+        subtitle: `${finalChillTracks.length} tracks`,
+        image: finalChillTracks[0]?.artwork_url || finalChillTracks[0]?.thumbnail || "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&q=80",
+        tracks: finalChillTracks,
+        mixTracks: finalChillTracks,
+        type: "playlist",
+        isPlaylist: true,
+        isAutoGenerated: true,
+      },
+      {
+        id: "auto_weekend_party",
+        title: "Weekend Party",
+        artist: "Upbeat Dance & Club Anthems",
+        subtitle: `${finalPartyTracks.length} tracks`,
+        image: finalPartyTracks[0]?.artwork_url || finalPartyTracks[0]?.thumbnail || "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=500&q=80",
+        tracks: finalPartyTracks,
+        mixTracks: finalPartyTracks,
+        type: "playlist",
+        isPlaylist: true,
+        isAutoGenerated: true,
+      },
+    ];
+  }, [appTrending, trendingNowSection, dailyMixSection, jumpBackInSection, freshNewReleasesSection]);
+
+  const autoPlaylistsSection = useMemo(() => {
+    if (autoGeneratedPlaylists.length === 0) return null;
+    return {
+      id: "auto_software_playlists",
+      title: "Made For You",
+      description: "Auto-generated mixes curated by Staytup software",
+      type: "playlists",
+      items: autoGeneratedPlaylists,
+    };
+  }, [autoGeneratedPlaylists]);
+
   // Combined Home / All Feed:
-  // 1. Jump Back In -> 2. Trending on Staytup -> 3. Trending Now -> 4. Daily Mix -> 5. Because You Listen to [Top Artist] -> 6. Collaborations & Recommended for You -> 7. Fresh New Releases -> 8. Friends are Listening To -> 9. Categorical Genres
+  // 1. Jump Back In -> 2. Trending on Staytup -> 3. Auto-Generated Mixes -> 4. Trending Now -> 5. Daily Mix -> 6. Community Playlists -> 7. Because You Listen to [Top Artist] -> 8. Collaborations -> 9. Fresh New Releases -> 10. Friends are Listening To -> 11. Categorical Genres
   const allDisplayedSections = [
     jumpBackInSection,
     trendingOnStaytupSection,
+    autoPlaylistsSection,
     trendingNowSection,
     dailyMixSection,
+    communityPlaylistsSection,
     becauseYouListenSection,
     collaborationsSection,
     freshNewReleasesSection,
@@ -1885,6 +2088,13 @@ export default function HomeScreen({ onNavigate } = {}) {
           );
         })()}
       </Modal>
+
+      {/* Playlist Details Modal for Community & Software Auto Mixes */}
+      <PlaylistModal
+        visible={Boolean(selectedPlaylistModal)}
+        playlist={selectedPlaylistModal}
+        onClose={() => setSelectedPlaylistModal(null)}
+      />
     </View>
   );
 }

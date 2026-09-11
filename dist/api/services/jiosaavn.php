@@ -252,54 +252,8 @@ class JioSaavnService {
             ];
         }
 
-        // Charts (Playlists, NOT songs)
-        if (!empty($data['charts'])) {
-            $items = [];
-            foreach ($data['charts'] as $item) {
-                $img = self::getBestImage($item['image'] ?? '');
-                $items[] = [
-                    'id'        => $item['id'] ?? '',
-                    'title'     => html_entity_decode($item['title'] ?? $item['name'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8'),
-                    'image'     => $img,
-                    'thumbnail' => $img,
-                    'type'      => 'playlist',
-                    'songCount' => (int)($item['song_count'] ?? $item['count'] ?? 0),
-                ];
-            }
-            if (!empty($items)) {
-                $sections[] = [
-                    'id'    => 'top_charts',
-                    'title' => 'Top Charts',
-                    'type'  => 'playlists',
-                    'items' => $items,
-                ];
-            }
-        }
-
-        // Featured & Top playlists
-        $featuredPl = $data['featured_playlists'] ?? $data['top_playlists'] ?? [];
-        if (!empty($featuredPl)) {
-            $items = [];
-            foreach ($featuredPl as $item) {
-                $img = self::getBestImage($item['image'] ?? '');
-                $items[] = [
-                    'id'        => $item['id'] ?? '',
-                    'title'     => html_entity_decode($item['title'] ?? $item['name'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8'),
-                    'image'     => $img,
-                    'thumbnail' => $img,
-                    'type'      => 'playlist',
-                    'songCount' => (int)($item['song_count'] ?? $item['count'] ?? 0),
-                ];
-            }
-            if (!empty($items)) {
-                $sections[] = [
-                    'id'    => 'featured_playlists',
-                    'title' => 'Top Playlists',
-                    'type'  => 'playlists',
-                    'items' => $items,
-                ];
-            }
-        }
+        // Note: Top Charts and Top Playlists from JioSaavn are removed per user request.
+        // App now uses user-uploaded playlists & software auto-curated mixes directly.
 
         // Trending artists
         if (!empty($data['trending'])) {

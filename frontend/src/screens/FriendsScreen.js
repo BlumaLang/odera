@@ -25,6 +25,7 @@ import {
   getUserStreamCount,
   getLikedSongs,
   subscribePublicParties,
+  addTracksToCollabPlaylist as addTracksToCollab,
 } from "../services/firebase";
 import { triggerLocalReactionBurst } from "../components/LiveReactionOverlay";
 import PlaylistModal from "../components/PlaylistModal";
@@ -1451,35 +1452,6 @@ export default function FriendsScreen({ onNavigate }) {
               ) : activeTab === "friends" ? (
                 /* ── FRIENDS TAB ── */
                 <View style={styles.sectionBlock}>
-                  {/* Listening Party Spotlight Card */}
-                  <View style={styles.partyBannerCard}>
-                    <View style={styles.partyBannerLeft}>
-                      <View style={styles.partyBannerIcon}>
-                        <Ionicons name="headset" size={20} color="#1DB954" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                          <Text style={styles.partyBannerTitle}>Listening Party</Text>
-                          <View style={styles.partyLiveBadge}>
-                            <Text style={styles.partyLiveBadgeText}>ZERO CHAT</Text>
-                          </View>
-                        </View>
-                        <Text style={styles.partyBannerSub}>
-                          {publicParties.length > 0
-                            ? `${publicParties.length} active room${publicParties.length > 1 ? "s" : ""} • Synchronized playback`
-                            : "Sync playback in real-time with friends"}
-                        </Text>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.partyBannerActionBtn}
-                      onPress={handleCreateParty}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name="add" size={16} color="#000000" style={{ marginRight: 4 }} />
-                      <Text style={styles.partyBannerActionText}>Start Room</Text>
-                    </TouchableOpacity>
-                  </View>
 
                   {/* Active Public Rooms Horizontal Carousel */}
                   {publicParties.length > 0 && (

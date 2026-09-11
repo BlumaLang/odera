@@ -477,17 +477,17 @@ export const api = {
       const tracks = (data.tracks || data.results || []).map(decodeTrackEntities);
       const artists = (data.artists || []).map((a) => ({
         ...a,
-        name: decodeHtml(a.name || "Artist"),
+        name: decodeHTMLEntities(a.name || "Artist"),
       }));
       const albums = (data.albums || []).map((al) => ({
         ...al,
-        title: decodeHtml(al.title || al.name || "Album"),
-        artist: decodeHtml(al.artist || ""),
+        title: decodeHTMLEntities(al.title || al.name || "Album"),
+        artist: decodeHTMLEntities(al.artist || ""),
       }));
       const playlists = (data.playlists || []).map((pl) => ({
         ...pl,
-        title: decodeHtml(pl.title || pl.name || "Playlist"),
-        description: decodeHtml(pl.description || ""),
+        title: decodeHTMLEntities(pl.title || pl.name || "Playlist"),
+        description: decodeHTMLEntities(pl.description || ""),
       }));
 
       return {

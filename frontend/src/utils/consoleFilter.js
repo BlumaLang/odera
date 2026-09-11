@@ -49,6 +49,22 @@ if(typeof console!=='undefined'){
   console.log  =function(){if(!bad(arguments))L.apply(console,arguments);};
   console.info =function(){if(!bad(arguments))I.apply(console,arguments);};
   try{
+    window.onerror = function(msg, url, line, col, error) {
+      try {
+        var m = (msg || '') + ' ' + (url || '') + ' ' + (error ? (error.stack || error.message) : '');
+        if (m.indexOf('googleads')!==-1||m.indexOf('doubleclick')!==-1||
+            m.indexOf('CORS')!==-1||m.indexOf('ERR_FAILED')!==-1||
+            m.indexOf('net::ERR')!==-1||m.indexOf('ytimg')!==-1||
+            m.indexOf('404')!==-1||m.indexOf('Not Found')!==-1||
+            m.indexOf('postMessage')!==-1||m.indexOf('DOMWindow')!==-1||
+            m.indexOf('target origin')!==-1||m.indexOf('www-widgetapi')!==-1||
+            m.indexOf('www.youtube.com')!==-1||m.indexOf('startTime')!==-1||
+            m.indexOf('reportAllChanges')!==-1||m.indexOf('beforeinstallprompt')!==-1){
+          return true; // suppresses uncaught exception from DevTools console
+        }
+      } catch (_) {}
+      return false;
+    };
     window.addEventListener('error',function(e){
       var msg=(e&&e.message)||'';
       var src=(e&&e.filename)||'';
@@ -65,6 +81,22 @@ if(typeof console!=='undefined'){
         e.preventDefault();return false;
       }
     },true);
+    window.onunhandledrejection = function(e) {
+      try {
+        var r = e && e.reason;
+        var m = r && typeof r === 'object' ? (r.message || String(r)) : String(r || '');
+        if (m.indexOf('googleads')!==-1||m.indexOf('doubleclick')!==-1||m.indexOf('CORS')!==-1||
+            m.indexOf('ERR_FAILED')!==-1||m.indexOf('fetch')!==-1||m.indexOf('abort')!==-1||
+            m.indexOf('404')!==-1||m.indexOf('Not Found')!==-1||m.indexOf('net::ERR')!==-1||
+            m.indexOf('www-widgetapi')!==-1||m.indexOf('postMessage')!==-1||
+            m.indexOf('target origin')!==-1||m.indexOf('www.youtube.com')!==-1||
+            m.indexOf('startTime')!==-1||m.indexOf('reportAllChanges')!==-1){
+          if (e.preventDefault) e.preventDefault();
+          return true;
+        }
+      } catch (_) {}
+      return false;
+    };
     window.addEventListener('unhandledrejection',function(e){
       var r=e&&e.reason;
       var m=r&&typeof r==='object'?(r.message||String(r)):String(r||'');

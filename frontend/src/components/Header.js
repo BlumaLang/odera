@@ -38,9 +38,39 @@ export default function Header({
                 </Text>
               </TouchableOpacity>
             ))}
+
+            <TouchableOpacity
+              style={styles.partyPillBtn}
+              onPress={() => {
+                if (typeof window !== "undefined") {
+                  window.dispatchEvent(new CustomEvent("staytup-create-party"));
+                }
+              }}
+              activeOpacity={0.8}
+              accessibilityLabel="Listening Party"
+            >
+              <Ionicons name="headset" size={13} color="#1DB954" style={{ marginRight: 4 }} />
+              <Text style={styles.partyPillText}>Party</Text>
+              <View style={styles.partyPillLiveDot} />
+            </TouchableOpacity>
           </View>
 
           <View style={styles.topRightGroup}>
+            <TouchableOpacity
+              style={styles.partyCircleBtn}
+              onPress={() => {
+                if (typeof window !== "undefined") {
+                  window.dispatchEvent(new CustomEvent("staytup-create-party"));
+                }
+              }}
+              activeOpacity={0.75}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Listening Party"
+            >
+              <Ionicons name="headset" size={18} color="#1DB954" />
+              <View style={styles.partyCircleLiveDot} />
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.profileAvatar, { backgroundColor: avatarBg }]}
               onPress={() => openProfile && openProfile()}
@@ -126,6 +156,53 @@ const styles = StyleSheet.create({
   pillTextActive: {
     fontFamily: fonts.bold,
     color: "#000000",
+  },
+  partyPillBtn: {
+    height: 32,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: "rgba(29, 185, 84, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.3)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  partyPillText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12.5,
+    color: "#FFFFFF",
+    marginRight: 4,
+  },
+  partyPillLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#1DB954",
+  },
+  partyCircleBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  partyCircleLiveDot: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: "#1DB954",
+    borderWidth: 1.5,
+    borderColor: "#000000",
   },
   topRightGroup: {
     flexDirection: "row",

@@ -39,6 +39,7 @@ function formatRelativeTime(timestamp) {
 
 export default function ActiveDevicesModal({ visible, onClose }) {
   const { userProfile } = useUser() || {};
+  const { currentTrack, isPlaying } = useAudio() || {};
   const responsive = (typeof useResponsive === "function" ? useResponsive() : null) || {};
   const isDesktop = responsive.isDesktop ?? (typeof window !== "undefined" ? window.innerWidth >= 1024 : false);
   const isTablet = responsive.isTablet ?? (typeof window !== "undefined" ? (window.innerWidth >= 768 && window.innerWidth < 1024) : false);

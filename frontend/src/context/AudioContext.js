@@ -953,6 +953,8 @@ const AudioProvider = ({ children }) => {
   const fetchUserBlendTracks = async (uid) => {
     if (!uid) return [];
     try {
+      const { ref: dbRef, get, child } = await import("firebase/database");
+      const { db } = await import("../services/firebase");
       const userCollabsSnap = await get(child(dbRef(db), `users/${uid}/collab_playlists`));
       if (!userCollabsSnap.exists()) return [];
       const collabs = userCollabsSnap.val() || {};
@@ -978,6 +980,8 @@ const AudioProvider = ({ children }) => {
   const fetchUserLibraryTracks = async (uid) => {
     if (!uid) return [];
     try {
+      const { ref: dbRef, get, child } = await import("firebase/database");
+      const { db } = await import("../services/firebase");
       const [plsSnap, likedSnap] = await Promise.allSettled([
         get(child(dbRef(db), `users/${uid}/playlists`)),
         get(child(dbRef(db), `users/${uid}/likedSongs`)),

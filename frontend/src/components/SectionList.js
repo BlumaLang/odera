@@ -29,6 +29,16 @@ export default function SectionList({ section, sectionIndex = 0 }) {
   }
 
   const handleSongPress = (track, index) => {
+    if (section?.onItemPress) {
+      section.onItemPress(track, index);
+      return;
+    }
+    if (track?.isPlaylist || track?.type === "playlist") {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("staytup-open-playlist-modal", { detail: track }));
+      }
+      return;
+    }
     if (track?.mixTracks && Array.isArray(track.mixTracks) && track.mixTracks.length > 0) {
       playTrack(track.mixTracks[0], track.mixTracks, 0);
       return;

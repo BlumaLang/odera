@@ -378,7 +378,7 @@ export const UserProvider = ({ children }) => {
               }
 
               if (!currentProfile.avatarColor || isOldGreen) {
-                currentProfile.avatarColor = getDeterministicAvatarColor(firebaseUser.uid || cleanName);
+                currentProfile.avatarColor = getDeterministicAvatarColor(firebaseUser.uid || currentProfile.name || "user");
                 needsSave = true;
               }
 

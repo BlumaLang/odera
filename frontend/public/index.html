@@ -172,6 +172,15 @@
           console.log = function() { if (!shouldIgnore(arguments)) _l.apply(console, arguments); };
           console.debug = function() { if (!shouldIgnore(arguments)) _d.apply(console, arguments); };
         }
+        window.onerror = function(msg, url, line, col, error) {
+          try {
+            var m = (msg || '') + ' ' + (url || '') + ' ' + (error ? (error.stack || error.message) : '');
+            if (IGNORE.some(function(term) { return m.indexOf(term) !== -1; })) {
+              return true; // suppresses uncaught exception from DevTools console
+            }
+          } catch (_) {}
+          return false;
+        };
         window.addEventListener('error', function(e) {
           var m = ((e && e.message) || '') + ' ' + ((e && e.filename) || '') + ' ' + ((e && e.error && e.error.stack) || '');
           if (IGNORE.some(function(term) { return m.indexOf(term) !== -1; })) {
@@ -180,6 +189,17 @@
             return false;
           }
         }, true);
+        window.onunhandledrejection = function(e) {
+          try {
+            var r = e && e.reason;
+            var m = r && typeof r === 'object' ? ((r.message || '') + ' ' + (r.stack || String(r))) : String(r || '');
+            if (IGNORE.some(function(term) { return m.indexOf(term) !== -1; })) {
+              if (e.preventDefault) e.preventDefault();
+              return true;
+            }
+          } catch (_) {}
+          return false;
+        };
         window.addEventListener('unhandledrejection', function(e) {
           var r = (e && e.reason) || '';
           var m = r && typeof r === 'object' ? ((r.message || '') + ' ' + (r.stack || String(r))) : String(r || '');
