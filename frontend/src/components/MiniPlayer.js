@@ -26,6 +26,7 @@ export default function MiniPlayer() {
     togglePlayPause,
     playNext,
     setFullPlayerVisible,
+    activePartyId,
   } = useAudio();
   const { isSongLiked, toggleLikeSong } = useUser();
 
@@ -37,7 +38,8 @@ export default function MiniPlayer() {
     setShowLikeConfetti(false);
   }, [currentTrack?.videoId, currentTrack?.video_id]);
 
-  if (!currentTrack) return null;
+  // Don't display or start miniplayer when inside a listening party room
+  if (!currentTrack || activePartyId) return null;
 
   const cleanTitle = (title) => {
     if (!title) return "";

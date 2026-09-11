@@ -391,7 +391,14 @@ function AppContent() {
   const [showPartyModal, setShowPartyModal] = useState(false);
   const [showCreatePartyModal, setShowCreatePartyModal] = useState(false);
 
-  const { playTrack } = useAudio();
+  const { playTrack, setActiveParty } = useAudio();
+
+  // Keep AudioContext aware of active listening party
+  useEffect(() => {
+    if (setActiveParty) {
+      setActiveParty(showPartyModal && activePartyId ? activePartyId : null);
+    }
+  }, [showPartyModal, activePartyId, setActiveParty]);
 
   // Listen for global share and party requests
   useEffect(() => {

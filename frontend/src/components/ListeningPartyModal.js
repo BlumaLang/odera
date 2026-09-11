@@ -43,7 +43,9 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
     durationMillis,
     playTrack,
     togglePlayPause,
+    pauseTrack,
     seekTo,
+    setActiveParty,
   } = useAudio() || {};
 
   const myUid = currentUser?.uid || userProfile?.uid;
@@ -51,6 +53,8 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
 
   const [party, setParty] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Suggest song sheet
   const [isSuggestOpen, setIsSuggestOpen] = useState(false);
@@ -60,6 +64,15 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
 
   // Reaction burst tracker to avoid duplicate triggers
   const lastReactionIdRef = useRef(null);
+  const partyRef = useRef(null);
+  partyRef.current = party;
+
+  // Keep AudioContext aware of active listening party
+  useEffect(() => {
+    if (visible && partyId && setActiveParty) {
+      setActiveParty(partyId);
+    }
+  }, [visible, partyId, setActiveParty]);
 
   // ─── Realtime Party Subscription ──────────────────────────────────────────
   useEffect(() => {
@@ -92,51 +105,117 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
     };
   }, [partyId, visible, myUid]);
 
-  // ─── Listener Clock-Drift Sync Engine ─────────────────────────────────────
+  // ─── Track / Queue Sync Engine ───────────────────────────────────────────
   const isHost = party?.hostUid === myUid;
 
+  // 1. Host or Listener: Synchronize audio playback with party room track
   useEffect(() => {
-    if (!party || isHost || !party.playbackState) return;
+    if (!party || !visible) return;
+
+    // Track changed or starting
+    if (party.currentTrack) {
+      const curId = currentTrack?.videoId || currentTrack?.video_id || currentTrack?.id;
+      const partyTrackId = party.currentTrack.videoId || party.currentTrack.video_id || party.currentTrack.id;
+      if (!curId || curId !== partyTrackId) {
+        // Switch audio to the party room track immediately
+        playTrack({ ...party.currentTrack });
+      }
+    } else {
+      // If room has no current track, pause playback
+      if (isPlaying && pauseTrack) {
+        pauseTrack();
+      }
+    }
+  }, [party?.currentTrack, visible]);
+
+  // 2. Listener Clock-Drift and Play/Pause State Sync
+  useEffect(() => {
+    if (!party || isHost || !party.playbackState || !visible) return;
 
     const { isPlaying: remoteIsPlaying, positionMillis: remotePos, timestamp } = party.playbackState;
     const now = Date.now();
     const elapsed = Math.max(0, now - (timestamp || now));
     const targetPos = remoteIsPlaying ? remotePos + elapsed : remotePos;
 
-    // 1. Sync track
-    if (party.currentTrack && (!currentTrack || (currentTrack.videoId || currentTrack.id) !== (party.currentTrack.videoId || party.currentTrack.id))) {
-      playTrack({ ...party.currentTrack });
-    }
-
-    // 2. Sync play/pause state
+    // Sync play/pause state
     if (remoteIsPlaying !== isPlaying) {
       togglePlayPause();
     }
 
-    // 3. Sync seek position if drift > 400ms
+    // Sync seek position if drift > 400ms
     if (positionMillis !== undefined && Math.abs(positionMillis - targetPos) > 400) {
       seekTo(targetPos);
     }
-  }, [party?.playbackState, party?.currentTrack, isHost]);
+  }, [party?.playbackState, isHost, visible]);
+
+  // 3. When party track ends, advance room queue if songs exist, otherwise pause
+  useEffect(() => {
+    const handlePartyTrackEnded = async () => {
+      const curParty = partyRef.current;
+      if (!curParty || !partyId) return;
+
+      const qObj = curParty.queue || {};
+      const qItems = Object.keys(qObj)
+        .map((k) => qObj[k])
+        .sort((a, b) => (b.voteCount || 0) - (a.voteCount || 0) || (a.suggestedAt || 0) - (b.suggestedAt || 0));
+
+      if (qItems.length > 0) {
+        const nextItem = qItems[0];
+        // Host advances queue in RTDB so all room members transition together
+        if (curParty.hostUid === myUid) {
+          await playPartyQueueSong(partyId, nextItem.id);
+        }
+      } else {
+        // No songs in queue: pause audio, do NOT run background/random songs
+        if (pauseTrack) {
+          pauseTrack();
+        } else if (isPlaying) {
+          togglePlayPause();
+        }
+        if (curParty.hostUid === myUid) {
+          await updatePartyPlayback(partyId, {
+            isPlaying: false,
+            positionMillis: 0,
+            hostUid: myUid,
+          });
+        }
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("staytup-party-track-ended", handlePartyTrackEnded);
+      return () => {
+        window.removeEventListener("staytup-party-track-ended", handlePartyTrackEnded);
+      };
+    }
+  }, [partyId, myUid, pauseTrack, isPlaying, togglePlayPause]);
 
   // ─── Actions ─────────────────────────────────────────────────────────────
   const handleLeave = async () => {
     if (partyId && myUid) {
       await leaveListeningParty(partyId, myUid);
     }
+    if (setActiveParty) {
+      setActiveParty(null);
+    }
     if (onClose) onClose();
   };
 
-  const handleDeleteParty = async () => {
+  const handleConfirmDelete = async () => {
     if (!partyId || !isHost) return;
-    const confirmDelete =
-      typeof window !== "undefined" && window.confirm
-        ? window.confirm("Are you sure you want to end and delete this listening party?")
-        : true;
-    if (!confirmDelete) return;
-
-    await deleteListeningParty(partyId);
-    if (onClose) onClose();
+    try {
+      setIsDeleting(true);
+      await deleteListeningParty(partyId);
+      setShowDeleteConfirm(false);
+      if (setActiveParty) {
+        setActiveParty(null);
+      }
+      if (onClose) onClose();
+    } catch (err) {
+      console.warn("deleteListeningParty error:", err);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleHostPlayPause = async () => {
@@ -261,11 +340,11 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
               {isHost && (
                 <TouchableOpacity
                   style={styles.deleteBtn}
-                  onPress={handleDeleteParty}
+                  onPress={() => setShowDeleteConfirm(true)}
                   activeOpacity={0.8}
                   accessibilityLabel="End and delete party"
                 >
-                  <Ionicons name="trash-outline" size={17} color="#FF4D4D" />
+                  <Ionicons name="close" size={18} color="#FF4D4D" />
                 </TouchableOpacity>
               )}
               <TouchableOpacity style={styles.shareBtn} onPress={handleShareRoom} activeOpacity={0.8}>
@@ -505,6 +584,65 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
               </ScrollView>
             </View>
           )}
+
+          {/* Custom Delete Confirmation Modal */}
+          <Modal
+            visible={showDeleteConfirm}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => !isDeleting && setShowDeleteConfirm(false)}
+          >
+            <TouchableOpacity
+              style={styles.deleteModalOverlay}
+              activeOpacity={1}
+              onPress={() => !isDeleting && setShowDeleteConfirm(false)}
+            >
+              <View
+                style={styles.deleteModalCard}
+                onStartShouldSetResponder={() => true}
+              >
+                <View style={styles.deleteIconCircle}>
+                  <Ionicons name="close-circle-outline" size={32} color="#FF4D4D" />
+                </View>
+
+                <Text style={styles.deleteModalTitle}>
+                  End Listening Party?
+                </Text>
+
+                <Text style={styles.deleteModalSub}>
+                  Are you sure you want to end and delete{" "}
+                  <Text style={{ color: "#FFFFFF", fontFamily: fonts.bold }}>
+                    "{party?.name || "Listening Party"}"
+                  </Text>
+                  ? All active listeners will be disconnected from this room.
+                </Text>
+
+                <View style={styles.deleteModalButtons}>
+                  <TouchableOpacity
+                    style={styles.deleteCancelBtn}
+                    onPress={() => setShowDeleteConfirm(false)}
+                    disabled={isDeleting}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.deleteCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.deleteConfirmBtn}
+                    onPress={handleConfirmDelete}
+                    disabled={isDeleting}
+                    activeOpacity={0.8}
+                  >
+                    {isDeleting ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.deleteConfirmText}>End Party</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </TouchableOpacity>
+          </Modal>
         </View>
       </View>
     </Modal>
@@ -514,18 +652,15 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.85)",
-    justifyContent: "flex-end",
+    width: "100%",
+    height: "100%",
+    backgroundColor: "#000000",
   },
   container: {
+    flex: 1,
     width: "100%",
-    height: "92%",
-    maxHeight: 760,
-    backgroundColor: "#101012",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.08)",
+    height: "100%",
+    backgroundColor: "#000000",
     overflow: "hidden",
   },
   header: {
@@ -533,9 +668,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingTop: Platform.OS === "ios" ? 54 : (Platform.OS === "android" ? 36 : 18),
+    paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(255, 255, 255, 0.06)",
+    backgroundColor: "#000000",
   },
   leaveBtn: {
     width: 36,
@@ -993,5 +1130,96 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#888888",
     marginTop: 2,
+  },
+  deleteModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.8)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  deleteModalCard: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: "#16161A",
+    borderRadius: 24,
+    padding: 24,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  deleteIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "rgba(255, 77, 77, 0.12)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255, 77, 77, 0.28)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  deleteModalTitle: {
+    fontFamily: fonts.bold || "System",
+    fontSize: 18,
+    color: "#FFFFFF",
+    textAlign: "center",
+    marginBottom: 10,
+    letterSpacing: -0.3,
+  },
+  deleteModalSub: {
+    fontFamily: fonts.regular || "System",
+    fontSize: 13.5,
+    color: colors.textSecondary || "#A7A7A7",
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  deleteModalButtons: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    width: "100%",
+  },
+  deleteCancelBtn: {
+    flex: 1,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  deleteCancelText: {
+    fontFamily: fonts.semiBold || "System",
+    fontSize: 14,
+    color: "#FFFFFF",
+  },
+  deleteConfirmBtn: {
+    flex: 1,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#FF453A",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#FF453A",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  deleteConfirmText: {
+    fontFamily: fonts.bold || "System",
+    fontSize: 14,
+    color: "#FFFFFF",
   },
 });

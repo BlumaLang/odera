@@ -124,6 +124,16 @@ const AudioProvider = ({ children }) => {
   const sleepEndOnTrackRef = useRef(false);
   const sleepTimerEndAtRef = useRef(null);
 
+  // Active Listening Party Room State (party playback isolation)
+  const [activePartyId, setActivePartyId] = useState(null);
+  const activePartyRef = useRef(null);
+
+  const setActiveParty = useCallback((partyOrId) => {
+    const id = typeof partyOrId === "object" ? partyOrId?.id : partyOrId;
+    setActivePartyId(id || null);
+    activePartyRef.current = partyOrId || null;
+  }, []);
+
   // Native player reference (expo-av)
   const soundRef = useRef(null);
   // Web player reference (HTML5 Audio)
@@ -2045,6 +2055,35 @@ const AudioProvider = ({ children }) => {
   };
   togglePlayPauseRef.current = togglePlayPause;
 
+  // Explicitly Pause Playback
+  const pauseTrack = async () => {
+    const uid = auth.currentUser?.uid || "guest";
+    if (Platform.OS === "web") {
+      const audio = webAudioRef.current;
+      if (audio) {
+        audio.pause();
+      }
+      setIsPlaying(false);
+      isPlayingRef.current = false;
+      updateMediaSessionPlaybackState(false);
+      const dur = authoritativeDurationRef.current || durationMillisRef.current || 0;
+      if (dur > 0) {
+        updateMediaSessionPosition(positionMillisRef.current, dur, true);
+      }
+      updatePlaybackSession(uid, { deviceId: myDeviceId, deviceName: myDeviceName, isPlaying: false });
+      return;
+    }
+    if (soundRef.current) {
+      try {
+        await soundRef.current.pauseAsync();
+        setIsPlaying(false);
+        isPlayingRef.current = false;
+        updateMediaSessionPlaybackState(false);
+        updatePlaybackSession(uid, { deviceId: myDeviceId, deviceName: myDeviceName, isPlaying: false });
+      } catch (_) {}
+    }
+  };
+
   // Seek to position
   const seekTo = async (posMillis) => {
     const dur = authoritativeDurationRef.current || durationMillisRef.current || 0;
@@ -2079,6 +2118,16 @@ const AudioProvider = ({ children }) => {
   const playNext = () => {
     if (advancingRef.current) return;
     advancingRef.current = true;
+
+    // If currently inside an active listening party, party queue takes precedence.
+    // Do NOT play local queue or trigger autoplay.
+    if (activePartyRef.current || activePartyId) {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("staytup-party-track-ended"));
+      }
+      advancingRef.current = false;
+      return;
+    }
 
     const q = queueRef.current;
     if (!q || q.length === 0) {
@@ -2299,6 +2348,7 @@ const AudioProvider = ({ children }) => {
       setVolume,
       playTrack,
       togglePlayPause,
+      pauseTrack,
       seekTo,
       playNext,
       playPrevious,
@@ -2325,6 +2375,8 @@ const AudioProvider = ({ children }) => {
       setIsQueueOpen,
       queueNotice,
       showQueueNotice,
+      activePartyId,
+      setActiveParty,
     }),
     [
       currentTrack,
@@ -2344,6 +2396,8 @@ const AudioProvider = ({ children }) => {
       sleepEndOnTrack,
       isQueueOpen,
       queueNotice,
+      activePartyId,
+      setActiveParty,
     ]
   );
 
@@ -2410,6 +2464,7 @@ const defaultAudioContext = {
   setVolume: () => {},
   playTrack: () => {},
   togglePlayPause: () => {},
+  pauseTrack: () => {},
   seekTo: () => {},
   playNext: () => {},
   playPrevious: () => {},
@@ -2439,6 +2494,8 @@ const defaultAudioContext = {
   setIsDeviceModalOpen: () => {},
   openDeviceModal: () => {},
   closeDeviceModal: () => {},
+  activePartyId: null,
+  setActiveParty: () => {},
 };
 
 export const useAudio = () => {

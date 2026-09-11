@@ -38,21 +38,6 @@ export default function Header({
                 </Text>
               </TouchableOpacity>
             ))}
-
-            <TouchableOpacity
-              style={styles.partyPillBtn}
-              onPress={() => {
-                if (typeof window !== "undefined") {
-                  window.dispatchEvent(new CustomEvent("staytup-create-party"));
-                }
-              }}
-              activeOpacity={0.8}
-              accessibilityLabel="Listening Party"
-            >
-              <Ionicons name="headset" size={13} color="#1DB954" style={{ marginRight: 4 }} />
-              <Text style={styles.partyPillText}>Party</Text>
-              <View style={styles.partyPillLiveDot} />
-            </TouchableOpacity>
           </View>
 
           <View style={styles.topRightGroup}>
