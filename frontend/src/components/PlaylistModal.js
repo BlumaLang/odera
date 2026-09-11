@@ -388,6 +388,16 @@ export default function PlaylistModal({
   const isBlend = Boolean(playlistData?.isBlend || playlistData?.type === "blend" || String(playlistData?.name || "").startsWith("Blend:") || /^Blend\s*#\d+$/.test(String(playlistData?.name || "")));
   const collaboratorsObj = playlistData?.collaborators || {};
   const collaboratorList = Object.values(collaboratorsObj);
+  const currentUid = currentUser?.uid || currentUser?.id;
+  const isOwner = !playlistData?.ownerUid || playlistData?.ownerUid === currentUid;
+  const isCollabMember = Boolean(collaboratorsObj[currentUid]);
+  const isPublicPlaylist = Boolean(
+    playlistData?.isPublic ||
+    playlistData?.is_public ||
+    playlistData?.type === "public" ||
+    (playlistData?.ownerUid && !isOwner && !isCollabMember)
+  );
+  const isListenOnly = Boolean(isPublicPlaylist && !isOwner && !isCollabMember);
   const tracks = playlistData?.tracks || [];
   const trackCount = tracks.length || playlistData?.track_count || 0;
   const totalDurationStr = useMemo(() => {
@@ -1026,9 +1036,9 @@ export default function PlaylistModal({
                       ]}
                     >
                       {!isBlend && (
-                        <View style={[styles.playlistBadge, (isDesktop || isTablet) && styles.playlistBadgeDesktop]}>
-                          <Text style={[styles.playlistBadgeText, (isDesktop || isTablet) && styles.playlistBadgeTextDesktop]}>
-                            {isCollab ? "COLLABORATIVE PLAYLIST" : "PLAYLIST"}
+                        <View style={[styles.playlistBadge, (isDesktop || isTablet) && styles.playlistBadgeDesktop, isListenOnly && { borderColor: "rgba(59, 130, 246, 0.5)", backgroundColor: "rgba(59, 130, 246, 0.15)" }]}>
+                          <Text style={[styles.playlistBadgeText, (isDesktop || isTablet) && styles.playlistBadgeTextDesktop, isListenOnly && { color: "#60A5FA" }]}>
+                            {isListenOnly ? "PUBLIC PLAYLIST • LISTEN ONLY" : isCollab ? "COLLABORATIVE PLAYLIST" : "PLAYLIST"}
                           </Text>
                         </View>
                       )}
@@ -1177,33 +1187,37 @@ export default function PlaylistModal({
                   </TouchableOpacity>
 
                   {/* Collaborate Icon Button */}
-                  <TouchableOpacity
-                    style={[
-                      styles.collabActionButton,
-                      isCollab && styles.collabActionButtonActive,
-                    ]}
-                    onPress={openCollabModal}
-                    activeOpacity={0.8}
-                    accessibilityRole="button"
-                    accessibilityLabel={isBlend ? "Blend Participants" : "Collaborate"}
-                  >
-                    <Ionicons
-                      name={isBlend ? "flash-outline" : "people-outline"}
-                      size={20}
-                      color={isCollab ? colors.primary : colors.text}
-                    />
-                  </TouchableOpacity>
+                  {!isListenOnly && (
+                    <TouchableOpacity
+                      style={[
+                        styles.collabActionButton,
+                        isCollab && styles.collabActionButtonActive,
+                      ]}
+                      onPress={openCollabModal}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                      accessibilityLabel={isBlend ? "Blend Participants" : "Collaborate"}
+                    >
+                      <Ionicons
+                        name={isBlend ? "flash-outline" : "people-outline"}
+                        size={20}
+                        color={isCollab ? colors.primary : colors.text}
+                      />
+                    </TouchableOpacity>
+                  )}
 
                   {/* Import Songs from Link Button */}
-                  <TouchableOpacity
-                    style={styles.importActionButton}
-                    onPress={openImportModal}
-                    activeOpacity={0.8}
-                    accessibilityRole="button"
-                    accessibilityLabel="Import from link"
-                  >
-                    <Ionicons name="link-outline" size={20} color={colors.text} />
-                  </TouchableOpacity>
+                  {!isListenOnly && (
+                    <TouchableOpacity
+                      style={styles.importActionButton}
+                      onPress={openImportModal}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Import from link"
+                    >
+                      <Ionicons name="link-outline" size={20} color={colors.text} />
+                    </TouchableOpacity>
+                  )}
 
                   {/* More Options 3-Dot Button */}
                   <TouchableOpacity
@@ -1318,7 +1332,7 @@ export default function PlaylistModal({
                     />
                   </View>
 
-                  {!isBulkMode && (
+                  {!isBulkMode && !isListenOnly && (
                     <TouchableOpacity
                       style={styles.removeTrackBtn}
                       onPress={() => handleRemoveTrack(vid)}

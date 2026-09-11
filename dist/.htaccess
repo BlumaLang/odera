@@ -1,0 +1,53 @@
+<IfModule mod_headers.c>
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE, PATCH"
+    Header always set Access-Control-Allow-Headers "Authorization, Content-Type, Range, X-User-Id, Accept, Origin, User-Agent"
+    Header always set Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges"
+    Header always set Cross-Origin-Opener-Policy "same-origin-allow-popups"
+    Header always set X-Content-Type-Options "nosniff"
+</IfModule>
+
+# Explicitly grant public access to Web App Manifest and PWA assets
+<FilesMatch "^(manifest\.json|manifest\.webmanifest|sw\.js)$">
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Allow from all
+    </IfModule>
+</FilesMatch>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # If stream.php or existing file/dir, serve directly
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Otherwise forward to index.html for SPA
+    RewriteRule ^ index.html [L]
+</IfModule>
+
+# PWA Cache Controls
+<IfModule mod_headers.c>
+    # Never cache service worker or index.html to guarantee instantaneous PWA updates
+    <FilesMatch "^(index\.html|sw\.js|service-worker\.js)$">
+        Header set Cache-Control "no-cache, no-store, must-revalidate"
+        Header set Pragma "no-cache"
+        Header set Expires 0
+    </FilesMatch>
+
+    # Correct MIME type and non-stale caching for Web App Manifest
+    <FilesMatch "\.(webmanifest|manifest\.json)$">
+        Header set Content-Type "application/manifest+json; charset=utf-8"
+        Header set Cache-Control "no-cache, must-revalidate"
+    </FilesMatch>
+
+    # Cache hashed build assets for performance
+    <FilesMatch "\.(js|css|woff|woff2|ttf|otf|eot|png|jpg|jpeg|gif|svg|webp|ico)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+</IfModule>

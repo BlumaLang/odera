@@ -1,5 +1,5 @@
 // Staytup Service Worker for PWA
-const CACHE_NAME = 'staytup-pwa-v36';
+const CACHE_NAME = 'staytup-pwa-v37';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -58,21 +58,34 @@ self.addEventListener('fetch', (event) => {
     return; // Pass through to server directly
   }
 
-  // Handle SPA navigation requests (e.g. /, /home, /search, /friends, /library)
-  if (event.request.mode === 'navigate') {
+  // Detect HTML / SPA navigation requests (e.g. /, /home, /search, /friends, /library)
+  const isNav =
+    event.request.mode === 'navigate' ||
+    event.request.destination === 'document' ||
+    (event.request.headers.get('accept') && event.request.headers.get('accept').includes('text/html'));
+
+  if (isNav) {
     event.respondWith(
       (async () => {
         try {
-          // Fetch /index.html from network (SPA app shell)
-          const networkRes = await fetch('/index.html');
+          const networkRes = await fetch(event.request);
           if (networkRes && networkRes.status === 200) {
             const cache = await caches.open(CACHE_NAME);
             cache.put('/index.html', networkRes.clone()).catch(() => {});
             return networkRes;
           }
         } catch (_) {
-          // Network failed or offline - fall back to cache
+          // Network failed - try index.html shell
         }
+
+        try {
+          const appShell = await fetch('/index.html');
+          if (appShell && appShell.status === 200) {
+            const cache = await caches.open(CACHE_NAME);
+            cache.put('/index.html', appShell.clone()).catch(() => {});
+            return appShell;
+          }
+        } catch (_) {}
 
         try {
           const cached = (await caches.match('/index.html')) || (await caches.match('/'));
@@ -137,7 +150,7 @@ self.addEventListener('fetch', (event) => {
           const cache = await caches.open(CACHE_NAME);
           cache.put(event.request, networkRes.clone()).catch(() => {});
         }
-        return networkRes;
+        return networkRes || new Response('', { status: 404, statusText: 'Not Found' });
       } catch (err) {
         return new Response('', { status: 404, statusText: 'Not Found' });
       }

@@ -1,6 +1,6 @@
-# Staytup - Real-Time Music Streaming & Social Listening Platform
+# Staytup — Progressive Web App (PWA) & Hybrid Mobile Music Platform
 
-[![Staytup](https://img.shields.io/badge/Staytup-PWA%20v2.8.5-1DB954?style=for-the-badge&logo=music)](https://staytup.odireca.com)
+[![Staytup](https://img.shields.io/badge/Staytup-PWA%20v2.8.6-1DB954?style=for-the-badge&logo=music)](https://staytup.odireca.com)
 [![React Native](https://img.shields.io/badge/React_Native-Expo%20SDK%2057-61DAFB?style=for-the-badge&logo=react)](https://reactnative.dev)
 [![PHP](https://img.shields.io/badge/PHP-8.x%20Backend-777BB4?style=for-the-badge&logo=php)](https://php.net)
 [![Firebase](https://img.shields.io/badge/Firebase-Realtime%20Database-FFCA28?style=for-the-badge&logo=firebase)](https://firebase.google.com)

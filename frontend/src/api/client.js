@@ -568,6 +568,15 @@ export const api = {
     }
   },
 
+  getPublicPlaylists: async () => {
+    try {
+      const data = await backendFetch("playlists/public");
+      return Array.isArray(data) ? data : (data?.playlists || []);
+    } catch (_) {
+      return [];
+    }
+  },
+
   // ─── Lyrics (via PHP backend → lrclib.net) ──────────────────────────────
   getLyrics: async (title, artist = "", _videoId = "") => {
     if (!title || !title.trim()) {

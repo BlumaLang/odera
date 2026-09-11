@@ -31,6 +31,8 @@ class UserRoutes {
                 return self::favorites();
             
             // Playlists
+            case 'playlists_public':
+                return self::listPublicPlaylists();
             case 'playlists_list':
                 return self::listPlaylists();
             case 'playlists_create':
@@ -183,6 +185,11 @@ class UserRoutes {
     }
     
     // ==================== PLAYLISTS ====================
+
+    private static function listPublicPlaylists() {
+        $playlists = Storage::getPublicPlaylists();
+        sendJson($playlists);
+    }
     
     private static function listPlaylists() {
         $userId = getQueryParam('user_id');

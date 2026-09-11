@@ -266,7 +266,9 @@ try {
         // ==================== PLAYLISTS ====================
         case 'playlists':
             require_once __DIR__ . '/routes/user.php';
-            if ($method === 'POST' && $subresource === 'create') {
+            if ($subresource === 'public') {
+                UserRoutes::handle('playlists_public', $method);
+            } elseif ($method === 'POST' && $subresource === 'create') {
                 UserRoutes::handle('playlists_create', $method);
             } elseif ($subresource && $subaction === 'tracks' && $id) {
                 // /playlists/:playlistId/tracks or /playlists/:playlistId/tracks/:videoId

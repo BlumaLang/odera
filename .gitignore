@@ -19,8 +19,6 @@ t.txt
 frontend/.expo/
 web-build/
 frontend/web-build/
-dist/
-frontend/dist/
 *.tsbuildinfo
 
 # Data

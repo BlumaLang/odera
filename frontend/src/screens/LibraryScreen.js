@@ -28,7 +28,7 @@ import { api } from "../api/client";
 import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
-import { auth, getRecentlyPlayed, subscribeRecentlyPlayed, removeRecentlyPlayed } from "../services/firebase";
+import { auth, getRecentlyPlayed, subscribeRecentlyPlayed, removeRecentlyPlayed, subscribePublicPlaylists } from "../services/firebase";
 import { getHighResArtwork, decodeHtml } from "../utils/imageUtils";
 import {
   getDownloadedTracks,
@@ -169,6 +169,8 @@ export default function LibraryScreen() {
   const [selectedAlbumForModal, setSelectedAlbumForModal] = useState(null);
   const [localRecentlyPlayed, setLocalRecentlyPlayed] = useState([]);
   const [downloadedTracks, setDownloadedTracks] = useState([]);
+  const [publicPlaylists, setPublicPlaylists] = useState([]);
+  const [playlistSubFilter, setPlaylistSubFilter] = useState("all"); // "all" | "my" | "public" | "collab"
   const [contextLoaded, setContextLoaded] = useState(false);
   const [tabLoading, setTabLoading] = useState(true);
 
@@ -179,6 +181,34 @@ export default function LibraryScreen() {
       setContextLoaded(true);
     }
   }, [rtdbPlaylists, likedSongs]);
+
+  // Subscribe to public playlists from RTDB & API
+  useEffect(() => {
+    let isMounted = true;
+    api.getPublicPlaylists().then((res) => {
+      if (isMounted && Array.isArray(res) && res.length > 0) {
+        setPublicPlaylists(res.map((p) => ({ ...p, isPublic: true, is_public: true })));
+      }
+    }).catch(() => {});
+
+    const unsub = subscribePublicPlaylists((list) => {
+      if (!isMounted) return;
+      if (Array.isArray(list) && list.length > 0) {
+        setPublicPlaylists((prev) => {
+          const map = new Map();
+          for (const item of [...list, ...prev]) {
+            if (item.id && !map.has(item.id)) map.set(item.id, item);
+          }
+          return Array.from(map.values());
+        });
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsub();
+    };
+  }, []);
 
   useEffect(() => {
     if (!contextLoaded) return;
@@ -243,12 +273,28 @@ export default function LibraryScreen() {
       }
     }
 
+    for (const pub of publicPlaylists || []) {
+      const id = String(pub.id || pub.collabId || "");
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        result.push({ ...pub, isPublic: true, is_public: true });
+      }
+    }
+
     return result;
-  }, [rtdbPlaylists, collabPlaylists]);
+  }, [rtdbPlaylists, collabPlaylists, publicPlaylists]);
 
   // Filtered & Sorted Playlists
   const playlists = useMemo(() => {
     let list = [...rawPlaylists];
+
+    if (playlistSubFilter === "my") {
+      list = list.filter((p) => !p.isPublic && !p.isCollab);
+    } else if (playlistSubFilter === "public") {
+      list = list.filter((p) => p.isPublic && !p.isCollab);
+    } else if (playlistSubFilter === "collab") {
+      list = list.filter((p) => p.isCollab);
+    }
 
     if (activeFolder) {
       const idSet = new Set(activeFolder.playlistIds || []);
@@ -767,75 +813,108 @@ export default function LibraryScreen() {
             <LibrarySkeleton type={activeTab} />
           ) : activeTab === "playlists" ? (
             /* Playlists List */
-            <FlatList
-              data={playlists}
-              keyExtractor={(item, index) => `${item.id || item.collabId || "pl"}_${index}`}
-              contentContainerStyle={styles.listContent}
-              showsVerticalScrollIndicator={false}
-              renderItem={({ item }) => {
-                const playlistCover =
-                  item.cover_url ||
-                  item.preview_artwork ||
-                  item.tracks?.[0]?.artwork_url ||
-                  item.tracks?.[0]?.thumbnail ||
-                  "";
-                const trackCount = Array.isArray(item.tracks) ? item.tracks.length : item.track_count || 0;
-
-                return (
+            <>
+              <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingBottom: 10, gap: 8 }}>
+                {[
+                  { key: "all", label: "All" },
+                  { key: "my", label: "My Playlists" },
+                  { key: "public", label: "Public" },
+                  { key: "collab", label: "Collab" },
+                ].map((f) => (
                   <TouchableOpacity
-                    style={styles.playlistCardRow}
-                    onPress={() => openPlaylist(item)}
-                    activeOpacity={0.7}
+                    key={f.key}
+                    onPress={() => setPlaylistSubFilter(f.key)}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 5,
+                      borderRadius: 14,
+                      backgroundColor: playlistSubFilter === f.key ? "rgba(255, 255, 255, 0.18)" : "rgba(255, 255, 255, 0.05)",
+                      borderWidth: 1,
+                      borderColor: playlistSubFilter === f.key ? "rgba(255, 255, 255, 0.3)" : "rgba(255, 255, 255, 0.08)",
+                    }}
                   >
-                    {playlistCover ? (
-                      <Image
-                        source={{ uri: getHighResArtwork(playlistCover) || playlistCover }}
-                        style={styles.playlistRowThumb}
-                      />
-                    ) : (
-                      <View style={[styles.playlistRowThumb, styles.playlistRowThumbFallback]}>
-                        <Ionicons name="musical-notes" size={24} color={colors.primary} />
-                      </View>
-                    )}
-                    <View style={styles.playlistRowInfo}>
-                      <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
-                        <Text style={styles.playlistRowTitle} numberOfLines={1}>
-                          {item.name}
-                        </Text>
-                        {item.isBlend ||
-                        item.type === "blend" ||
-                        String(item.name || "").startsWith("Blend:") ? (
-                          <View style={[styles.collabBadgePill, { borderColor: "rgba(139, 92, 246, 0.4)", backgroundColor: "rgba(139, 92, 246, 0.12)" }]}>
-                            <Ionicons name="flash" size={10} color="#8B5CF6" style={{ marginRight: 3 }} />
-                            <Text style={[styles.collabBadgeText, { color: "#8B5CF6" }]}>Blend</Text>
-                          </View>
-                        ) : item.isCollab ? (
-                          <View style={styles.collabBadgePill}>
-                            <Ionicons name="people" size={10} color="#1DB954" style={{ marginRight: 3 }} />
-                            <Text style={styles.collabBadgeText}>Collab</Text>
-                          </View>
-                        ) : null}
-                      </View>
-                      <Text style={styles.playlistRowCount}>
-                        {trackCount} {trackCount === 1 ? "track" : "tracks"}
-                        {item.description ? ` • ${item.description}` : ""}
-                      </Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+                    <Text style={{ fontSize: 12, color: playlistSubFilter === f.key ? "#FFFFFF" : colors.textMuted, fontWeight: playlistSubFilter === f.key ? "600" : "400" }}>
+                      {f.label}
+                    </Text>
                   </TouchableOpacity>
-                );
-              }}
-              ListEmptyComponent={
-                <View style={styles.emptyContainer}>
-                  <Ionicons name="folder-open-outline" size={44} color={colors.textMuted} />
-                  <Text style={styles.emptyText}>No playlists found</Text>
-                  <Text style={styles.emptySub}>
-                    {searchQuery ? "Try a different search query" : "Tap '+' at the top right to create your first playlist!"}
-                  </Text>
-                </View>
-              }
-              ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
-            />
+                ))}
+              </View>
+              <FlatList
+                data={playlists}
+                keyExtractor={(item, index) => `${item.id || item.collabId || "pl"}_${index}`}
+                contentContainerStyle={styles.listContent}
+                showsVerticalScrollIndicator={false}
+                renderItem={({ item }) => {
+                  const playlistCover =
+                    item.cover_url ||
+                    item.preview_artwork ||
+                    item.tracks?.[0]?.artwork_url ||
+                    item.tracks?.[0]?.thumbnail ||
+                    "";
+                  const trackCount = Array.isArray(item.tracks) ? item.tracks.length : item.track_count || 0;
+
+                  return (
+                    <TouchableOpacity
+                      style={styles.playlistCardRow}
+                      onPress={() => openPlaylist(item)}
+                      activeOpacity={0.7}
+                    >
+                      {playlistCover ? (
+                        <Image
+                          source={{ uri: getHighResArtwork(playlistCover) || playlistCover }}
+                          style={styles.playlistRowThumb}
+                        />
+                      ) : (
+                        <View style={[styles.playlistRowThumb, styles.playlistRowThumbFallback]}>
+                          <Ionicons name="musical-notes" size={24} color={colors.primary} />
+                        </View>
+                      )}
+                      <View style={styles.playlistRowInfo}>
+                        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+                          <Text style={styles.playlistRowTitle} numberOfLines={1}>
+                            {item.name}
+                          </Text>
+                          {item.isBlend ||
+                          item.type === "blend" ||
+                          String(item.name || "").startsWith("Blend:") ? (
+                            <View style={[styles.collabBadgePill, { borderColor: "rgba(139, 92, 246, 0.4)", backgroundColor: "rgba(139, 92, 246, 0.12)" }]}>
+                              <Ionicons name="flash" size={10} color="#8B5CF6" style={{ marginRight: 3 }} />
+                              <Text style={[styles.collabBadgeText, { color: "#8B5CF6" }]}>Blend</Text>
+                            </View>
+                          ) : item.isCollab ? (
+                            <View style={styles.collabBadgePill}>
+                              <Ionicons name="people" size={10} color="#1DB954" style={{ marginRight: 3 }} />
+                              <Text style={styles.collabBadgeText}>Collab</Text>
+                            </View>
+                          ) : item.isPublic ? (
+                            <View style={[styles.collabBadgePill, { borderColor: "rgba(59, 130, 246, 0.4)", backgroundColor: "rgba(59, 130, 246, 0.12)" }]}>
+                              <Ionicons name="globe-outline" size={10} color="#3B82F6" style={{ marginRight: 3 }} />
+                              <Text style={[styles.collabBadgeText, { color: "#3B82F6" }]}>Public</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                        <Text style={styles.playlistRowCount}>
+                          {item.isPublic && !item.isCollab ? "Public • " : ""}
+                          {trackCount} {trackCount === 1 ? "track" : "tracks"}
+                          {item.description ? ` • ${item.description}` : ""}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+                    </TouchableOpacity>
+                  );
+                }}
+                ListEmptyComponent={
+                  <View style={styles.emptyContainer}>
+                    <Ionicons name="folder-open-outline" size={44} color={colors.textMuted} />
+                    <Text style={styles.emptyText}>No playlists found</Text>
+                    <Text style={styles.emptySub}>
+                      {searchQuery ? "Try a different search query" : "Tap '+' at the top right to create your first playlist!"}
+                    </Text>
+                  </View>
+                }
+                ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
+              />
+            </>
           ) : activeTab === "favorites" ? (
             /* Liked Songs List */
             <FlatList

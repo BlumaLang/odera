@@ -262,8 +262,109 @@ class Storage {
         self::writeJson($dir . '/premium.json', $premium);
     }
     
-    public static function getUserPremium($userId) {
-        $dir = self::getUserDir($userId);
-        return self::readJson($dir . '/premium.json') ?? ['isPremium' => false, 'premiumPlan' => 'Free'];
+    // ==================== PUBLIC PLAYLISTS ====================
+
+    public static function getPublicPlaylists() {
+        $publicDir = self::getDataDir() . '/public';
+        if (!is_dir($publicDir)) {
+            @mkdir($publicDir, 0777, true);
+        }
+        $publicPath = $publicDir . '/playlists.json';
+        $list = self::readJson($publicPath);
+        if ($list && is_array($list) && count($list) > 0) {
+            return $list;
+        }
+
+        $defaultPublic = [
+            [
+                'id' => 'public_pl_top_hits',
+                'name' => 'Staytup Global Top Hits',
+                'description' => 'The hottest trending tracks around the world right now. Public listen-only playlist.',
+                'cover_url' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg',
+                'is_public' => true,
+                'isPublic' => true,
+                'type' => 'public',
+                'creator_name' => 'Staytup Community',
+                'track_count' => 3,
+                'tracks' => [
+                    [
+                        'id' => 'trk_pub_1',
+                        'videoId' => '5PEK8tLqU',
+                        'video_id' => '5PEK8tLqU',
+                        'title' => 'Starboy',
+                        'artist' => 'The Weeknd, Daft Punk',
+                        'album' => 'Starboy',
+                        'duration' => 230,
+                        'duration_seconds' => 230,
+                        'artwork_url' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg',
+                        'thumbnail' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg'
+                    ],
+                    [
+                        'id' => 'trk_pub_2',
+                        'videoId' => 'fJ9rUzIMcZQ',
+                        'video_id' => 'fJ9rUzIMcZQ',
+                        'title' => 'Blinding Lights',
+                        'artist' => 'The Weeknd',
+                        'album' => 'After Hours',
+                        'duration' => 200,
+                        'duration_seconds' => 200,
+                        'artwork_url' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg',
+                        'thumbnail' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg'
+                    ],
+                    [
+                        'id' => 'trk_pub_3',
+                        'videoId' => 'TUVcZfQe-Kw',
+                        'video_id' => 'TUVcZfQe-Kw',
+                        'title' => 'Levitating',
+                        'artist' => 'Dua Lipa',
+                        'album' => 'Future Nostalgia',
+                        'duration' => 203,
+                        'duration_seconds' => 203,
+                        'artwork_url' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg',
+                        'thumbnail' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg'
+                    ]
+                ]
+            ],
+            [
+                'id' => 'public_pl_chill_vibes',
+                'name' => 'Midnight Chill & Lo-Fi',
+                'description' => 'Relaxing beats, calm melodies, and late night soundscapes to unwind or focus.',
+                'cover_url' => 'https://c.saavncdn.com/editorial/ChillBro_119560_20220204122046.jpg',
+                'is_public' => true,
+                'isPublic' => true,
+                'type' => 'public',
+                'creator_name' => 'Staytup Curator',
+                'track_count' => 2,
+                'tracks' => [
+                    [
+                        'id' => 'trk_pub_4',
+                        'videoId' => 'jfKfPfyJRdk',
+                        'video_id' => 'jfKfPfyJRdk',
+                        'title' => 'Morning Coffee Beats',
+                        'artist' => 'Chillhop Beats',
+                        'album' => 'Lo-Fi Lounge',
+                        'duration' => 175,
+                        'duration_seconds' => 175,
+                        'artwork_url' => 'https://c.saavncdn.com/editorial/ChillBro_119560_20220204122046.jpg',
+                        'thumbnail' => 'https://c.saavncdn.com/editorial/ChillBro_119560_20220204122046.jpg'
+                    ],
+                    [
+                        'id' => 'trk_pub_5',
+                        'videoId' => '5qap5aO4i9A',
+                        'video_id' => '5qap5aO4i9A',
+                        'title' => 'Golden Hour Radiance',
+                        'artist' => 'Lofi Radiance',
+                        'album' => 'Sunset Dreams',
+                        'duration' => 190,
+                        'duration_seconds' => 190,
+                        'artwork_url' => 'https://c.saavncdn.com/editorial/ChillBro_119560_20220204122046.jpg',
+                        'thumbnail' => 'https://c.saavncdn.com/editorial/ChillBro_119560_20220204122046.jpg'
+                    ]
+                ]
+            ]
+        ];
+
+        self::writeJson($publicPath, $defaultPublic);
+        return $defaultPublic;
     }
 }

@@ -3853,3 +3853,33 @@ export async function triggerPartyReaction(partyId, { emoji, uid, username }) {
   }
 }
 
+/**
+ * Subscribe to public playlists in Realtime Database
+ */
+export function subscribePublicPlaylists(callback) {
+  if (!db) return () => {};
+  const publicPlRef = ref(db, "public_playlists");
+  const listener = onValue(
+    publicPlRef,
+    (snapshot) => {
+      if (!snapshot.exists()) {
+        callback([]);
+        return;
+      }
+      const data = snapshot.val() || {};
+      const list = Object.values(data).map((p) => ({
+        ...p,
+        isPublic: true,
+        is_public: true,
+      }));
+      callback(list);
+    },
+    (err) => {
+      console.warn("subscribePublicPlaylists error:", err.message);
+      callback([]);
+    }
+  );
+  return () => off(publicPlRef, "value", listener);
+}
+
+

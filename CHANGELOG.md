@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.6] - 2026-09-12
+
+### Fixed
+- **React Error #130 Resolution**: Fixed undefined dependency index in Module 693 (`PlaylistModal`) that prevented proper module resolution and caused `<PlaylistModal>` to throw React Error #130 during library mounting.
+- **Service Worker Bulletproofing**: Upgraded Service Worker cache to `staytup-pwa-v37` with guaranteed fallback `Response` objects across all navigation routes, preventing `TypeError: Failed to convert value to 'Response'` promise rejections.
+- **AlbumModal Container**: Corrected React Native `Modal` dependency binding in Module 712 (`AlbumModal`) for seamless overlay presentations.
+
+### Added
+- **Public Playlists (Listen-Only Mode)**:
+  - Added public playlists discovery in the Library Playlists tab with dedicated subfilters: `"All"`, `"My Playlists"`, `"Public"`, and `"Collab"`.
+  - Non-owner listeners browsing public playlists receive a dedicated `"PUBLIC PLAYLIST • LISTEN ONLY"` badge.
+  - Listen-only protection prevents uninvited users from joining collaborative groups or mutating playlists (editing details, importing tracks, removing songs, and deleting playlists are disabled).
+  - Listeners enjoy full audio playback (Play All, Shuffle, song tap playback, like/favorite, and "Save Copy to Library").
+  - Backend `/api/playlists/public` endpoint and Firebase `subscribePublicPlaylists` real-time synchronization.
+- **Synchronized Frontend Distribution**:
+  - Populated and synchronized `frontend/dist/` with full compiled web app bundle, service workers, assets, and metadata matching `dist/` and `public/`.
+
 ## [2.8.5] - 2026-09-12
 
 ### Added
