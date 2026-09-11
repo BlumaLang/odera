@@ -1,9 +1,9 @@
 // Auto-generated on each build. Do NOT edit manually.
 // Staytup Application Version Configuration
 // Bump this version on each release / feature deployment
-const APP_VERSION = "2.8.8";
-const BUILD_NUMBER = "1789159813";
-const BUILD_DATE = "2026-09-11 20:50:13 UTC";
+const APP_VERSION = "2.8.10";
+const BUILD_NUMBER = "1789161905";
+const BUILD_DATE = "2026-09-11 21:25:05 UTC";
 const APP_ENV = "production";
 
 export { APP_VERSION, BUILD_NUMBER, BUILD_DATE };
