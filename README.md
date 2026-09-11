@@ -4,7 +4,7 @@
 [![React Native](https://img.shields.io/badge/React_Native-Expo%20SDK%2057-61DAFB?style=for-the-badge&logo=react)](https://reactnative.dev)
 [![PHP](https://img.shields.io/badge/PHP-8.x%20Backend-777BB4?style=for-the-badge&logo=php)](https://php.net)
 [![Firebase](https://img.shields.io/badge/Firebase-Realtime%20Database-FFCA28?style=for-the-badge&logo=firebase)](https://firebase.google.com)
-[![Service Worker](https://img.shields.io/badge/Service_Worker-staytup--pwa--v34-blue?style=for-the-badge)](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API)
+[![Service Worker](https://img.shields.io/badge/Service_Worker-staytup--pwa--v35-blue?style=for-the-badge)](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API)
 
 **Staytup** is a modern, high-performance music streaming and collaborative listening Progressive Web App (PWA) built with **React Native for Web (Expo SDK 57)**, a lightweight **PHP 8.x backend**, and **Firebase Realtime Database**. It pairs studio-grade audio streaming with real-time social presence, collaborative and blend playlists, friend listening sync, live synchronized karaoke lyrics, multi-device hardware management, advanced typo-tolerant search, and universal deep links.
 
