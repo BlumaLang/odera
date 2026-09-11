@@ -34,6 +34,9 @@ import ChangelogModal from "./src/components/ChangelogModal";
 import QueueNoticeBanner from "./src/components/QueueNoticeBanner";
 import LiveReactionOverlay from "./src/components/LiveReactionOverlay";
 import ActiveDevicesModal from "./src/components/ActiveDevicesModal";
+import DeepLinkPreviewModal from "./src/components/DeepLinkPreviewModal";
+import ShareSheetModal from "./src/components/ShareSheetModal";
+import { api } from "./src/api/client";
 import { useAudio } from "./src/context/AudioContext";
 import { BUILD_NUMBER, APP_VERSION } from "./src/config/version";
 import { colors, fonts } from "./src/theme/colors";
@@ -93,9 +96,16 @@ const VALID_ROUTES = {
   friends: "Friends",
   friend: "Friends",
   premium: "Premium",
+  // Deep link routes
+  song: "Home",
+  album: "Home",
+  artist: "Search",
+  playlist: "Library",
+  room: "Home",
+  user: "Friends",
 };
 
-// Parse and validate page from browser URL (cannot open any other pages)
+// Parse and validate page from browser URL
 function getRouteFromPathname() {
   if (Platform.OS === "web" && typeof window !== "undefined") {
     const segments = window.location.pathname.replace(/^\/+/, "").split("/");
@@ -362,6 +372,67 @@ function AppContent() {
   const [showUpdateChangelog, setShowUpdateChangelog] = useState(false);
   const [forceReady, setForceReady] = useState(false);
 
+  // Deep Link Web Preview & Sharing State
+  const [deepLinkData, setDeepLinkData] = useState(null);
+  const [deepLinkType, setDeepLinkType] = useState("song");
+  const [showDeepLinkModal, setShowDeepLinkModal] = useState(false);
+  const [shareSheetConfig, setShareSheetConfig] = useState(null);
+  const { playTrack } = useAudio();
+
+  // Listen for global share requests
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const handleOpenShare = (e) => {
+        if (e?.detail) {
+          setShareSheetConfig(e.detail);
+        }
+      };
+      window.addEventListener("staytup-open-share", handleOpenShare);
+      return () => window.removeEventListener("staytup-open-share", handleOpenShare);
+    }
+  }, []);
+
+  // Parse deep link on initial mount (staytup.app/song/{id}, /album/{id}, /artist/{id}, /playlist/{id}, /room/{id}, /user/{username})
+  useEffect(() => {
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const parts = window.location.pathname.replace(/^\/+/, "").split("/");
+      const section = parts[0]?.toLowerCase();
+      const entityId = parts[1];
+
+      if (["song", "album", "artist", "playlist", "room", "user"].includes(section) && entityId) {
+        setDeepLinkType(section);
+        if (section === "song") {
+          // Fetch song info or search by ID
+          api.getSong(entityId).then((res) => {
+            const track = res?.track || res?.song || res?.data;
+            if (track) {
+              setDeepLinkData(track);
+              setShowDeepLinkModal(true);
+            }
+          }).catch(() => {
+            setDeepLinkData({ title: "Song Preview", subtitle: "Staytup Music", id: entityId });
+            setShowDeepLinkModal(true);
+          });
+        } else if (section === "album") {
+          setDeepLinkData({ title: decodeURIComponent(entityId), subtitle: "Album on Staytup", id: entityId });
+          setShowDeepLinkModal(true);
+        } else if (section === "artist") {
+          setDeepLinkData({ name: decodeURIComponent(entityId), subtitle: "Artist on Staytup", id: entityId });
+          setShowDeepLinkModal(true);
+        } else if (section === "playlist") {
+          setDeepLinkData({ title: decodeURIComponent(entityId), subtitle: "Playlist on Staytup", id: entityId });
+          setShowDeepLinkModal(true);
+        } else if (section === "room") {
+          setDeepLinkData({ title: `Room #${entityId}`, subtitle: "Listening Party", id: entityId });
+          setShowDeepLinkModal(true);
+        } else if (section === "user") {
+          setDeepLinkData({ username: entityId, subtitle: `@${entityId} on Staytup` });
+          setShowDeepLinkModal(true);
+        }
+      }
+    }
+  }, []);
+
   // Profile modal back handler registration
   useEffect(() => {
     if (isProfileOpen) {
@@ -483,6 +554,27 @@ function AppContent() {
       <LiveReactionOverlay />
       {/* Global Active Devices Modal */}
       <ActiveDevicesModal visible={isDeviceModalOpen} onClose={closeDeviceModal} />
+      {/* Deep Link Web Preview Modal */}
+      <DeepLinkPreviewModal
+        visible={showDeepLinkModal}
+        type={deepLinkType}
+        data={deepLinkData}
+        onClose={() => setShowDeepLinkModal(false)}
+        onPlayInStaytup={() => {
+          setShowDeepLinkModal(false);
+          if (deepLinkData) {
+            playTrack(deepLinkData);
+          }
+        }}
+        onOpenApp={() => setShowDeepLinkModal(false)}
+      />
+      {/* Universal Share Sheet Modal */}
+      <ShareSheetModal
+        visible={!!shareSheetConfig}
+        type={shareSheetConfig?.type || "song"}
+        data={shareSheetConfig?.data || {}}
+        onClose={() => setShareSheetConfig(null)}
+      />
     </NavigationContainer>
   );
 }

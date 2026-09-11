@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.3] - 2026-09-12
+
+### Added
+- **Much Smarter Search**:
+  - Search operators support (`artist:`, `genre:`, `mood:`, `lyrics:`, `year:`, `lang:`) with quick operator chips.
+  - Search by lyrics, mood, genre, language, year, and artist + genre combinations.
+  - Category filter tabs: `All`, `Songs`, `Artists`, `Albums`, and `Playlists`.
+  - Voice Search integrated directly into the search bar with microphone button powered by the Web Speech API.
+  - Curated Trending Searches pill tags displayed in the search hub.
+  - Album and Playlist carousel results cards embedded directly in search results.
+- **Sharing & Deep Links**:
+  - Support for direct deep links: `staytup.app/song/{id}`, `/album/{id}`, `/artist/{id}`, `/playlist/{id}`, `/room/{id}`, and `/user/{username}`.
+  - Spotify-style web preview card with `[▶ Play in Staytup]` and `[Open App]` actions.
+  - Universal share sheet modal supporting songs, albums, artists, playlists, user profiles, and listening party rooms with native share, clipboard copy, WhatsApp, and Messages.
+
+### Changed
+- Updated Service Worker cache name to `staytup-pwa-v34`.
+
+---
+
 ## [2.8.2] - 2026-09-11
 
 ### Added

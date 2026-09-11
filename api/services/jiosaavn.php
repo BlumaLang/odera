@@ -81,6 +81,107 @@ class JioSaavnService {
         
         return ['artists' => $artists, 'results' => $artists];
     }
+
+    public static function searchAlbums($query, $page = 1, $limit = 20) {
+        $data = self::callApi('search.getAlbumResults', [
+            'q' => $query,
+            'p' => $page,
+            'n' => $limit,
+        ]);
+        
+        $albums = [];
+        foreach ($data['results'] ?? [] as $album) {
+            $albums[] = self::normalizeAlbum($album);
+        }
+        $total = $data['total'] ?? count($albums);
+        
+        return [
+            'query'    => $query,
+            'count'    => $total,
+            'albums'   => $albums,
+            'results'  => $albums,
+            'has_more' => ($page * $limit) < $total,
+        ];
+    }
+
+    public static function searchPlaylists($query, $page = 1, $limit = 20) {
+        $data = self::callApi('search.getPlaylistResults', [
+            'q' => $query,
+            'p' => $page,
+            'n' => $limit,
+        ]);
+        
+        $playlists = [];
+        foreach ($data['results'] ?? [] as $playlist) {
+            $playlists[] = self::normalizePlaylist($playlist);
+        }
+        $total = $data['total'] ?? count($playlists);
+        
+        return [
+            'query'     => $query,
+            'count'     => $total,
+            'playlists' => $playlists,
+            'results'   => $playlists,
+            'has_more'  => ($page * $limit) < $total,
+        ];
+    }
+
+    public static function parseSearchOperators($rawQuery) {
+        $operators = [];
+        $cleanQuery = $rawQuery;
+        
+        // Match patterns like artist:foo, genre:bar, year:2024, mood:sad, lyrics:text, lang:hindi
+        if (preg_match_all('/(artist|singer|genre|mood|year|lyrics|lang|language):(?:"([^"]+)"|([^\s]+))/i', $rawQuery, $matches, PREG_SET_ORDER)) {
+            foreach ($matches as $m) {
+                $key = strtolower($m[1]);
+                $val = !empty($m[2]) ? $m[2] : $m[3];
+                $operators[$key] = trim($val);
+                $cleanQuery = str_replace($m[0], '', $cleanQuery);
+            }
+        }
+        
+        $cleanQuery = trim(preg_replace('/\s+/', ' ', $cleanQuery));
+        
+        $parts = [];
+        if (!empty($cleanQuery)) $parts[] = $cleanQuery;
+        if (!empty($operators['artist'])) $parts[] = $operators['artist'];
+        if (!empty($operators['singer'])) $parts[] = $operators['singer'];
+        if (!empty($operators['genre'])) $parts[] = $operators['genre'];
+        if (!empty($operators['mood'])) $parts[] = $operators['mood'];
+        if (!empty($operators['lyrics'])) $parts[] = $operators['lyrics'];
+        if (!empty($operators['year'])) $parts[] = $operators['year'];
+        if (!empty($operators['lang'])) $parts[] = $operators['lang'];
+        if (!empty($operators['language'])) $parts[] = $operators['language'];
+        
+        $resolvedQuery = !empty($parts) ? implode(' ', $parts) : $rawQuery;
+        
+        return [
+            'raw'       => $rawQuery,
+            'resolved'  => $resolvedQuery,
+            'clean'     => $cleanQuery,
+            'operators' => $operators,
+        ];
+    }
+
+    public static function searchAll($query, $limit = 20) {
+        $parsed = self::parseSearchOperators($query);
+        $resolved = $parsed['resolved'];
+
+        $songs = self::searchSongs($resolved, 1, min($limit, 25));
+        $artists = self::searchArtists($resolved, 6);
+        $albums = self::searchAlbums($resolved, 1, 8);
+        $playlists = self::searchPlaylists($resolved, 1, 8);
+
+        return [
+            'query'     => $query,
+            'resolved'  => $resolved,
+            'operators' => $parsed['operators'],
+            'tracks'    => $songs['tracks'] ?? [],
+            'artists'   => $artists['artists'] ?? [],
+            'albums'    => $albums['albums'] ?? [],
+            'playlists' => $playlists['playlists'] ?? [],
+        ];
+    }
     
     // ==================== HOME FEED ====================
     
@@ -784,6 +885,48 @@ class JioSaavnService {
             'type'      => 'artist',
         ];
     }
+
+    public static function normalizeAlbum($album) {
+        $id = $album['id'] ?? $album['albumId'] ?? '';
+        $title = html_entity_decode($album['title'] ?? $album['name'] ?? 'Unknown Album', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $artist = html_entity_decode($album['primary_artists'] ?? $album['music'] ?? $album['artist'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $image = self::getBestImage($album['image'] ?? $album['thumbnail'] ?? '');
+        $year = $album['year'] ?? '';
+        $songCount = $album['song_count'] ?? $album['numsongs'] ?? 0;
+        
+        return [
+            'id'          => $id,
+            'title'       => $title,
+            'name'        => $title,
+            'artist'      => $artist,
+            'image'       => $image,
+            'thumbnail'   => $image,
+            'artwork_url' => $image,
+            'year'        => $year,
+            'song_count'  => (int)$songCount,
+            'type'        => 'album',
+        ];
+    }
+
+    public static function normalizePlaylist($playlist) {
+        $id = $playlist['id'] ?? $playlist['listid'] ?? '';
+        $title = html_entity_decode($playlist['title'] ?? $playlist['listname'] ?? 'Playlist', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $image = self::getBestImage($playlist['image'] ?? $playlist['thumbnail'] ?? '');
+        $songCount = $playlist['song_count'] ?? $playlist['numsongs'] ?? 0;
+        $subtitle = html_entity_decode($playlist['subtitle'] ?? $playlist['description'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        return [
+            'id'          => $id,
+            'title'       => $title,
+            'name'        => $title,
+            'description' => $subtitle,
+            'image'       => $image,
+            'thumbnail'   => $image,
+            'artwork_url' => $image,
+            'song_count'  => (int)$songCount,
+            'type'        => 'playlist',
+        ];
+    }
     
     private static function detectSectionType($section) {
         if (isset($section['songs'])) return 'songs';
@@ -802,6 +945,10 @@ class JioSaavnService {
         foreach ($rawItems as $item) {
             if ($type === 'artists') {
                 $items[] = self::normalizeArtist($item);
+            } elseif ($type === 'albums') {
+                $items[] = self::normalizeAlbum($item);
+            } elseif ($type === 'playlists') {
+                $items[] = self::normalizePlaylist($item);
             } else {
                 $items[] = self::normalizeTrack($item);
             }

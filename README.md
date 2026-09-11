@@ -1,18 +1,31 @@
 # Staytup - Real-Time Music Streaming & Social Listening Platform
 
-[![Staytup](https://img.shields.io/badge/Staytup-PWA%20v2.8.2-1DB954?style=for-the-badge&logo=music)](https://staytup.odireca.com)
+[![Staytup](https://img.shields.io/badge/Staytup-PWA%20v2.8.3-1DB954?style=for-the-badge&logo=music)](https://staytup.odireca.com)
 [![React Native](https://img.shields.io/badge/React_Native-Expo%20SDK%2057-61DAFB?style=for-the-badge&logo=react)](https://reactnative.dev)
 [![PHP](https://img.shields.io/badge/PHP-8.x%20Backend-777BB4?style=for-the-badge&logo=php)](https://php.net)
 [![Firebase](https://img.shields.io/badge/Firebase-Realtime%20Database-FFCA28?style=for-the-badge&logo=firebase)](https://firebase.google.com)
-[![Service Worker](https://img.shields.io/badge/Service_Worker-staytup--pwa--v33-blue?style=for-the-badge)](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API)
+[![Service Worker](https://img.shields.io/badge/Service_Worker-staytup--pwa--v34-blue?style=for-the-badge)](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API)
 
-**Staytup** is a modern, high-performance music streaming and collaborative listening Progressive Web App (PWA) built with **React Native for Web (Expo SDK 57)**, a lightweight **PHP 8.x backend**, and **Firebase Realtime Database**. It pairs studio-grade audio streaming with real-time social presence, collaborative and blend playlists, friend listening sync, live synchronized karaoke lyrics, and multi-device hardware management.
+**Staytup** is a modern, high-performance music streaming and collaborative listening Progressive Web App (PWA) built with **React Native for Web (Expo SDK 57)**, a lightweight **PHP 8.x backend**, and **Firebase Realtime Database**. It pairs studio-grade audio streaming with real-time social presence, collaborative and blend playlists, friend listening sync, live synchronized karaoke lyrics, multi-device hardware management, advanced typo-tolerant search, and universal deep links.
 
 ---
 
 ## Key Features & Capabilities
 
-### 1. High-Fidelity Audio Engine & Smart Playback
+### 1. Much Smarter Search & Voice Search
+- **Search Operators**: Direct support for query operators (`artist:Arijit`, `genre:romantic`, `mood:chill`, `lyrics:phrase`, `year:2024`, `lang:hindi`) with one-tap quick operator chips.
+- **Natural Language Discovery**: Search by lyrics, mood, genre, language, year, or artist + genre combinations.
+- **Category Filter Tabs**: Switch instantly between `All`, `Songs`, `Artists`, `Albums`, and `Playlists`.
+- **Integrated Voice Search**: Direct microphone transcription in the search bar powered by the Web Speech API.
+- **Curated Trending Searches**: Real-time trending query pills for quick music discovery.
+- **Embedded Album & Playlist Carousels**: Rich horizontal scroll shelves for albums and playlists with one-tap track exploration.
+
+### 2. Universal Sharing & Deep Links
+- **Spotify-Style Deep Link URLs**: Full routing support for `staytup.app/song/{id}`, `/album/{id}`, `/artist/{id}`, `/playlist/{id}`, `/room/{id}`, and `/user/{username}`.
+- **Universal Web Preview Card**: Opens a preview modal featuring high-res artwork, metadata, and quick actions: `[▶ Play in Staytup]` and `[Open App]`.
+- **Comprehensive Share Sheet**: Share songs, albums, artists, playlists, user profiles, and listening rooms with native system share sheets, clipboard copying, WhatsApp, and Messages.
+
+### 3. High-Fidelity Audio Engine & Smart Playback
 - **Direct Audio Decryption**: Instant server-side DES-ECB decryption for high-bitrate media streams.
 - **Smart Stream Pre-Caching**: Background pre-caching of upcoming tracks in queue for instantaneous, gapless track transitions.
 - **MediaSession API & Background Audio**: Native lock screen controls, playback notifications, high-resolution artwork metadata, and media key support across iOS, Android, macOS, and Windows.
@@ -23,40 +36,40 @@
   - Flippable 3D album art that transitions directly into synchronized karaoke lyrics.
   - Sleep timer with built-in countdown presets (15m, 30m, 45m, 1h, End of Track) and gentle audio fade-out.
 
-### 2. Live Airbuds-Style Reaction Bursts
+### 4. Live Airbuds-Style Reaction Bursts
 - **Cross-Page Reactions**: React to friends' active listening across any page (Home feed, Friends hub, profile cards, and full player).
 - **GPU-Accelerated Animations**: Powered by Web Animations API (WAAPI) for smooth 60fps floating emoji bursts with zero dropped frames.
 - **Real-Time Delivery**: Realtime sync via Firebase RTDB delivering reactions instantly with sender details, track attribution, and animated burst particles.
 
-### 3. Active Devices Management & Session Control
+### 5. Active Devices Management & Session Control
 - **Genuine Hardware & Platform Detection**: Automatically detects client OS (`macOS`, `iOS`, `iPadOS`, `Windows`, `Android`, `Linux`, `ChromeOS`) and browser (`Chrome`, `Safari`, `Edge`, `Firefox`, `Brave`, `Opera`, or standalone PWA). Zero fabricated data.
 - **Real-Time Presence & Heartbeat**: Synchronized with Firebase Realtime Database with 45-second liveness heartbeats and `.onDisconnect()` cleanup.
 - **Device Switching & Remote Revocation**: View active listening devices in real-time, inspect playback hardware, and revoke unauthorized sessions with a single tap.
 
-### 4. Spotify-Inspired Desktop Experience
+### 6. Spotify-Inspired Desktop Experience
 - **Left-Oriented Hero Layout**: Covers art anchored on the left (220×220px with drop shadows) with playlist title, description, participant avatars, and song metadata immediately adjacent.
 - **Left-Aligned Action Controls**: `Play All`, `Shuffle`, `Collaborate / Blend`, `Import from Link`, and `More Options` aligned directly with the tracks table.
 - **Unified 3-Dot Options Popover**: Clean options menu for editing metadata, managing collaborators, importing songs, or deleting playlists without cluttered duplicate badges.
 
-### 5. Social Listening, Friends Hub & Blend
+### 7. Social Listening, Friends Hub & Blend
 - **Live Friend Presence**: Track what friends are listening to in real-time with pulsing live status indicators and waveform animations.
 - **Listen Along (Sync Listening)**: One-tap synchronization to listen in real-time with a friend's active playback.
 - **Blend & Collab Playlists**: Real-time collaborative playlist editing powered by Firebase with blend compatibility scores.
 - **Standardized Confirmation Modals**: Consistent confirmation dialogs with clear button hierarchy (`#E53935` primary confirm on top, subtle secondary cancel on bottom).
 
-### 6. Synchronized Karaoke Lyrics
+### 8. Synchronized Karaoke Lyrics
 - **Live Synchronized Lyrics**: Real-time karaoke-style lyrics synced to timestamps via LRCLIB integration.
 - **Smooth Auto-Scroll**: Highlights active lines with smooth auto-scroll to keep the current vocal front and center.
 - **Plain Text Fallback**: Graceful fallback to static plain lyrics when timestamp synchronization is unavailable.
 
-### 7. Playlist Import Engine (Spotify & YouTube)
+### 9. Playlist Import Engine (Spotify & YouTube)
 - **Instant Playlist Link Importer**: Paste any public Spotify playlist URL or YouTube Music link to automatically match and import all tracks into Staytup.
 - **Real-Time Import Progress**: Live track matching feedback with fallback search algorithms.
 
-### 8. Progressive Web App (PWA) & Offline Resilience
+### 10. Progressive Web App (PWA) & Offline Resilience
 - **Full PWA Ready**: Installable on iOS (Safari Add to Home Screen), Android (Chrome PWA), and Desktop (Chrome/Edge/Brave).
 - **Dual Manifest Architecture**: Native support for both `manifest.webmanifest` and `manifest.json` with strict MIME headers and explicit permission overrides.
-- **Service Worker Caching**: Versioned cache invalidation (`sw.js`, `staytup-pwa-v33`) ensuring lightning-fast offline startup and instant app updates.
+- **Service Worker Caching**: Versioned cache invalidation (`sw.js`, `staytup-pwa-v34`) ensuring lightning-fast offline startup and instant app updates.
 
 ---
 

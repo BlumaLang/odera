@@ -300,11 +300,15 @@ export default function SearchScreen() {
   const avatarIcon = userProfile?.avatar && userProfile.avatar !== "initial" ? userProfile.avatar : null;
   const avatarBg = userProfile?.avatarColor || colors.primary;
 
-  // Search State
+  // Search State & Smart Filters
   const [query, setQuery] = useState("");
   const [isSearchActive, setIsSearchActive] = useState(false);
+  const [selectedFilter, setSelectedFilter] = useState("all"); // "all" | "songs" | "artists" | "albums" | "playlists"
   const [results, setResults] = useState([]);
   const [artistResults, setArtistResults] = useState([]);
+  const [albumResults, setAlbumResults] = useState([]);
+  const [playlistResults, setPlaylistResults] = useState([]);
+  const [trendingSearches, setTrendingSearches] = useState([]);
   const [artistImagesMap, setArtistImagesMap] = useState({});
   const [suggestions, setSuggestions] = useState([]);
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
@@ -315,6 +319,8 @@ export default function SearchScreen() {
   const [totalLoaded, setTotalLoaded] = useState(0);
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
   const [pageLoading, setPageLoading] = useState(true);
+  const [isListeningVoice, setIsListeningVoice] = useState(false);
+  const speechRecognitionRef = useRef(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setPageLoading(false), 600);
@@ -511,9 +517,68 @@ export default function SearchScreen() {
     if (uid) {
       clearRecentSearches(uid).catch(() => {});
     }
+  // Fetch trending searches on initial mount
+  useEffect(() => {
+    api.getTrendingSearches().then((res) => {
+      if (Array.isArray(res?.trending) && res.trending.length > 0) {
+        setTrendingSearches(res.trending);
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Voice Search handler using Web Speech API
+  const handleToggleVoiceSearch = () => {
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert("Voice search is not supported in this browser. Please use Chrome, Safari, or Edge.");
+        return;
+      }
+
+      if (isListeningVoice && speechRecognitionRef.current) {
+        speechRecognitionRef.current.stop();
+        setIsListeningVoice(false);
+        return;
+      }
+
+      try {
+        const recognition = new SpeechRecognition();
+        speechRecognitionRef.current = recognition;
+        recognition.lang = "en-IN";
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+          setIsListeningVoice(true);
+        };
+
+        recognition.onresult = (event) => {
+          const transcript = event.results?.[0]?.[0]?.transcript;
+          if (transcript) {
+            handleFocusSearch();
+            setQuery(transcript);
+          }
+          setIsListeningVoice(false);
+        };
+
+        recognition.onerror = (err) => {
+          console.warn("[VoiceSearch] Error:", err.error);
+          setIsListeningVoice(false);
+        };
+
+        recognition.onend = () => {
+          setIsListeningVoice(false);
+        };
+
+        recognition.start();
+      } catch (err) {
+        console.warn("[VoiceSearch] Launch error:", err);
+        setIsListeningVoice(false);
+      }
+    }
   };
 
-  // Pure Staytup Saavn Search with Race Condition Protection
+  // Pure Staytup Saavn Smarter Search with Race Condition Protection & Filter Type
   useEffect(() => {
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
@@ -523,6 +588,8 @@ export default function SearchScreen() {
     if (!trimmed) {
       setResults([]);
       setArtistResults([]);
+      setAlbumResults([]);
+      setPlaylistResults([]);
       setSuggestions([]);
       setIsSearching(false);
       setIsLoadingMore(false);
@@ -546,56 +613,92 @@ export default function SearchScreen() {
 
     searchTimeoutRef.current = setTimeout(async () => {
       try {
-        const [searchRes, artistsRes] = await Promise.allSettled([
-          api.search(trimmed, 0, PAGE_SIZE),
-          api.searchArtists(trimmed, 4),
-        ]);
+        if (selectedFilter === "all") {
+          const [searchRes, artistsRes, albumsRes, playlistsRes] = await Promise.allSettled([
+            api.search(trimmed, 0, PAGE_SIZE),
+            api.searchArtists(trimmed, 4),
+            api.searchAlbums(trimmed, 0, 6),
+            api.searchPlaylists(trimmed, 0, 6),
+          ]);
 
-        // Guard against race conditions: abort if user typed a newer character
-        if (thisVersion !== requestVersionRef.current) {
-          return;
-        }
+          if (thisVersion !== requestVersionRef.current) return;
 
-        if (searchRes.status === "fulfilled") {
-          const tracks = searchRes.value?.tracks || searchRes.value?.results || [];
-          setResults(tracks);
-          setHasMore(Boolean(searchRes.value?.has_more));
-          setTotalLoaded(searchRes.value?.total_loaded || tracks.length);
-        }
-
-        if (artistsRes.status === "fulfilled") {
-          const remoteArtists = artistsRes.value?.artists || artistsRes.value?.results || [];
-          const valid = remoteArtists.filter((a) => a && a.name && a.name.trim().length > 1);
-          setArtistResults(valid.slice(0, 3));
-
-          // Enrich and upload any missing artist images to database cache
-          const topBatch = valid.slice(0, 3);
-          if (topBatch.length > 0) {
-            api
-              .getBatchArtistImages(topBatch.map((a) => a.name))
-              .then(({ images }) => {
-                if (images && Object.keys(images).length > 0) {
-                  setArtistImagesMap((prev) => ({ ...prev, ...images }));
-                  setArtistResults((prev) =>
-                    prev.map((art) => {
-                      const resolved =
-                        art.image ||
-                        art.thumbnail ||
-                        images[art.name] ||
-                        images[art.id] ||
-                        resolveLocalArtistImage(art.name);
-                      return resolved ? { ...art, image: resolved, thumbnail: resolved } : art;
-                    })
-                  );
-                }
-              })
-              .catch(() => {});
+          if (searchRes.status === "fulfilled") {
+            const tracks = searchRes.value?.tracks || searchRes.value?.results || [];
+            setResults(tracks);
+            setHasMore(Boolean(searchRes.value?.has_more));
+            setTotalLoaded(searchRes.value?.total_loaded || tracks.length);
           }
+
+          if (artistsRes.status === "fulfilled") {
+            const remoteArtists = artistsRes.value?.artists || artistsRes.value?.results || [];
+            const valid = remoteArtists.filter((a) => a && a.name && a.name.trim().length > 1);
+            setArtistResults(valid.slice(0, 3));
+
+            const topBatch = valid.slice(0, 3);
+            if (topBatch.length > 0) {
+              api
+                .getBatchArtistImages(topBatch.map((a) => a.name))
+                .then(({ images }) => {
+                  if (images && Object.keys(images).length > 0) {
+                    setArtistImagesMap((prev) => ({ ...prev, ...images }));
+                  }
+                })
+                .catch(() => {});
+            }
+          }
+
+          if (albumsRes.status === "fulfilled") {
+            setAlbumResults(albumsRes.value?.albums || albumsRes.value?.results || []);
+          }
+
+          if (playlistsRes.status === "fulfilled") {
+            setPlaylistResults(playlistsRes.value?.playlists || playlistsRes.value?.results || []);
+          }
+        } else if (selectedFilter === "songs") {
+          const searchRes = await api.searchWithFilter(trimmed, "songs", 0, PAGE_SIZE);
+          if (thisVersion !== requestVersionRef.current) return;
+          const tracks = searchRes.tracks || searchRes.results || [];
+          setResults(tracks);
+          setArtistResults([]);
+          setAlbumResults([]);
+          setPlaylistResults([]);
+          setHasMore(Boolean(searchRes.has_more));
+          setTotalLoaded(tracks.length);
+        } else if (selectedFilter === "artists") {
+          const artistsRes = await api.searchArtists(trimmed, 15);
+          if (thisVersion !== requestVersionRef.current) return;
+          const valid = (artistsRes.artists || artistsRes.results || []).filter((a) => a && a.name);
+          setArtistResults(valid);
+          setResults([]);
+          setAlbumResults([]);
+          setPlaylistResults([]);
+          setHasMore(false);
+          setTotalLoaded(valid.length);
+        } else if (selectedFilter === "albums") {
+          const albumsRes = await api.searchAlbums(trimmed, 0, 25);
+          if (thisVersion !== requestVersionRef.current) return;
+          const albums = albumsRes.albums || albumsRes.results || [];
+          setAlbumResults(albums);
+          setResults([]);
+          setArtistResults([]);
+          setPlaylistResults([]);
+          setHasMore(Boolean(albumsRes.has_more));
+          setTotalLoaded(albums.length);
+        } else if (selectedFilter === "playlists") {
+          const plRes = await api.searchPlaylists(trimmed, 0, 25);
+          if (thisVersion !== requestVersionRef.current) return;
+          const playlists = plRes.playlists || plRes.results || [];
+          setPlaylistResults(playlists);
+          setResults([]);
+          setArtistResults([]);
+          setAlbumResults([]);
+          setHasMore(Boolean(plRes.has_more));
+          setTotalLoaded(playlists.length);
         }
 
         setHasSearched(true);
 
-        // Record query to recent searches
         const uid = auth.currentUser?.uid;
         if (uid && trimmed) {
           addRecentSearch(uid, trimmed).catch(() => {});
@@ -614,11 +717,15 @@ export default function SearchScreen() {
         clearTimeout(searchTimeoutRef.current);
       }
     };
-  }, [query]);
+  }, [query, selectedFilter]);
 
   // Load more tracks for infinite scroll
   const handleLoadMore = useCallback(async () => {
-    if (isLoadingMore || isSearching || !hasMore || !query.trim() || results.length === 0) {
+    if (isLoadingMore || isSearching || !hasMore || !query.trim()) {
+      return;
+    }
+
+    if (selectedFilter !== "all" && selectedFilter !== "songs") {
       return;
     }
 
@@ -644,7 +751,7 @@ export default function SearchScreen() {
     } finally {
       setIsLoadingMore(false);
     }
-  }, [isLoadingMore, isSearching, hasMore, query, results.length]);
+  }, [isLoadingMore, isSearching, hasMore, query, results.length, selectedFilter]);
 
   // Important: Playing a track must NEVER modify `query`
   const handlePlaySong = (track, index = 0, trackList = null) => {
@@ -750,48 +857,128 @@ export default function SearchScreen() {
 
           {/* Search Pill Row (only shown when search is active via the top header button) */}
           {isSearchActive && (
-            <View style={styles.searchRowWrapper}>
-              <View style={[styles.inlineSearchBox, styles.flexSearchBox, styles.liftedSearchBox]}>
-                <Ionicons name="search" size={19} color="#727272" style={{ marginRight: 10 }} />
-                <TextInput
-                  ref={searchInputRef}
-                  style={styles.inlineSearchInput}
-                  placeholder="What do you want to listen to?"
-                  placeholderTextColor="#777777"
-                  value={query}
-                  onChangeText={setQuery}
-                  autoFocus={true}
-                  returnKeyType="search"
-                  autoCorrect={false}
-                  accessibilityLabel="Search input"
-                />
-                {query.length > 0 && (
+            <View>
+              <View style={styles.searchRowWrapper}>
+                <View style={[styles.inlineSearchBox, styles.flexSearchBox, styles.liftedSearchBox]}>
+                  <Ionicons name="search" size={19} color="#727272" style={{ marginRight: 10 }} />
+                  <TextInput
+                    ref={searchInputRef}
+                    style={styles.inlineSearchInput}
+                    placeholder="Search songs, artists, albums, or lyrics..."
+                    placeholderTextColor="#777777"
+                    value={query}
+                    onChangeText={setQuery}
+                    autoFocus={true}
+                    returnKeyType="search"
+                    autoCorrect={false}
+                    accessibilityLabel="Search input"
+                  />
+                  {query.length > 0 && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        setQuery("");
+                        searchInputRef.current?.focus();
+                      }}
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                      style={styles.searchClearBtn}
+                      activeOpacity={0.7}
+                      accessibilityLabel="Clear search input"
+                    >
+                      <View style={styles.clearCircleBadge}>
+                        <Ionicons name="close" size={13} color="#121212" style={styles.clearIconGlyph} />
+                      </View>
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Voice Search Microphone Button */}
                   <TouchableOpacity
-                    onPress={() => {
-                      setQuery("");
-                      searchInputRef.current?.focus();
-                    }}
-                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                    style={styles.searchClearBtn}
+                    onPress={handleToggleVoiceSearch}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    style={[styles.voiceSearchBtn, isListeningVoice && styles.voiceSearchBtnListening]}
                     activeOpacity={0.7}
-                    accessibilityLabel="Clear search input"
+                    accessibilityLabel="Voice search"
                   >
-                    <View style={styles.clearCircleBadge}>
-                      <Ionicons name="close" size={13} color="#121212" style={styles.clearIconGlyph} />
-                    </View>
+                    <Ionicons
+                      name={isListeningVoice ? "mic" : "mic-outline"}
+                      size={18}
+                      color={isListeningVoice ? "#1DB954" : "#AAAAAA"}
+                    />
                   </TouchableOpacity>
-                )}
+                </View>
+
+                <TouchableOpacity
+                  style={styles.cancelCircleBtn}
+                  onPress={handleCancelSearch}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  activeOpacity={0.75}
+                  accessibilityLabel="Close search"
+                >
+                  <Ionicons name="close" size={18} color="#FFFFFF" />
+                </TouchableOpacity>
               </View>
 
-              <TouchableOpacity
-                style={styles.cancelCircleBtn}
-                onPress={handleCancelSearch}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                activeOpacity={0.75}
-                accessibilityLabel="Close search"
+              {/* Category Filter Pills: All / Songs / Artists / Albums / Playlists */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterPillsContainer}
               >
-                <Ionicons name="close" size={18} color="#FFFFFF" />
-              </TouchableOpacity>
+                {[
+                  { id: "all", label: "All" },
+                  { id: "songs", label: "Songs" },
+                  { id: "artists", label: "Artists" },
+                  { id: "albums", label: "Albums" },
+                  { id: "playlists", label: "Playlists" },
+                ].map((tab) => {
+                  const isSelected = selectedFilter === tab.id;
+                  return (
+                    <TouchableOpacity
+                      key={tab.id}
+                      style={[styles.filterPill, isSelected && styles.filterPillActive]}
+                      onPress={() => setSelectedFilter(tab.id)}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.filterPillText,
+                          isSelected && styles.filterPillTextActive,
+                        ]}
+                      >
+                        {tab.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Quick Search Operators Chips */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.operatorChipsContainer}
+              >
+                {[
+                  { label: "artist:", op: "artist:" },
+                  { label: "genre:", op: "genre:" },
+                  { label: "mood:", op: "mood:" },
+                  { label: "lyrics:", op: "lyrics:" },
+                  { label: "year:", op: "year:2024" },
+                  { label: "lang:", op: "lang:hindi" },
+                ].map((chip) => (
+                  <TouchableOpacity
+                    key={chip.label}
+                    style={styles.operatorChip}
+                    onPress={() => {
+                      const prefix = query ? query + " " : "";
+                      setQuery(prefix + chip.op);
+                      searchInputRef.current?.focus();
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={styles.operatorChipText}>{chip.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             </View>
           )}
         </View>
@@ -929,6 +1116,70 @@ export default function SearchScreen() {
                 </View>
               )}
 
+              {/* Matching Albums Horizontal Carousel (when available or filter is albums) */}
+              {albumResults.length > 0 && (
+                <View style={styles.albumSectionWrap}>
+                  <Text style={styles.sectionHeadingMini}>Albums</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.albumsCarouselList}>
+                    {albumResults.map((alb, idx) => (
+                      <TouchableOpacity
+                        key={(alb.id || alb.title) + "_" + idx}
+                        style={styles.albumCard}
+                        onPress={() => {
+                          // Search songs from this album
+                          setQuery(alb.title);
+                          setSelectedFilter("songs");
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Image
+                          source={{ uri: getHighResArtwork(alb.image || alb.thumbnail) || alb.image }}
+                          style={styles.albumCardImg}
+                        />
+                        <Text style={styles.albumCardTitle} numberOfLines={1}>
+                          {alb.title}
+                        </Text>
+                        <Text style={styles.albumCardArtist} numberOfLines={1}>
+                          {alb.artist || "Album"}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* Matching Playlists Horizontal Carousel (when available or filter is playlists) */}
+              {playlistResults.length > 0 && (
+                <View style={styles.playlistSectionWrap}>
+                  <Text style={styles.sectionHeadingMini}>Playlists</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.playlistsCarouselList}>
+                    {playlistResults.map((pl, idx) => (
+                      <TouchableOpacity
+                        key={(pl.id || pl.title) + "_" + idx}
+                        style={styles.playlistCard}
+                        onPress={() => {
+                          // Search songs from this playlist
+                          setQuery(pl.title);
+                          setSelectedFilter("songs");
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Image
+                          source={{ uri: getHighResArtwork(pl.image || pl.thumbnail) || pl.image }}
+                          style={styles.playlistCardImg}
+                        />
+                        <Text style={styles.playlistCardTitle} numberOfLines={1}>
+                          {pl.title}
+                        </Text>
+                        <Text style={styles.playlistCardDesc} numberOfLines={1}>
+                          {pl.description || "Staytup Playlist"}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
               {/* Songs count badge */}
               {results.length > 0 && (
                 <View style={styles.songsSectionHeader}>
@@ -990,12 +1241,12 @@ export default function SearchScreen() {
             );
           }}
           ListEmptyComponent={
-            !isSearching && hasSearched ? (
+            !isSearching && hasSearched && results.length === 0 && albumResults.length === 0 && playlistResults.length === 0 && artistResults.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <Ionicons name="musical-notes-outline" size={48} color="#555555" />
                 <Text style={styles.emptyTitle}>No songs or artists found</Text>
                 <Text style={styles.emptySub}>
-                  Try searching for another artist name or song title.
+                  Try searching for another artist name, lyric, or remove operators.
                 </Text>
               </View>
             ) : null
@@ -1135,6 +1386,34 @@ export default function SearchScreen() {
                     </View>
                   </View>
                 ))}
+              </View>
+            )}
+
+            {/* Trending Searches Section */}
+            {trendingSearches.length > 0 && (
+              <View style={styles.trendingSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Ionicons name="trending-up" size={19} color="#1DB954" />
+                    <Text style={styles.sectionHeading}>Trending Searches</Text>
+                  </View>
+                </View>
+                <View style={styles.trendingTagsWrap}>
+                  {trendingSearches.map((item, idx) => {
+                    const tag = typeof item === "string" ? item : item.tag || item.query || item.title;
+                    return (
+                      <TouchableOpacity
+                        key={tag + "_" + idx}
+                        style={styles.trendingTagPill}
+                        onPress={() => handleSelectQuery(tag)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="search" size={13} color="#888888" style={{ marginRight: 6 }} />
+                        <Text style={styles.trendingTagText}>{tag}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
               </View>
             )}
 
@@ -1892,5 +2171,166 @@ const styles = StyleSheet.create({
     height: 90,
     borderRadius: 12,
     backgroundColor: "#222222",
+  },
+
+  // Voice Search Mic Button
+  voiceSearchBtn: {
+    padding: 6,
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 4,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  voiceSearchBtnListening: {
+    backgroundColor: "rgba(29, 185, 84, 0.2)",
+    borderRadius: 14,
+  },
+
+  // Filter Pills (All / Songs / Artists / Albums / Playlists)
+  filterPillsContainer: {
+    flexDirection: "row",
+    gap: 8,
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
+  filterPill: {
+    paddingVertical: 5,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    backgroundColor: "#181818",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  filterPillActive: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#FFFFFF",
+  },
+  filterPillText: {
+    fontFamily: fonts.medium,
+    fontSize: 12.5,
+    color: "#B3B3B3",
+  },
+  filterPillTextActive: {
+    color: "#000000",
+    fontFamily: fonts.semiBold,
+  },
+
+  // Operator Chips
+  operatorChipsContainer: {
+    flexDirection: "row",
+    gap: 6,
+    paddingBottom: 6,
+  },
+  operatorChip: {
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.09)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  operatorChipText: {
+    fontFamily: fonts.regular,
+    fontSize: 11,
+    color: "#888888",
+  },
+
+  // Trending Searches Tags
+  trendingSection: {
+    marginBottom: 24,
+  },
+  trendingTagsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  trendingTagPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 7,
+    paddingHorizontal: 13,
+    borderRadius: 18,
+    backgroundColor: "#161616",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  trendingTagText: {
+    fontFamily: fonts.medium,
+    fontSize: 12.5,
+    color: "#E0E0E0",
+  },
+
+  // Albums Carousel
+  albumSectionWrap: {
+    marginBottom: 16,
+  },
+  sectionHeadingMini: {
+    fontFamily: fonts.semiBold,
+    fontSize: 15,
+    color: "#FFFFFF",
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
+  albumsCarouselList: {
+    gap: 12,
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  albumCard: {
+    width: 110,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  albumCardImg: {
+    width: 110,
+    height: 110,
+    borderRadius: 8,
+    backgroundColor: "#1c1c1c",
+    marginBottom: 6,
+  },
+  albumCardTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12.5,
+    color: "#FFFFFF",
+  },
+  albumCardArtist: {
+    fontFamily: fonts.regular,
+    fontSize: 11,
+    color: "#888888",
+    marginTop: 1,
+  },
+
+  // Playlists Carousel
+  playlistSectionWrap: {
+    marginBottom: 16,
+  },
+  playlistsCarouselList: {
+    gap: 12,
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  playlistCard: {
+    width: 110,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  playlistCardImg: {
+    width: 110,
+    height: 110,
+    borderRadius: 8,
+    backgroundColor: "#1c1c1c",
+    marginBottom: 6,
+  },
+  playlistCardTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12.5,
+    color: "#FFFFFF",
+  },
+  playlistCardDesc: {
+    fontFamily: fonts.regular,
+    fontSize: 11,
+    color: "#888888",
+    marginTop: 1,
   },
 });

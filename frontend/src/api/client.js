@@ -461,6 +461,80 @@ export const api = {
     }
   },
 
+  // ─── Smarter search with type filter (all, songs, artists, albums, playlists)
+  searchWithFilter: async (query, type = "songs", offset = 0, limit = 30) => {
+    if (!query || !query.trim()) {
+      return { query: "", count: 0, results: [], tracks: [], artists: [], albums: [], playlists: [], has_more: false };
+    }
+    try {
+      const data = await backendFetch("search", {
+        q: query.trim(),
+        type: (type || "songs").toLowerCase(),
+        offset,
+        limit,
+      });
+
+      const tracks = (data.tracks || data.results || []).map(decodeTrackEntities);
+      const artists = (data.artists || []).map((a) => ({
+        ...a,
+        name: decodeHtml(a.name || "Artist"),
+      }));
+      const albums = (data.albums || []).map((al) => ({
+        ...al,
+        title: decodeHtml(al.title || al.name || "Album"),
+        artist: decodeHtml(al.artist || ""),
+      }));
+      const playlists = (data.playlists || []).map((pl) => ({
+        ...pl,
+        title: decodeHtml(pl.title || pl.name || "Playlist"),
+        description: decodeHtml(pl.description || ""),
+      }));
+
+      return {
+        query: query.trim(),
+        parsed_query: data.parsed_query || query.trim(),
+        operators: data.operators || {},
+        count: data.count || tracks.length,
+        tracks,
+        results: type === "artists" ? artists : type === "albums" ? albums : type === "playlists" ? playlists : tracks,
+        artists,
+        albums,
+        playlists,
+        has_more: data.has_more || false,
+      };
+    } catch (err) {
+      console.warn("[API] searchWithFilter error:", err.message);
+      return { query: query.trim(), count: 0, results: [], tracks: [], artists: [], albums: [], playlists: [], has_more: false };
+    }
+  },
+
+  searchAlbums: async (query, offset = 0, limit = 20) => {
+    return api.searchWithFilter(query, "albums", offset, limit);
+  },
+
+  searchPlaylists: async (query, offset = 0, limit = 20) => {
+    return api.searchWithFilter(query, "playlists", offset, limit);
+  },
+
+  getTrendingSearches: async () => {
+    try {
+      const data = await backendFetch("search/trending");
+      return data?.trending || [];
+    } catch (_) {
+      return [
+        { label: "Romantic Melodies", type: "genre", query: "genre:romantic" },
+        { label: "Arijit Singh", type: "artist", query: 'artist:"Arijit Singh"' },
+        { label: "Punjabi Bangers", type: "genre", query: "genre:punjabi" },
+        { label: "Diljit Dosanjh", type: "artist", query: 'artist:"Diljit Dosanjh"' },
+        { label: "Chill Lo-Fi", type: "mood", query: "mood:chill lofi" },
+        { label: "Party Hits 2024", type: "mood", query: "mood:party 2024" },
+        { label: "Karan Aujla", type: "artist", query: 'artist:"Karan Aujla"' },
+        { label: "Shreya Ghoshal", type: "artist", query: 'artist:"Shreya Ghoshal"' },
+        { label: "Global Pop Hits", type: "genre", query: "genre:pop" },
+      ];
+    }
+  },
+
   // ─── Home feed ────────────────────────────────────────────────────────────
   getHomeFeed: async (_userId, forceRefresh = false) => {
     try {
