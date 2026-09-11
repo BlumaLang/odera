@@ -236,6 +236,79 @@ export default function FullPlayerModal() {
     })
   ).current;
 
+  // Track Options / Share Modal State & Swipe Dismiss
+  const [showTrackOptionsModal, setShowTrackOptionsModal] = useState(false);
+  const [shareToastMessage, setShareToastMessage] = useState(null);
+  const trackOptionsPanY = useRef(new Animated.Value(0)).current;
+  const trackOptionsPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return gestureState.dy > 6 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dy > 0) trackOptionsPanY.setValue(gestureState.dy);
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy > 70 || gestureState.vy > 0.5) {
+          Animated.timing(trackOptionsPanY, {
+            toValue: 450,
+            duration: 180,
+            useNativeDriver: Platform.OS !== "web",
+          }).start(() => {
+            setShowTrackOptionsModal(false);
+            trackOptionsPanY.setValue(0);
+          });
+        } else {
+          Animated.spring(trackOptionsPanY, {
+            toValue: 0,
+            friction: 8,
+            useNativeDriver: Platform.OS !== "web",
+          }).start();
+        }
+      },
+    })
+  ).current;
+
+  const handleShareTrack = async () => {
+    setShowTrackOptionsModal(false);
+    const videoId = currentTrack?.videoId || currentTrack?.video_id || "";
+    const title = cleanTitle(currentTrack?.title || "Music");
+    const artist = currentTrack?.artist || "Staytup";
+    const shareUrl = typeof window !== "undefined" && window.location?.origin
+      ? `${window.location.origin}/home?v=${videoId}`
+      : `https://staytup.odireca.com/home?v=${videoId}`;
+
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({
+          title: `${title} - ${artist}`,
+          text: `Listen to "${title}" by ${artist} on Staytup!`,
+          url: shareUrl,
+        });
+        return;
+      } catch (err) {
+        if (err.name === "AbortError") {
+          return;
+        }
+      }
+    }
+
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        setShareToastMessage("Song link copied to clipboard!");
+        setTimeout(() => setShareToastMessage(null), 2500);
+      } catch (err) {
+        setShareToastMessage("Could not copy link");
+        setTimeout(() => setShareToastMessage(null), 2500);
+      }
+    } else {
+      setShareToastMessage("Song link copied!");
+      setTimeout(() => setShareToastMessage(null), 2500);
+    }
+  };
+
   const artistPanResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
@@ -373,6 +446,24 @@ export default function FullPlayerModal() {
       });
     }
   }, [showLyrics]);
+
+  useEffect(() => {
+    if (showConnectModal) {
+      return registerBackAction(() => {
+        setShowConnectModal(false);
+        return true;
+      });
+    }
+  }, [showConnectModal]);
+
+  useEffect(() => {
+    if (showTrackOptionsModal) {
+      return registerBackAction(() => {
+        setShowTrackOptionsModal(false);
+        return true;
+      });
+    }
+  }, [showTrackOptionsModal]);
 
   useEffect(() => {
     if (isFullPlayerVisible) {
@@ -842,13 +933,23 @@ export default function FullPlayerModal() {
 
     return (
       <View style={[styles.queueContainer, (isDesktop || isTablet) && styles.desktopQueueContainer]}>
-        {/* Queue Header with count and Clear option */}
+        {/* Queue Header with back button, count and Clear option */}
         <View style={styles.queueHeaderRow}>
-          <View>
-            <Text style={styles.queueHeaderTitle}>Queue</Text>
-            <Text style={styles.queueHeaderSubtitle}>
-              {validQueue.length} {validQueue.length === 1 ? "song" : "songs"}
-            </Text>
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <TouchableOpacity
+              onPress={() => setShowQueue(false)}
+              style={{ marginRight: 12, padding: 4 }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityLabel="Back to player"
+            >
+              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+            <View>
+              <Text style={styles.queueHeaderTitle}>Queue</Text>
+              <Text style={styles.queueHeaderSubtitle}>
+                {validQueue.length} {validQueue.length === 1 ? "song" : "songs"}
+              </Text>
+            </View>
           </View>
           {upcomingTracks.length > 0 && (
             <TouchableOpacity
@@ -1039,7 +1140,7 @@ export default function FullPlayerModal() {
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               <Ionicons
-                name={sleepSecondsLeft !== null || sleepEndOnTrack ? "moon" : "moon-outline"}
+                name={sleepSecondsLeft !== null || sleepEndOnTrack ? "stopwatch" : "stopwatch-outline"}
                 size={16}
                 color={sleepSecondsLeft !== null || sleepEndOnTrack ? colors.primary : "#FFFFFF"}
               />
@@ -1062,6 +1163,7 @@ export default function FullPlayerModal() {
               onPress={() => setShowQueue(!showQueue)}
               activeOpacity={0.8}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityLabel="Toggle queue"
             >
               <Ionicons
                 name={showQueue ? "close" : "list"}
@@ -1078,6 +1180,22 @@ export default function FullPlayerModal() {
               </Text>
             </TouchableOpacity>
 
+            <TouchableOpacity
+              style={styles.desktopSleepBtn}
+              onPress={() => {
+                trackOptionsPanY.setValue(0);
+                setShowTrackOptionsModal(true);
+              }}
+              activeOpacity={0.8}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityLabel="Song options"
+            >
+              <Ionicons
+                name="ellipsis-horizontal"
+                size={16}
+                color="#FFFFFF"
+              />
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -1477,14 +1595,17 @@ export default function FullPlayerModal() {
 
         <TouchableOpacity
           style={styles.topBarButton}
-          onPress={() => setShowQueue(!showQueue)}
+          onPress={() => {
+            trackOptionsPanY.setValue(0);
+            setShowTrackOptionsModal(true);
+          }}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityLabel="Toggle queue"
+          accessibilityLabel="Song options"
         >
           <Ionicons
-            name={showQueue ? "close" : "list"}
+            name="ellipsis-horizontal"
             size={24}
-            color={showQueue ? colors.primary : "#FFFFFF"}
+            color="#FFFFFF"
           />
         </TouchableOpacity>
       </View>
@@ -1873,6 +1994,14 @@ export default function FullPlayerModal() {
         <View style={styles.modalContainer}>
           {isDesktop || isTablet ? renderDesktopPlayer() : renderMobilePlayer()}
 
+          {/* Share & Action Toast Notification */}
+          {shareToastMessage && (
+            <View style={styles.shareToastContainer}>
+              <Ionicons name="checkmark-circle" size={18} color={colors.primary} style={{ marginRight: 8 }} />
+              <Text style={styles.shareToastText}>{shareToastMessage}</Text>
+            </View>
+          )}
+
         {/* Dedicated Sleep Timer Modal */}
         <Modal
           animationType="slide"
@@ -2138,6 +2267,194 @@ export default function FullPlayerModal() {
               >
                 <Ionicons name="bluetooth" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
                 <Text style={styles.connectAirplayButtonText}>Bluetooth & Airplay</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* Track Options & Share Bottom Sheet Modal */}
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={showTrackOptionsModal}
+          onRequestClose={() => setShowTrackOptionsModal(false)}
+        >
+          <TouchableOpacity
+            style={styles.optionsModalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowTrackOptionsModal(false)}
+          >
+            <Animated.View
+              style={[
+                styles.optionsModalSheet,
+                { transform: [{ translateY: trackOptionsPanY }] },
+              ]}
+              {...trackOptionsPanResponder.panHandlers}
+              onStartShouldSetResponder={() => true}
+            >
+              {/* Drag Handle */}
+              <View style={styles.optionsDragHandle} />
+
+              {/* Track Header Card */}
+              <View style={styles.optionsTrackHeader}>
+                {artwork ? (
+                  <Image source={{ uri: artwork }} style={styles.optionsArtwork} resizeMode="cover" />
+                ) : (
+                  <View style={[styles.optionsArtwork, styles.artworkFallback]}>
+                    <Ionicons name="musical-notes" size={24} color={colors.primary} />
+                  </View>
+                )}
+                <View style={styles.optionsTrackInfo}>
+                  <Text style={styles.optionsTrackTitle} numberOfLines={1}>
+                    {cleanTitle(currentTrack?.title || "Music")}
+                  </Text>
+                  <Text style={styles.optionsTrackArtist} numberOfLines={1}>
+                    {currentTrack?.artist || "Staytup"}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.optionsDivider} />
+
+              {/* Action List */}
+              <ScrollView style={styles.optionsListScroll} bounces={false} showsVerticalScrollIndicator={false}>
+                {/* Share Song Action */}
+                <TouchableOpacity
+                  style={styles.optionsActionRow}
+                  onPress={handleShareTrack}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.optionsActionIconWrap}>
+                    <Ionicons name="share-outline" size={22} color="#FFFFFF" />
+                  </View>
+                  <View style={styles.optionsActionTextWrap}>
+                    <Text style={styles.optionsActionTitle}>Share Song</Text>
+                    <Text style={styles.optionsActionSub}>Send song link with friends or apps</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#666666" />
+                </TouchableOpacity>
+
+                {/* Add to Playlist Action */}
+                <TouchableOpacity
+                  style={styles.optionsActionRow}
+                  onPress={() => {
+                    setShowTrackOptionsModal(false);
+                    setShowAddToPlaylist(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.optionsActionIconWrap}>
+                    <Ionicons name="add-circle-outline" size={22} color="#FFFFFF" />
+                  </View>
+                  <View style={styles.optionsActionTextWrap}>
+                    <Text style={styles.optionsActionTitle}>Add to Playlist</Text>
+                    <Text style={styles.optionsActionSub}>Save to your personal playlists</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#666666" />
+                </TouchableOpacity>
+
+                {/* Like / Favorite Toggle Action */}
+                <TouchableOpacity
+                  style={styles.optionsActionRow}
+                  onPress={() => {
+                    toggleLike();
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.optionsActionIconWrap}>
+                    <Ionicons
+                      name={isFavorite ? "heart" : "heart-outline"}
+                      size={22}
+                      color={isFavorite ? colors.primary : "#FFFFFF"}
+                    />
+                  </View>
+                  <View style={styles.optionsActionTextWrap}>
+                    <Text style={[styles.optionsActionTitle, isFavorite && { color: colors.primary }]}>
+                      {isFavorite ? "Liked to Your Library" : "Like Song"}
+                    </Text>
+                    <Text style={styles.optionsActionSub}>
+                      {isFavorite ? "Tap to remove from Liked Songs" : "Save to your Liked Songs"}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                {/* View Artist Action */}
+                <TouchableOpacity
+                  style={styles.optionsActionRow}
+                  onPress={() => {
+                    setShowTrackOptionsModal(false);
+                    handleArtistPress();
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.optionsActionIconWrap}>
+                    <Ionicons name="person-outline" size={22} color="#FFFFFF" />
+                  </View>
+                  <View style={styles.optionsActionTextWrap}>
+                    <Text style={styles.optionsActionTitle}>View Artist</Text>
+                    <Text style={styles.optionsActionSub}>{currentTrack?.artist || "Explore artist discography"}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#666666" />
+                </TouchableOpacity>
+
+                {/* Sleep Timer Action */}
+                <TouchableOpacity
+                  style={styles.optionsActionRow}
+                  onPress={() => {
+                    setShowTrackOptionsModal(false);
+                    setShowSleepModal(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.optionsActionIconWrap}>
+                    <Ionicons
+                      name={sleepSecondsLeft !== null || sleepEndOnTrack ? "stopwatch" : "stopwatch-outline"}
+                      size={22}
+                      color={sleepSecondsLeft !== null || sleepEndOnTrack ? colors.primary : "#FFFFFF"}
+                    />
+                  </View>
+                  <View style={styles.optionsActionTextWrap}>
+                    <Text style={[styles.optionsActionTitle, (sleepSecondsLeft !== null || sleepEndOnTrack) && { color: colors.primary }]}>
+                      Sleep Timer
+                    </Text>
+                    <Text style={styles.optionsActionSub}>
+                      {sleepSecondsLeft !== null
+                        ? `Stop playback in ${formatSleep(sleepSecondsLeft)}`
+                        : sleepEndOnTrack
+                        ? "Stop playback at end of track"
+                        : "Turn off audio automatically"}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#666666" />
+                </TouchableOpacity>
+
+                {/* Connect Device Action */}
+                <TouchableOpacity
+                  style={styles.optionsActionRow}
+                  onPress={() => {
+                    setShowTrackOptionsModal(false);
+                    setShowConnectModal(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.optionsActionIconWrap}>
+                    <Ionicons name={accurateDeviceIcon || "phone-portrait-outline"} size={22} color="#FFFFFF" />
+                  </View>
+                  <View style={styles.optionsActionTextWrap}>
+                    <Text style={styles.optionsActionTitle}>Connect to a Device</Text>
+                    <Text style={styles.optionsActionSub}>Listen on speaker, TV, or Bluetooth</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#666666" />
+                </TouchableOpacity>
+              </ScrollView>
+
+              {/* Close Button */}
+              <TouchableOpacity
+                style={styles.optionsCloseButton}
+                onPress={() => setShowTrackOptionsModal(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.optionsCloseButtonText}>Close</Text>
               </TouchableOpacity>
             </Animated.View>
           </TouchableOpacity>
@@ -3578,5 +3895,134 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     color: "#FFFFFF",
     letterSpacing: 0.2,
+  },
+
+  // Share Toast Notification
+  shareToastContainer: {
+    position: "absolute",
+    top: Platform.OS === "web" ? 24 : 54,
+    alignSelf: "center",
+    backgroundColor: "rgba(22, 22, 28, 0.96)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.16)",
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 30,
+    flexDirection: "row",
+    alignItems: "center",
+    zIndex: 99999,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    elevation: 12,
+  },
+  shareToastText: {
+    color: "#FFFFFF",
+    fontFamily: fonts.medium,
+    fontSize: 14,
+  },
+
+  // Track Options / Share Bottom Sheet Modal
+  optionsModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.72)",
+    justifyContent: "flex-end",
+  },
+  optionsModalSheet: {
+    backgroundColor: "#16161C",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === "ios" ? 36 : 24,
+    paddingHorizontal: 20,
+    maxHeight: "85%",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  optionsDragHandle: {
+    width: 40,
+    height: 4.5,
+    borderRadius: 3,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    alignSelf: "center",
+    marginBottom: 16,
+  },
+  optionsTrackHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  optionsArtwork: {
+    width: 52,
+    height: 52,
+    borderRadius: 8,
+    marginRight: 14,
+    backgroundColor: "#222228",
+  },
+  optionsTrackInfo: {
+    flex: 1,
+    justifyContent: "center",
+  },
+  optionsTrackTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: "#FFFFFF",
+    marginBottom: 3,
+  },
+  optionsTrackArtist: {
+    fontFamily: fonts.regular,
+    fontSize: 13.5,
+    color: "#A7A7A7",
+  },
+  optionsDivider: {
+    height: 1,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    marginBottom: 8,
+  },
+  optionsListScroll: {
+    maxHeight: 380,
+  },
+  optionsActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 13,
+    paddingHorizontal: 4,
+  },
+  optionsActionIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 14,
+  },
+  optionsActionTextWrap: {
+    flex: 1,
+  },
+  optionsActionTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 15,
+    color: "#FFFFFF",
+    marginBottom: 2,
+  },
+  optionsActionSub: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: "#8E8E93",
+  },
+  optionsCloseButton: {
+    marginTop: 14,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    paddingVertical: 13,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  optionsCloseButtonText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14.5,
+    color: "#FFFFFF",
   },
 });

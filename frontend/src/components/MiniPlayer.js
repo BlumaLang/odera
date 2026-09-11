@@ -26,7 +26,6 @@ export default function MiniPlayer() {
     togglePlayPause,
     playNext,
     setFullPlayerVisible,
-    openQueue,
   } = useAudio();
   const { isSongLiked, toggleLikeSong } = useUser();
 
@@ -177,23 +176,6 @@ export default function MiniPlayer() {
                 </Animated.View>
               </TouchableOpacity>
             </View>
-
-            {/* Queue Button */}
-            <TouchableOpacity
-              onPress={(e) => {
-                e?.stopPropagation?.();
-                openQueue();
-              }}
-              style={styles.iconButton}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityLabel="Open Queue"
-            >
-              <Ionicons
-                name="list"
-                size={21}
-                color={colors.textSecondary}
-              />
-            </TouchableOpacity>
 
             {isLoading ? (
               <ActivityIndicator
