@@ -28,7 +28,8 @@ import { api } from "../api/client";
 import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
-import { auth, getRecentlyPlayed, subscribeRecentlyPlayed, removeRecentlyPlayed, subscribePublicPlaylists } from "../services/firebase";
+import { auth, getRecentlyPlayed, subscribeRecentlyPlayed, removeRecentlyPlayed, subscribePublicPlaylists, subscribeAppTrendingRTDB } from "../services/firebase";
+import { resolveLocalArtistImage } from "../theme/artistImages";
 import { getHighResArtwork, decodeHtml } from "../utils/imageUtils";
 import {
   getDownloadedTracks,
@@ -121,6 +122,58 @@ function LibrarySkeleton({ type }) {
   );
 }
 
+function PlaylistRowCover({ coverUrl }) {
+  const [hasError, setHasError] = useState(false);
+  const cleanUri =
+    !hasError && coverUrl && typeof coverUrl === "string" && coverUrl.trim().length > 0
+      ? getHighResArtwork(coverUrl.trim()) || coverUrl.trim()
+      : null;
+
+  if (!cleanUri) {
+    return (
+      <View style={[styles.playlistRowThumb, styles.playlistRowThumbFallback]}>
+        <Ionicons name="musical-notes" size={24} color={colors.primary} />
+      </View>
+    );
+  }
+
+  return (
+    <Image
+      source={{ uri: cleanUri }}
+      style={styles.playlistRowThumb}
+      resizeMode="cover"
+      onError={() => setHasError(true)}
+    />
+  );
+}
+
+function ArtistRowAvatar({ name, photoUrl }) {
+  const [hasError, setHasError] = useState(false);
+  const cleanUri =
+    !hasError && photoUrl && typeof photoUrl === "string" && photoUrl.trim().length > 0
+      ? getHighResArtwork(photoUrl.trim()) || photoUrl.trim()
+      : null;
+
+  const initial = ((name || "A").trim()[0] || "A").toUpperCase();
+
+  if (!cleanUri) {
+    return (
+      <View style={styles.artistRowAvatarFallback}>
+        <Text style={styles.artistRowInitial}>{initial}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <Image
+      source={{ uri: cleanUri }}
+      style={styles.artistRowAvatar}
+      resizeMode="cover"
+      onError={() => setHasError(true)}
+    />
+  );
+}
+
 const FOLDER_COLORS = ["#1DB954", "#8B5CF6", "#3B82F6", "#EC4899", "#F59E0B", "#10B981", "#6366F1"];
 
 export default function LibraryScreen() {
@@ -147,6 +200,8 @@ export default function LibraryScreen() {
     deleteFolder,
     addPlaylistToFolder,
     removePlaylistFromFolder,
+    toggleFavoriteArtist,
+    isFavoriteArtist,
   } = useUser();
 
   const [activeTab, setActiveTab] = useState("playlists");
@@ -178,6 +233,8 @@ export default function LibraryScreen() {
   const [playlistSubFilter, setPlaylistSubFilter] = useState("all"); // "all" | "my" | "public" | "collab"
   const [contextLoaded, setContextLoaded] = useState(false);
   const [tabLoading, setTabLoading] = useState(true);
+  const [appTrending, setAppTrending] = useState([]);
+  const [artistImages, setArtistImages] = useState({});
 
   const { currentTrack, playTrack, setShuffle } = useAudioPlayback();
 
@@ -213,6 +270,16 @@ export default function LibraryScreen() {
       isMounted = false;
       unsub();
     };
+  }, []);
+
+  // Subscribe to real-time trending tracks across app users
+  useEffect(() => {
+    const unsub = subscribeAppTrendingRTDB((tracks) => {
+      if (Array.isArray(tracks) && tracks.length > 0) {
+        setAppTrending(tracks);
+      }
+    }, 30);
+    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -252,7 +319,137 @@ export default function LibraryScreen() {
     }
   }, []);
 
-  // Merge regular and collab playlists
+  // History
+  const rawHistory = localRecentlyPlayed.length > 0 ? localRecentlyPlayed : (rtdbRecentlyPlayed || []);
+  const mergedHistory = useMemo(() => {
+    const map = new Map();
+    for (const item of rawHistory) {
+      const id = item.video_id || item.videoId;
+      if (!id) continue;
+      if (!map.has(id)) {
+        map.set(id, {
+          ...item,
+          videoId: id,
+          video_id: id,
+          play_count: item.play_count || 1,
+          last_played: item.playedAt || item.played_at || item.timestamp || 0,
+        });
+      } else {
+        const existing = map.get(id);
+        existing.play_count = (existing.play_count || 1) + 1;
+        const itemTime = item.playedAt || item.played_at || item.timestamp;
+        if (itemTime && (!existing.last_played || itemTime > existing.last_played)) {
+          existing.last_played = itemTime;
+        }
+      }
+    }
+    let list = Array.from(map.values()).sort((a, b) => {
+      return new Date(b.last_played || 0).getTime() - new Date(a.last_played || 0).getTime();
+    });
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(
+        (item) =>
+          (item.title && item.title.toLowerCase().includes(q)) ||
+          (item.artist && item.artist.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [rawHistory, searchQuery]);
+
+  // Software Auto-Generated Playlists from User Listen History & App Database
+  const historyPlaylists = useMemo(() => {
+    const result = [];
+    const pool = [...mergedHistory, ...(appTrending || [])].filter(Boolean);
+    const seenIds = new Set();
+    const uniquePool = [];
+    for (const t of pool) {
+      const vid = t.videoId || t.video_id || t.id;
+      if (vid && !seenIds.has(vid)) {
+        seenIds.add(vid);
+        uniquePool.push(t);
+      }
+    }
+
+    if (uniquePool.length >= 2) {
+      // 1. Staytup Community Top Tracks / Most Played
+      const topPlayed = [...uniquePool]
+        .sort((a, b) => (b.playCount || b.play_count || 1) - (a.playCount || a.play_count || 1))
+        .slice(0, 30);
+      const topArt = topPlayed[0]?.artwork_url || topPlayed[0]?.thumbnail || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80";
+      result.push({
+        id: "history_auto_top_hits",
+        name: "Staytup Community Top Hits",
+        description: "The most listened tracks across all Staytup user profiles.",
+        cover_url: topArt,
+        preview_artwork: topArt,
+        image: topArt,
+        isPublic: true,
+        is_public: true,
+        type: "public",
+        creator_name: "Staytup Platform",
+        track_count: topPlayed.length,
+        tracks: topPlayed,
+      });
+
+      // 2. Personal Listening Rotation (if user has played tracks)
+      if (mergedHistory.length >= 2) {
+        const userTracks = [...mergedHistory].slice(0, 25);
+        const userArt = userTracks[0]?.artwork_url || userTracks[0]?.thumbnail || "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80";
+        result.push({
+          id: "history_auto_personal_rotation",
+          name: "Your Daily Rotation",
+          description: "Curated automatically from your recent listening activity.",
+          cover_url: userArt,
+          preview_artwork: userArt,
+          image: userArt,
+          isPublic: true,
+          is_public: true,
+          type: "public",
+          creator_name: "Your History",
+          track_count: userTracks.length,
+          tracks: userTracks,
+        });
+      }
+
+      // 3. Chill & Lo-Fi Vibes
+      const chillTracks = uniquePool.filter((t) => {
+        const str = `${t.title || ""} ${t.artist || ""} ${t.album || ""}`.toLowerCase();
+        return (
+          str.includes("lofi") ||
+          str.includes("chill") ||
+          str.includes("acoustic") ||
+          str.includes("slow") ||
+          str.includes("night") ||
+          str.includes("relax") ||
+          str.includes("sleep") ||
+          str.includes("coffee")
+        );
+      });
+      const finalChill = (chillTracks.length >= 2 ? chillTracks : uniquePool.slice(2, 12)).slice(0, 20);
+      if (finalChill.length >= 2) {
+        const cArt = finalChill[0]?.artwork_url || finalChill[0]?.thumbnail || "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&q=80";
+        result.push({
+          id: "history_auto_chill_vibes",
+          name: "Midnight Chill & Lo-Fi",
+          description: "Relaxing beats, calm melodies, and late night soundscapes to unwind or focus.",
+          cover_url: cArt,
+          preview_artwork: cArt,
+          image: cArt,
+          isPublic: true,
+          is_public: true,
+          type: "public",
+          creator_name: "Staytup Curator",
+          track_count: finalChill.length,
+          tracks: finalChill,
+        });
+      }
+    }
+    return result;
+  }, [mergedHistory, appTrending]);
+
+  // Merge regular, collab, public, and history auto-generated playlists
   const rawPlaylists = useMemo(() => {
     const seen = new Set();
     const collabOriginalIds = new Set();
@@ -278,7 +475,7 @@ export default function LibraryScreen() {
       }
     }
 
-    for (const pub of publicPlaylists || []) {
+    for (const pub of [...(publicPlaylists || []), ...(historyPlaylists || [])]) {
       const id = String(pub.id || pub.collabId || "");
       if (id && !seen.has(id)) {
         seen.add(id);
@@ -287,7 +484,7 @@ export default function LibraryScreen() {
     }
 
     return result;
-  }, [rtdbPlaylists, collabPlaylists, publicPlaylists]);
+  }, [rtdbPlaylists, collabPlaylists, publicPlaylists, historyPlaylists]);
 
   // Filtered & Sorted Playlists
   const playlists = useMemo(() => {
@@ -376,55 +573,104 @@ export default function LibraryScreen() {
     let list = raw.map((item) => {
       const name = typeof item === "string" ? item : item?.name || "";
       const avatar = typeof item === "object" ? item?.image || item?.avatar || "" : "";
-      return { name, avatar };
+      return { name, avatar, isFollowed: true };
     }).filter((a) => a.name);
 
+    list.sort((a, b) => a.name.localeCompare(b.name));
+    return list;
+  }, [userProfile?.favoriteArtists]);
+
+  // Artists from User Listening History
+  const historyArtists = useMemo(() => {
+    const artistCounts = new Map();
+    const followedSet = new Set(followedArtists.map((a) => a.name.toLowerCase()));
+
+    for (const track of mergedHistory) {
+      const art = track.artist;
+      if (!art) continue;
+      const parts = art.split(/[,/&•]/).map((p) => p.trim()).filter(Boolean);
+      for (const p of parts) {
+        if (p.length < 2 || followedSet.has(p.toLowerCase())) continue;
+        const count = artistCounts.get(p) || 0;
+        artistCounts.set(p, count + 1);
+      }
+    }
+
+    return Array.from(artistCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 25)
+      .map(([name, count]) => ({
+        name,
+        avatar: "",
+        listenCount: count,
+        isFollowed: false,
+      }));
+  }, [mergedHistory, followedArtists]);
+
+  // Combined Artists with Search
+  const allLibraryArtists = useMemo(() => {
+    let list = [...followedArtists, ...historyArtists];
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       list = list.filter((a) => a.name.toLowerCase().includes(q));
     }
-    list.sort((a, b) => a.name.localeCompare(b.name));
     return list;
-  }, [userProfile?.favoriteArtists, searchQuery]);
+  }, [followedArtists, historyArtists, searchQuery]);
 
-  // History
-  const rawHistory = localRecentlyPlayed.length > 0 ? localRecentlyPlayed : (rtdbRecentlyPlayed || []);
-  const mergedHistory = useMemo(() => {
-    const map = new Map();
-    for (const item of rawHistory) {
-      const id = item.video_id || item.videoId;
-      if (!id) continue;
-      if (!map.has(id)) {
-        map.set(id, {
-          ...item,
-          videoId: id,
-          video_id: id,
-          play_count: item.play_count || 1,
-          last_played: item.playedAt || item.played_at || item.timestamp || 0,
-        });
-      } else {
-        const existing = map.get(id);
-        existing.play_count = (existing.play_count || 1) + 1;
-        const itemTime = item.playedAt || item.played_at || item.timestamp;
-        if (itemTime && (!existing.last_played || itemTime > existing.last_played)) {
-          existing.last_played = itemTime;
-        }
-      }
-    }
-    let list = Array.from(map.values()).sort((a, b) => {
-      return new Date(b.last_played || 0).getTime() - new Date(a.last_played || 0).getTime();
+  // Dynamic Artist Image Resolution Effect
+  useEffect(() => {
+    if (activeTab !== "artists") return;
+    const namesToFetch = allLibraryArtists
+      .map((a) => a.name)
+      .filter((name) => !artistImages[name]);
+
+    if (namesToFetch.length === 0) return;
+
+    let isMounted = true;
+
+    // 1. Instant local resolution
+    const resolved = {};
+    namesToFetch.forEach((name) => {
+      const local = resolveLocalArtistImage(name);
+      if (local) resolved[name] = local;
     });
-
-    if (searchQuery.trim()) {
-      const q = searchQuery.trim().toLowerCase();
-      list = list.filter(
-        (item) =>
-          (item.title && item.title.toLowerCase().includes(q)) ||
-          (item.artist && item.artist.toLowerCase().includes(q))
-      );
+    if (Object.keys(resolved).length > 0) {
+      setArtistImages((prev) => ({ ...prev, ...resolved }));
     }
-    return list;
-  }, [rawHistory, searchQuery]);
+
+    // 2. Fetch missing from Staytup API
+    const remaining = namesToFetch.filter((name) => !resolved[name]);
+    if (remaining.length > 0) {
+      if (typeof api.getBatchArtistImages === "function") {
+        api.getBatchArtistImages(remaining.slice(0, 25)).then((res) => {
+          if (isMounted && res?.images && Object.keys(res.images).length > 0) {
+            setArtistImages((prev) => ({ ...prev, ...res.images }));
+          }
+        }).catch(() => {});
+      }
+
+      remaining.slice(0, 20).forEach((name, idx) => {
+        setTimeout(() => {
+          if (!isMounted) return;
+          api.getArtistImage(name).then((res) => {
+            const photo = res?.image || res?.image_url;
+            if (
+              isMounted &&
+              photo &&
+              !photo.includes("default_artist") &&
+              !photo.includes("artist-default-music.png")
+            ) {
+              setArtistImages((prev) => ({ ...prev, [name]: photo }));
+            }
+          }).catch(() => {});
+        }, idx * 50);
+      });
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeTab, allLibraryArtists]);
 
   // Recently Added Tracks (Across Liked Songs and Playlists)
   const recentlyAddedTracks = useMemo(() => {
@@ -687,7 +933,7 @@ export default function LibraryScreen() {
             }}
           >
             <Text style={[styles.tabText, activeTab === "artists" && styles.activeTabText]}>
-              Artists ({followedArtists.length})
+              Artists ({allLibraryArtists.length})
             </Text>
           </TouchableOpacity>
 
@@ -874,8 +1120,11 @@ export default function LibraryScreen() {
                   const playlistCover =
                     item.cover_url ||
                     item.preview_artwork ||
+                    item.coverImage ||
+                    item.image ||
                     item.tracks?.[0]?.artwork_url ||
                     item.tracks?.[0]?.thumbnail ||
+                    item.tracks?.[0]?.image ||
                     "";
                   const trackCount = Array.isArray(item.tracks) ? item.tracks.length : item.track_count || 0;
 
@@ -885,16 +1134,7 @@ export default function LibraryScreen() {
                       onPress={() => openPlaylist(item)}
                       activeOpacity={0.7}
                     >
-                      {playlistCover ? (
-                        <Image
-                          source={{ uri: getHighResArtwork(playlistCover) || playlistCover }}
-                          style={styles.playlistRowThumb}
-                        />
-                      ) : (
-                        <View style={[styles.playlistRowThumb, styles.playlistRowThumbFallback]}>
-                          <Ionicons name="musical-notes" size={24} color={colors.primary} />
-                        </View>
-                      )}
+                      <PlaylistRowCover coverUrl={playlistCover} />
                       <View style={styles.playlistRowInfo}>
                         <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
                           <Text style={styles.playlistRowTitle} numberOfLines={1}>
@@ -1070,36 +1310,61 @@ export default function LibraryScreen() {
               ListFooterComponent={<View style={{ height: isDesktop || isTablet ? 24 : 140 }} />}
             />
           ) : activeTab === "artists" ? (
-            /* Followed Artists List */
+            /* Followed & Discovered Artists List */
             <FlatList
-              data={followedArtists}
+              data={allLibraryArtists}
               keyExtractor={(item, index) => `${item.name}_${index}`}
               contentContainerStyle={styles.listContent}
               showsVerticalScrollIndicator={false}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.playlistCardRow}
-                  onPress={() => setSelectedArtistForModal(item.name)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.playlistRowThumb, { borderRadius: 24, backgroundColor: colors.surface }]}>
-                    <Ionicons name="person" size={22} color={colors.primary} />
-                  </View>
-                  <View style={styles.playlistRowInfo}>
-                    <Text style={styles.playlistRowTitle} numberOfLines={1}>
-                      {item.name}
-                    </Text>
-                    <Text style={styles.playlistRowCount}>Artist</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-                </TouchableOpacity>
-              )}
+              renderItem={({ item }) => {
+                const photoUrl = artistImages[item.name] || item.avatar;
+                const isFollowed = item.isFollowed;
+
+                return (
+                  <TouchableOpacity
+                    style={styles.artistCardRow}
+                    onPress={() => setSelectedArtistForModal(item.name)}
+                    activeOpacity={0.7}
+                  >
+                    <ArtistRowAvatar name={item.name} photoUrl={photoUrl} />
+                    <View style={styles.artistRowInfo}>
+                      <Text style={styles.artistRowTitle} numberOfLines={1}>
+                        {item.name}
+                      </Text>
+                      <Text style={styles.artistRowSubtitle}>
+                        {isFollowed
+                          ? "Artist • Following"
+                          : item.listenCount
+                          ? `Artist • ${item.listenCount} plays in history`
+                          : "Artist"}
+                      </Text>
+                    </View>
+                    {isFollowed ? (
+                      <View style={styles.followingBadge}>
+                        <Text style={styles.followingBadgeText}>Following</Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.followActionBtn}
+                        onPress={(e) => {
+                          e?.stopPropagation?.();
+                          toggleFavoriteArtist(item.name);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.followActionBtnText}>Follow</Text>
+                      </TouchableOpacity>
+                    )}
+                    <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                  </TouchableOpacity>
+                );
+              }}
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
                   <Ionicons name="people-outline" size={44} color={colors.textMuted} />
-                  <Text style={styles.emptyText}>No followed artists</Text>
+                  <Text style={styles.emptyText}>No artists found</Text>
                   <Text style={styles.emptySub}>
-                    Follow your favorite artists to stay tuned with their latest releases.
+                    Listen to music or follow your favorite artists to stay tuned with their latest releases.
                   </Text>
                 </View>
               }
@@ -1704,6 +1969,7 @@ export default function LibraryScreen() {
         visible={!!selectedArtistForModal}
         onClose={() => setSelectedArtistForModal(null)}
         artistName={selectedArtistForModal}
+        initialPhoto={artistImages[selectedArtistForModal]}
       />
 
       <AlbumModal
@@ -2542,5 +2808,78 @@ const styles = StyleSheet.create({
   subFilterTextActive: {
     fontFamily: fonts.bold,
     color: "#000000",
+  },
+  artistCardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.04)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  artistRowAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+  },
+  artistRowAvatarFallback: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#181818",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  artistRowInitial: {
+    fontFamily: fonts.bold,
+    fontSize: 20,
+    color: colors.primary,
+  },
+  artistRowInfo: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  artistRowTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 15,
+    color: "#FFFFFF",
+    marginBottom: 3,
+  },
+  artistRowSubtitle: {
+    fontFamily: fonts.regular,
+    fontSize: 12.5,
+    color: colors.textSecondary,
+  },
+  followingBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.16)",
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    marginRight: 8,
+  },
+  followingBadgeText: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: colors.textSecondary,
+  },
+  followActionBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: "rgba(29, 185, 84, 0.1)",
+    marginRight: 8,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  followActionBtnText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 11.5,
+    color: colors.primary,
   },
 });

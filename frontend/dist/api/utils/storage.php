@@ -270,49 +270,107 @@ class Storage {
             @mkdir($publicDir, 0777, true);
         }
         $publicPath = $publicDir . '/playlists.json';
-        $list = self::readJson($publicPath);
-        if ($list && is_array($list) && count($list) > 0) {
-            return $list;
+
+        // 1. Gather all user-created public playlists from data/users/*/playlists.json
+        $userPublicPlaylists = [];
+        $usersDir = self::getDataDir() . '/users';
+        if (is_dir($usersDir)) {
+            $userFolders = scandir($usersDir);
+            foreach ($userFolders as $u) {
+                if ($u === '.' || $u === '..') continue;
+                $uPlaylistsFile = $usersDir . '/' . $u . '/playlists.json';
+                $uPlaylists = self::readJson($uPlaylistsFile);
+                if (is_array($uPlaylists)) {
+                    foreach ($uPlaylists as $pl) {
+                        if (!empty($pl['is_public']) || !empty($pl['isPublic'])) {
+                            $userPublicPlaylists[] = array_merge($pl, [
+                                'is_public' => true,
+                                'isPublic' => true,
+                                'type' => 'public',
+                            ]);
+                        }
+                    }
+                }
+            }
         }
 
-        $defaultPublic = [
-            [
-                'id' => 'public_pl_top_hits',
-                'name' => 'Staytup Global Top Hits',
-                'description' => 'The hottest trending tracks around the world right now. Public listen-only playlist.',
-                'cover_url' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg',
+        // 2. Aggregate user listening history from data/users/*/recently_played.json
+        $historyTracksMap = [];
+        if (is_dir($usersDir)) {
+            $userFolders = scandir($usersDir);
+            foreach ($userFolders as $u) {
+                if ($u === '.' || $u === '..') continue;
+                $historyFile = $usersDir . '/' . $u . '/recently_played.json';
+                $history = self::readJson($historyFile);
+                if (is_array($history)) {
+                    foreach ($history as $track) {
+                        $vid = $track['videoId'] ?? $track['video_id'] ?? $track['id'] ?? null;
+                        if (!$vid) continue;
+                        if (!isset($historyTracksMap[$vid])) {
+                            $historyTracksMap[$vid] = [
+                                'track' => $track,
+                                'playCount' => 0,
+                                'lastPlayed' => $track['playedAt'] ?? $track['played_at'] ?? 0,
+                            ];
+                        }
+                        $historyTracksMap[$vid]['playCount']++;
+                    }
+                }
+            }
+        }
+
+        // Sort aggregated history tracks by play count
+        $historyBasedPlaylists = [];
+        if (!empty($historyTracksMap)) {
+            usort($historyTracksMap, function($a, $b) {
+                return $b['playCount'] - $a['playCount'];
+            });
+            $topTracks = array_map(function($item) {
+                return $item['track'];
+            }, array_slice($historyTracksMap, 0, 30));
+
+            $firstCover = $topTracks[0]['artwork_url'] ?? $topTracks[0]['thumbnail'] ?? 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80';
+            $historyBasedPlaylists[] = [
+                'id' => 'public_pl_community_top',
+                'name' => 'Staytup Community Top Tracks',
+                'description' => 'Real-time trending hits based on all Staytup user listening histories.',
+                'cover_url' => $firstCover,
                 'is_public' => true,
                 'isPublic' => true,
                 'type' => 'public',
                 'creator_name' => 'Staytup Community',
-                'track_count' => 3,
+                'track_count' => count($topTracks),
+                'tracks' => $topTracks
+            ];
+        }
+
+        // 3. High quality curated public playlists with verified working covers & rich track lists
+        $curatedPublic = [
+            [
+                'id' => 'public_pl_top_hits',
+                'name' => 'Staytup Global Top Hits',
+                'description' => 'The hottest trending tracks around the world right now. Public listen-only playlist.',
+                'cover_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80',
+                'is_public' => true,
+                'isPublic' => true,
+                'type' => 'public',
+                'creator_name' => 'Staytup Community',
+                'track_count' => 6,
                 'tracks' => [
                     [
                         'id' => 'trk_pub_1',
-                        'videoId' => '5PEK8tLqU',
-                        'video_id' => '5PEK8tLqU',
-                        'title' => 'Starboy',
-                        'artist' => 'The Weeknd, Daft Punk',
-                        'album' => 'Starboy',
-                        'duration' => 230,
-                        'duration_seconds' => 230,
-                        'artwork_url' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg',
-                        'thumbnail' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg'
-                    ],
-                    [
-                        'id' => 'trk_pub_2',
-                        'videoId' => 'fJ9rUzIMcZQ',
-                        'video_id' => 'fJ9rUzIMcZQ',
+                        'videoId' => '4NRXx6U8ABQ',
+                        'video_id' => '4NRXx6U8ABQ',
                         'title' => 'Blinding Lights',
                         'artist' => 'The Weeknd',
                         'album' => 'After Hours',
                         'duration' => 200,
                         'duration_seconds' => 200,
-                        'artwork_url' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg',
-                        'thumbnail' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg'
+                        'artwork_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80'
                     ],
                     [
-                        'id' => 'trk_pub_3',
+                        'id' => 'trk_pub_2',
                         'videoId' => 'TUVcZfQe-Kw',
                         'video_id' => 'TUVcZfQe-Kw',
                         'title' => 'Levitating',
@@ -320,8 +378,56 @@ class Storage {
                         'album' => 'Future Nostalgia',
                         'duration' => 203,
                         'duration_seconds' => 203,
-                        'artwork_url' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg',
-                        'thumbnail' => 'https://c.saavncdn.com/editorial/charts_TrendingToday_119561_20220204122116.jpg'
+                        'artwork_url' => 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=500&q=80'
+                    ],
+                    [
+                        'id' => 'trk_pub_3',
+                        'videoId' => 'kTJczUoc26U',
+                        'video_id' => 'kTJczUoc26U',
+                        'title' => 'Stay',
+                        'artist' => 'The Kid LAROI, Justin Bieber',
+                        'album' => 'F*CK LOVE 3',
+                        'duration' => 141,
+                        'duration_seconds' => 141,
+                        'artwork_url' => 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80'
+                    ],
+                    [
+                        'id' => 'trk_pub_4',
+                        'videoId' => 'H5v3kku4y6Q',
+                        'video_id' => 'H5v3kku4y6Q',
+                        'title' => 'As It Was',
+                        'artist' => 'Harry Styles',
+                        'album' => "Harry's House",
+                        'duration' => 167,
+                        'duration_seconds' => 167,
+                        'artwork_url' => 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&q=80'
+                    ],
+                    [
+                        'id' => 'trk_pub_5',
+                        'videoId' => 'JGwWNGJdvx8',
+                        'video_id' => 'JGwWNGJdvx8',
+                        'title' => 'Shape of You',
+                        'artist' => 'Ed Sheeran',
+                        'album' => '÷ (Divide)',
+                        'duration' => 233,
+                        'duration_seconds' => 233,
+                        'artwork_url' => 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=500&q=80'
+                    ],
+                    [
+                        'id' => 'trk_pub_6',
+                        'videoId' => 'm7Bc3pLyij0',
+                        'video_id' => 'm7Bc3pLyij0',
+                        'title' => 'Heat Waves',
+                        'artist' => 'Glass Animals',
+                        'album' => 'Dreamland',
+                        'duration' => 238,
+                        'duration_seconds' => 238,
+                        'artwork_url' => 'https://images.unsplash.com/photo-1447433589675-4aaa569f3e05?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1447433589675-4aaa569f3e05?w=500&q=80'
                     ]
                 ]
             ],
@@ -329,15 +435,15 @@ class Storage {
                 'id' => 'public_pl_chill_vibes',
                 'name' => 'Midnight Chill & Lo-Fi',
                 'description' => 'Relaxing beats, calm melodies, and late night soundscapes to unwind or focus.',
-                'cover_url' => 'https://c.saavncdn.com/editorial/ChillBro_119560_20220204122046.jpg',
+                'cover_url' => 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&q=80',
                 'is_public' => true,
                 'isPublic' => true,
                 'type' => 'public',
                 'creator_name' => 'Staytup Curator',
-                'track_count' => 2,
+                'track_count' => 4,
                 'tracks' => [
                     [
-                        'id' => 'trk_pub_4',
+                        'id' => 'trk_pub_c1',
                         'videoId' => 'jfKfPfyJRdk',
                         'video_id' => 'jfKfPfyJRdk',
                         'title' => 'Morning Coffee Beats',
@@ -345,11 +451,11 @@ class Storage {
                         'album' => 'Lo-Fi Lounge',
                         'duration' => 175,
                         'duration_seconds' => 175,
-                        'artwork_url' => 'https://c.saavncdn.com/editorial/ChillBro_119560_20220204122046.jpg',
-                        'thumbnail' => 'https://c.saavncdn.com/editorial/ChillBro_119560_20220204122046.jpg'
+                        'artwork_url' => 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&q=80'
                     ],
                     [
-                        'id' => 'trk_pub_5',
+                        'id' => 'trk_pub_c2',
                         'videoId' => '5qap5aO4i9A',
                         'video_id' => '5qap5aO4i9A',
                         'title' => 'Golden Hour Radiance',
@@ -357,14 +463,101 @@ class Storage {
                         'album' => 'Sunset Dreams',
                         'duration' => 190,
                         'duration_seconds' => 190,
-                        'artwork_url' => 'https://c.saavncdn.com/editorial/ChillBro_119560_20220204122046.jpg',
-                        'thumbnail' => 'https://c.saavncdn.com/editorial/ChillBro_119560_20220204122046.jpg'
+                        'artwork_url' => 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=500&q=80'
+                    ],
+                    [
+                        'id' => 'trk_pub_c3',
+                        'videoId' => '7NOSDKb0HlU',
+                        'video_id' => '7NOSDKb0HlU',
+                        'title' => 'Rainy Night Sanctuary',
+                        'artist' => 'Sleepy Fish',
+                        'album' => 'Nightfall Melodies',
+                        'duration' => 165,
+                        'duration_seconds' => 165,
+                        'artwork_url' => 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=500&q=80'
+                    ],
+                    [
+                        'id' => 'trk_pub_c4',
+                        'videoId' => 'DWcJFNfaw9c',
+                        'video_id' => 'DWcJFNfaw9c',
+                        'title' => 'Lucid Dreams & Focus',
+                        'artist' => 'Kudos Records',
+                        'album' => 'Focus Flow',
+                        'duration' => 180,
+                        'duration_seconds' => 180,
+                        'artwork_url' => 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=500&q=80'
+                    ]
+                ]
+            ],
+            [
+                'id' => 'public_pl_viral_vibes',
+                'name' => 'Viral Hits 2026',
+                'description' => 'Most shared soundscapes and viral sensation tracks on Staytup.',
+                'cover_url' => 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80',
+                'is_public' => true,
+                'isPublic' => true,
+                'type' => 'public',
+                'creator_name' => 'Staytup Viral',
+                'track_count' => 3,
+                'tracks' => [
+                    [
+                        'id' => 'trk_pub_v1',
+                        'videoId' => 'k2qgadSvNyU',
+                        'video_id' => 'k2qgadSvNyU',
+                        'title' => 'Physical',
+                        'artist' => 'Dua Lipa',
+                        'album' => 'Future Nostalgia',
+                        'duration' => 193,
+                        'duration_seconds' => 193,
+                        'artwork_url' => 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80'
+                    ],
+                    [
+                        'id' => 'trk_pub_v2',
+                        'videoId' => 'gNi_6U5Pm_o',
+                        'video_id' => 'gNi_6U5Pm_o',
+                        'title' => 'Higher Power',
+                        'artist' => 'Coldplay',
+                        'album' => 'Music of the Spheres',
+                        'duration' => 211,
+                        'duration_seconds' => 211,
+                        'artwork_url' => 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=500&q=80'
+                    ],
+                    [
+                        'id' => 'trk_pub_v3',
+                        'videoId' => '0VwLoxv5u1o',
+                        'video_id' => '0VwLoxv5u1o',
+                        'title' => 'Shivers',
+                        'artist' => 'Ed Sheeran',
+                        'album' => '=',
+                        'duration' => 207,
+                        'duration_seconds' => 207,
+                        'artwork_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80',
+                        'thumbnail' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80'
                     ]
                 ]
             ]
         ];
 
-        self::writeJson($publicPath, $defaultPublic);
-        return $defaultPublic;
+        // Combine: community top history + user public playlists + curated playlists
+        $allPublic = array_merge($historyBasedPlaylists, $userPublicPlaylists, $curatedPublic);
+
+        // Deduplicate by ID
+        $seen = [];
+        $result = [];
+        foreach ($allPublic as $p) {
+            $pid = $p['id'] ?? null;
+            if ($pid && !isset($seen[$pid])) {
+                $seen[$pid] = true;
+                $result[] = $p;
+            }
+        }
+
+        self::writeJson($publicPath, $result);
+        return $result;
     }
 }
