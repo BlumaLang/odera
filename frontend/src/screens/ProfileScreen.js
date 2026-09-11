@@ -140,6 +140,16 @@ export default function ProfileScreen({ visible, onClose }) {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    if (typeof window !== "undefined" && window.staytupCheckUpdate) {
+      await window.staytupCheckUpdate(true);
+    } else if (typeof window !== "undefined") {
+      window.location.reload();
+    }
+  };
 
   // Android hardware back button handler stack
   useEffect(() => {
@@ -688,6 +698,36 @@ export default function ProfileScreen({ visible, onClose }) {
           </TouchableOpacity>
           <View style={styles.simpleRowDivider} />
 
+          {/* Update App Fallback Action */}
+          <TouchableOpacity
+            style={styles.simpleActionRow}
+            onPress={handleCheckUpdate}
+            activeOpacity={0.7}
+            disabled={checkingUpdate}
+          >
+            <View style={[styles.simpleActionIconWrap, { backgroundColor: "rgba(29, 185, 84, 0.12)" }]}>
+              {checkingUpdate ? (
+                <ActivityIndicator size="small" color="#1DB954" />
+              ) : (
+                <Ionicons name="cloud-download-outline" size={20} color="#1DB954" />
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.simpleActionTitle}>
+                {checkingUpdate ? "Updating Staytup..." : "Update App"}
+              </Text>
+              <Text style={styles.simpleActionSub}>
+                {checkingUpdate ? "Refreshing cache & fetching latest build..." : `Current: v${APP_VERSION} • Tap to refresh & update`}
+              </Text>
+            </View>
+            <View style={[styles.versionBadge, { backgroundColor: "rgba(29, 185, 84, 0.15)", borderColor: "rgba(29, 185, 84, 0.35)" }]}>
+              <Text style={[styles.versionBadgeText, { color: "#1DB954", fontSize: 11 }]}>
+                {checkingUpdate ? "Updating..." : "Update"}
+              </Text>
+            </View>
+          </TouchableOpacity>
+          <View style={styles.simpleRowDivider} />
+
           {/* Changelog */}
           <TouchableOpacity
             style={styles.simpleActionRow}
@@ -770,6 +810,28 @@ export default function ProfileScreen({ visible, onClose }) {
             <View style={styles.footerVersion}>
               <Text style={styles.versionText}>Staytup Music • v{APP_VERSION}</Text>
               <Text style={styles.versionSub}>Build {BUILD_NUMBER} • {BUILD_DATE}</Text>
+              <TouchableOpacity
+                onPress={handleCheckUpdate}
+                activeOpacity={0.75}
+                disabled={checkingUpdate}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginTop: 8,
+                  paddingVertical: 6,
+                  paddingHorizontal: 14,
+                  borderRadius: 16,
+                  backgroundColor: "rgba(29, 185, 84, 0.12)",
+                  borderWidth: 1,
+                  borderColor: "rgba(29, 185, 84, 0.3)",
+                }}
+              >
+                <Ionicons name="cloud-download-outline" size={13} color="#1DB954" style={{ marginRight: 5 }} />
+                <Text style={{ fontSize: 11.5, color: "#1DB954", fontWeight: "600" }}>
+                  {checkingUpdate ? "Updating..." : "Check for Updates"}
+                </Text>
+              </TouchableOpacity>
             </View>
 
             <View style={{ height: 60 }} />

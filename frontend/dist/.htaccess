@@ -33,8 +33,8 @@
 
 # PWA Cache Controls
 <IfModule mod_headers.c>
-    # Never cache service worker or index.html to guarantee instantaneous PWA updates
-    <FilesMatch "^(index\.html|sw\.js|service-worker\.js)$">
+    # Never cache service worker, index.html, or metadata.json to guarantee instantaneous PWA updates
+    <FilesMatch "^(index\.html|sw\.js|service-worker\.js|metadata\.json)$">
         Header set Cache-Control "no-cache, no-store, must-revalidate"
         Header set Pragma "no-cache"
         Header set Expires 0

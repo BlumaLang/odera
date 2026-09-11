@@ -1,5 +1,5 @@
 // Staytup Service Worker for PWA
-const CACHE_NAME = 'staytup-pwa-v37';
+const CACHE_NAME = 'staytup-pwa-v38';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -7,6 +7,13 @@ const PRECACHE_ASSETS = [
   '/manifest.json',
   '/favicon.ico',
 ];
+
+// Handle instant update message from clients
+self.addEventListener('message', (event) => {
+  if (event.data && (event.data.type === 'SKIP_WAITING' || event.data === 'skipWaiting')) {
+    self.skipWaiting();
+  }
+});
 
 // Install: precache core app shell
 self.addEventListener('install', (event) => {
@@ -19,7 +26,7 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Activate: purge stale caches
+// Activate: purge stale caches and claim all clients immediately
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.7] - 2026-09-12
+
+### Added
+- **Seamless PWA Auto-Update Mechanism**:
+  - Implemented proactive Service Worker lifecycle management preventing users from being stuck on stale cached versions.
+  - Automatically activates waiting service workers (`SKIP_WAITING`) and takes immediate client control (`clients.claim()`).
+  - Added auto-reload listener on `controllerchange` to immediately transition to new app versions.
+  - Added periodic (10 min) and event-driven (`visibilitychange`, `focus`) update checks.
+  - Ensured `metadata.json`, `index.html`, and `sw.js` are never cached by intermediate proxies or browser HTTP caches.
+- **Profile Page Update Actions (Manual Fallback)**:
+  - Added **"Update App"** action item under Profile Settings with version badge and update status indicators.
+  - Added **"Check for Updates"** button in Profile footer right below the version string.
+  - Tapping performs full cache purge, forces service worker update check, and reloads with cache-busting timestamp.
+
 ## [2.8.6] - 2026-09-12
 
 ### Fixed

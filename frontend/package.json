@@ -1,6 +1,6 @@
 {
   "name": "staytup-frontend",
-  "version": "2.8.6",
+  "version": "2.8.7",
   "main": "index.js",
   "dependencies": {
     "@expo-google-fonts/poppins": "^0.4.1",

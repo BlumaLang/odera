@@ -232,15 +232,81 @@
         }
       });
 
+      // PWA Service Worker Registration with Instant Auto-Update
       if ('serviceWorker' in navigator) {
+        var isReloading = false;
+        navigator.serviceWorker.addEventListener('controllerchange', function() {
+          if (!isReloading) {
+            isReloading = true;
+            window.location.reload();
+          }
+        });
+
         window.addEventListener('load', function() {
           navigator.serviceWorker.register('/sw.js').then(function(reg) {
-            if (reg) {
-              reg.update();
+            if (!reg) return;
+
+            // 1. Initial check
+            reg.update().catch(function() {});
+
+            // 2. Activate any waiting worker immediately
+            if (reg.waiting) {
+              reg.waiting.postMessage({ type: 'SKIP_WAITING' });
             }
+
+            // 3. Auto-activate any newly installed worker
+            reg.addEventListener('updatefound', function() {
+              var newWorker = reg.installing;
+              if (newWorker) {
+                newWorker.addEventListener('statechange', function() {
+                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    newWorker.postMessage({ type: 'SKIP_WAITING' });
+                  }
+                });
+              }
+            });
+
+            // 4. Proactively check on tab focus / resume
+            document.addEventListener('visibilitychange', function() {
+              if (document.visibilityState === 'visible') {
+                reg.update().catch(function() {});
+              }
+            });
+            window.addEventListener('focus', function() {
+              reg.update().catch(function() {});
+            });
+
+            // 5. Periodic check every 10 minutes
+            setInterval(function() {
+              reg.update().catch(function() {});
+            }, 10 * 60 * 1000);
           }).catch(function() {});
         });
       }
+
+      // Global Update Helper for ProfileScreen and Manual Fallback
+      window.staytupCheckUpdate = async function(manual) {
+        try {
+          if ('serviceWorker' in navigator) {
+            var reg = await navigator.serviceWorker.getRegistration();
+            if (reg) {
+              await reg.update();
+              if (reg.waiting) {
+                reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+              }
+            }
+          }
+          if ('caches' in window) {
+            var keys = await caches.keys();
+            await Promise.all(
+              keys.filter(function(k) { return !k.includes('offline-audio'); }).map(function(k) { return caches.delete(k); })
+            );
+          }
+          window.location.href = window.location.pathname + '?update=' + Date.now();
+        } catch (e) {
+          window.location.reload();
+        }
+      };
 
       // Handle bfcache (Back-Forward Cache) page restoration gracefully
       window.addEventListener('pageshow', function(e) {
@@ -284,6 +350,6 @@
         }, 1200);
       })();
     </script>
-  <script src="/_expo/static/js/web/index-685c8162d7aecb3259325e01b145416c.js" defer></script>
+  <script src="/_expo/static/js/web/index-f239734eb3ece212d10136bad7ddaa94.js" defer></script>
 </body>
 </html>
