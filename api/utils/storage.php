@@ -349,8 +349,8 @@ class Storage {
             [
                 'id' => 'public_pl_top_hits',
                 'name' => 'Staytup Global Top Hits',
-                'description' => 'The hottest trending tracks around the world right now. Public listen-only playlist.',
-                'cover_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80',
+                'description' => 'The hottest trending tracks around the world right now based on all Staytup user activity.',
+                'cover_url' => 'https://i.ytimg.com/vi/4NRXx6U8ABQ/hqdefault.jpg',
                 'is_public' => true,
                 'isPublic' => true,
                 'type' => 'public',
@@ -366,8 +366,8 @@ class Storage {
                         'album' => 'After Hours',
                         'duration' => 200,
                         'duration_seconds' => 200,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/4NRXx6U8ABQ/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/4NRXx6U8ABQ/hqdefault.jpg'
                     ],
                     [
                         'id' => 'trk_pub_2',
@@ -378,8 +378,8 @@ class Storage {
                         'album' => 'Future Nostalgia',
                         'duration' => 203,
                         'duration_seconds' => 203,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/TUVcZfQe-Kw/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/TUVcZfQe-Kw/hqdefault.jpg'
                     ],
                     [
                         'id' => 'trk_pub_3',
@@ -390,8 +390,8 @@ class Storage {
                         'album' => 'F*CK LOVE 3',
                         'duration' => 141,
                         'duration_seconds' => 141,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/kTJczUoc26U/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/kTJczUoc26U/hqdefault.jpg'
                     ],
                     [
                         'id' => 'trk_pub_4',
@@ -402,8 +402,8 @@ class Storage {
                         'album' => "Harry's House",
                         'duration' => 167,
                         'duration_seconds' => 167,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/H5v3kku4y6Q/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/H5v3kku4y6Q/hqdefault.jpg'
                     ],
                     [
                         'id' => 'trk_pub_5',
@@ -414,8 +414,8 @@ class Storage {
                         'album' => '÷ (Divide)',
                         'duration' => 233,
                         'duration_seconds' => 233,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/JGwWNGJdvx8/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/JGwWNGJdvx8/hqdefault.jpg'
                     ],
                     [
                         'id' => 'trk_pub_6',
@@ -426,8 +426,8 @@ class Storage {
                         'album' => 'Dreamland',
                         'duration' => 238,
                         'duration_seconds' => 238,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1447433589675-4aaa569f3e05?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1447433589675-4aaa569f3e05?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/m7Bc3pLyij0/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/m7Bc3pLyij0/hqdefault.jpg'
                     ]
                 ]
             ],
@@ -435,7 +435,7 @@ class Storage {
                 'id' => 'public_pl_chill_vibes',
                 'name' => 'Midnight Chill & Lo-Fi',
                 'description' => 'Relaxing beats, calm melodies, and late night soundscapes to unwind or focus.',
-                'cover_url' => 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&q=80',
+                'cover_url' => 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
                 'is_public' => true,
                 'isPublic' => true,
                 'type' => 'public',
@@ -451,8 +451,8 @@ class Storage {
                         'album' => 'Lo-Fi Lounge',
                         'duration' => 175,
                         'duration_seconds' => 175,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg'
                     ],
                     [
                         'id' => 'trk_pub_c2',
@@ -463,8 +463,8 @@ class Storage {
                         'album' => 'Sunset Dreams',
                         'duration' => 190,
                         'duration_seconds' => 190,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/5qap5aO4i9A/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/5qap5aO4i9A/hqdefault.jpg'
                     ],
                     [
                         'id' => 'trk_pub_c3',
@@ -475,8 +475,8 @@ class Storage {
                         'album' => 'Nightfall Melodies',
                         'duration' => 165,
                         'duration_seconds' => 165,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/7NOSDKb0HlU/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/7NOSDKb0HlU/hqdefault.jpg'
                     ],
                     [
                         'id' => 'trk_pub_c4',
@@ -487,8 +487,8 @@ class Storage {
                         'album' => 'Focus Flow',
                         'duration' => 180,
                         'duration_seconds' => 180,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/DWcJFNfaw9c/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/DWcJFNfaw9c/hqdefault.jpg'
                     ]
                 ]
             ],
@@ -496,7 +496,7 @@ class Storage {
                 'id' => 'public_pl_viral_vibes',
                 'name' => 'Viral Hits 2026',
                 'description' => 'Most shared soundscapes and viral sensation tracks on Staytup.',
-                'cover_url' => 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80',
+                'cover_url' => 'https://i.ytimg.com/vi/k2qgadSvNyU/hqdefault.jpg',
                 'is_public' => true,
                 'isPublic' => true,
                 'type' => 'public',
@@ -512,8 +512,8 @@ class Storage {
                         'album' => 'Future Nostalgia',
                         'duration' => 193,
                         'duration_seconds' => 193,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/k2qgadSvNyU/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/k2qgadSvNyU/hqdefault.jpg'
                     ],
                     [
                         'id' => 'trk_pub_v2',
@@ -524,8 +524,8 @@ class Storage {
                         'album' => 'Music of the Spheres',
                         'duration' => 211,
                         'duration_seconds' => 211,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/gNi_6U5Pm_o/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/gNi_6U5Pm_o/hqdefault.jpg'
                     ],
                     [
                         'id' => 'trk_pub_v3',
@@ -536,8 +536,8 @@ class Storage {
                         'album' => '=',
                         'duration' => 207,
                         'duration_seconds' => 207,
-                        'artwork_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80',
-                        'thumbnail' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80'
+                        'artwork_url' => 'https://i.ytimg.com/vi/0VwLoxv5u1o/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/0VwLoxv5u1o/hqdefault.jpg'
                     ]
                 ]
             ]
@@ -546,13 +546,48 @@ class Storage {
         // Combine: community top history + user public playlists + curated playlists
         $allPublic = array_merge($historyBasedPlaylists, $userPublicPlaylists, $curatedPublic);
 
-        // Deduplicate by ID
+        // Deduplicate by ID and ensure first track artwork is used as playlist cover
         $seen = [];
         $result = [];
         foreach ($allPublic as $p) {
             $pid = $p['id'] ?? null;
             if ($pid && !isset($seen[$pid])) {
                 $seen[$pid] = true;
+
+                // Ensure all tracks have real music thumbnails and playlist cover is first track's image
+                $plTracks = $p['tracks'] ?? [];
+                if (!empty($plTracks) && is_array($plTracks)) {
+                    foreach ($plTracks as &$t) {
+                        $tVid = $t['videoId'] ?? $t['video_id'] ?? $t['id'] ?? null;
+                        $tArt = $t['artwork_url'] ?? $t['thumbnail'] ?? $t['image'] ?? null;
+                        if (empty($tArt) || strpos($tArt, 'unsplash.com') !== false) {
+                            if ($tVid && strlen($tVid) === 11) {
+                                $tArt = "https://i.ytimg.com/vi/{$tVid}/hqdefault.jpg";
+                            }
+                        }
+                        $t['artwork_url'] = $tArt;
+                        $t['thumbnail'] = $tArt;
+                        $t['image'] = $tArt;
+                    }
+                    unset($t);
+                    $p['tracks'] = $plTracks;
+
+                    $firstCover = $plTracks[0]['artwork_url'] ?? $plTracks[0]['thumbnail'] ?? null;
+                    if (empty($firstCover) || strpos($firstCover, 'unsplash.com') !== false) {
+                        $firstVid = $plTracks[0]['videoId'] ?? $plTracks[0]['video_id'] ?? $plTracks[0]['id'] ?? null;
+                        if ($firstVid && strlen($firstVid) === 11) {
+                            $firstCover = "https://i.ytimg.com/vi/{$firstVid}/hqdefault.jpg";
+                        }
+                    }
+                    if (!empty($firstCover)) {
+                        $p['cover_url'] = $firstCover;
+                        $p['preview_artwork'] = $firstCover;
+                        $p['image'] = $firstCover;
+                        $p['artwork_url'] = $firstCover;
+                        $p['thumbnail'] = $firstCover;
+                    }
+                }
+
                 $result[] = $p;
             }
         }

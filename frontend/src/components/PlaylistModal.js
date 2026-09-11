@@ -1011,14 +1011,57 @@ export default function PlaylistModal({
     }
   };
 
-  if (!visible && !playlistData) return null;
+  const [heroImgError, setHeroImgError] = useState(false);
+  const heroFailedUrlsRef = useRef(new Set());
 
-  const firstTrackArtwork = tracks[0]?.artwork_url || tracks[0]?.thumbnail || "";
-  const artwork =
-    playlistData?.cover_url ||
-    playlistData?.preview_artwork ||
-    firstTrackArtwork ||
-    null;
+  const getPlaylistHeroArt = () => {
+    const direct =
+      playlistData?.cover_url ||
+      playlistData?.preview_artwork ||
+      playlistData?.coverImage ||
+      playlistData?.image ||
+      playlistData?.artwork_url ||
+      playlistData?.thumbnail;
+    if (direct && typeof direct === "string" && direct.startsWith("http") && !direct.includes("unsplash.com") && !heroFailedUrlsRef.current.has(direct)) {
+      return getHighResArtwork(direct) || direct;
+    }
+    for (const t of (tracks || [])) {
+      if (!t) continue;
+      const art = t.artwork_url || t.thumbnail || t.image || t.coverImage || t.cover_url || t.preview_artwork;
+      if (art && typeof art === "string" && art.startsWith("http") && !art.includes("unsplash.com") && !heroFailedUrlsRef.current.has(art)) {
+        return getHighResArtwork(art) || art;
+      }
+      const vid = t.videoId || t.video_id || (typeof t.id === "string" && t.id.length === 11 ? t.id : null);
+      if (vid) {
+        const yt = `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+        if (!heroFailedUrlsRef.current.has(yt)) return yt;
+      }
+    }
+    if (direct && typeof direct === "string" && direct.startsWith("http") && !heroFailedUrlsRef.current.has(direct)) {
+      return direct;
+    }
+    return null;
+  };
+
+  const [currentHeroArt, setCurrentHeroArt] = useState(getPlaylistHeroArt);
+
+  useEffect(() => {
+    heroFailedUrlsRef.current = new Set();
+    setHeroImgError(false);
+    setCurrentHeroArt(getPlaylistHeroArt());
+  }, [playlistData, tracks]);
+
+  const handleHeroImgError = () => {
+    if (currentHeroArt) heroFailedUrlsRef.current.add(currentHeroArt);
+    const nextArt = getPlaylistHeroArt();
+    if (nextArt && nextArt !== currentHeroArt) {
+      setCurrentHeroArt(nextArt);
+      return;
+    }
+    setHeroImgError(true);
+  };
+
+  if (!visible && !playlistData) return null;
 
   return (
     <Modal
@@ -1088,13 +1131,14 @@ export default function PlaylistModal({
                     (isDesktop || isTablet) && styles.heroCardDesktop,
                   ]}
                 >
-                  {artwork ? (
+                  {currentHeroArt && !heroImgError ? (
                     <Image
-                      source={{ uri: getHighResArtwork(artwork) || artwork }}
+                      source={{ uri: currentHeroArt }}
                       style={[
                         styles.heroArtwork,
                         (isDesktop || isTablet) && styles.heroArtworkDesktop,
                       ]}
+                      onError={handleHeroImgError}
                     />
                   ) : (
                     <View

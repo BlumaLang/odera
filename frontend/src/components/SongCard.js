@@ -73,36 +73,152 @@ function SongCard({
     }
   };
 
-  const rawArtwork = track?.artwork_url || track?.thumbnail;
-  const trackVid = trackId || track?.videoId || track?.video_id || "";
+  const isValidYtId = (id) =>
+    typeof id === "string" && id.length === 11 && /^[a-zA-Z0-9_-]{11}$/.test(id);
+
+  const rawArtwork =
+    track?.artwork_url ||
+    track?.cover_url ||
+    track?.coverUrl ||
+    track?.preview_artwork ||
+    track?.image ||
+    track?.thumbnail ||
+    track?.coverImage ||
+    track?.cover_image ||
+    track?.artwork;
+
+  const trackVid = isValidYtId(trackId)
+    ? trackId
+    : isValidYtId(track?.videoId)
+    ? track?.videoId
+    : isValidYtId(track?.video_id)
+    ? track?.video_id
+    : isValidYtId(track?.id)
+    ? track?.id
+    : "";
+
   const [imageError, setImageError] = useState(false);
   const [currentArtwork, setCurrentArtwork] = useState("");
   const failedUrlsRef = React.useRef(new Set());
 
+  // Helper to extract candidate covers from track or playlist
+  const getCandidateCovers = React.useCallback((item) => {
+    const list = [];
+    if (!item) return list;
+
+    const addIfValid = (url) => {
+      if (url && typeof url === "string" && url.startsWith("http") && !list.includes(url)) {
+        list.push(url);
+      }
+    };
+
+    // 1. Direct artwork
+    const directArt =
+      item.artwork_url ||
+      item.cover_url ||
+      item.coverUrl ||
+      item.preview_artwork ||
+      item.image ||
+      item.thumbnail ||
+      item.coverImage ||
+      item.cover_image ||
+      item.artwork;
+
+    if (directArt && typeof directArt === "string" && directArt.startsWith("http")) {
+      const highRes = getHighResArtwork(directArt);
+      if (highRes) addIfValid(highRes);
+      addIfValid(directArt);
+    }
+
+    // 2. Direct YT video thumbnail
+    const vid = isValidYtId(item.videoId)
+      ? item.videoId
+      : isValidYtId(item.video_id)
+      ? item.video_id
+      : isValidYtId(item.id)
+      ? item.id
+      : null;
+    if (vid) {
+      addIfValid(`https://i.ytimg.com/vi/${vid}/hqdefault.jpg`);
+      addIfValid(`https://i.ytimg.com/vi/${vid}/mqdefault.jpg`);
+    }
+
+    // 3. If item is a playlist or has child tracks, scan child tracks for first valid artwork
+    const childTracks = item.tracks || item.mixTracks || item.songs;
+    if (childTracks) {
+      const arr = Array.isArray(childTracks) ? childTracks : Object.values(childTracks);
+      for (const t of arr) {
+        if (!t) continue;
+        const cArt =
+          t.artwork_url ||
+          t.cover_url ||
+          t.coverUrl ||
+          t.preview_artwork ||
+          t.image ||
+          t.thumbnail ||
+          t.coverImage ||
+          t.cover_image ||
+          t.artwork;
+        if (cArt && typeof cArt === "string" && cArt.startsWith("http")) {
+          const highRes = getHighResArtwork(cArt);
+          if (highRes) addIfValid(highRes);
+          addIfValid(cArt);
+        }
+        const cVid = isValidYtId(t.videoId)
+          ? t.videoId
+          : isValidYtId(t.video_id)
+          ? t.video_id
+          : isValidYtId(t.id)
+          ? t.id
+          : null;
+        if (cVid) {
+          addIfValid(`https://i.ytimg.com/vi/${cVid}/hqdefault.jpg`);
+          addIfValid(`https://i.ytimg.com/vi/${cVid}/mqdefault.jpg`);
+        }
+        if (list.length >= 8) break;
+      }
+    }
+
+    return list;
+  }, []);
+
   React.useEffect(() => {
     setImageError(false);
     failedUrlsRef.current = new Set();
-    let resolved = rawArtwork;
-    if (resolved && typeof resolved === "string") {
-      // Upgrade to high resolution
-      resolved = getHighResArtwork(resolved) || resolved;
+    const candidates = getCandidateCovers(track);
+    if (candidates.length > 0) {
+      setCurrentArtwork(candidates[0]);
+    } else if (rawArtwork && typeof rawArtwork === "string" && rawArtwork.startsWith("http")) {
+      setCurrentArtwork(getHighResArtwork(rawArtwork) || rawArtwork);
     } else if (trackVid) {
-      resolved = `https://i.ytimg.com/vi/${trackVid}/hqdefault.jpg`;
+      setCurrentArtwork(`https://i.ytimg.com/vi/${trackVid}/hqdefault.jpg`);
+    } else {
+      setCurrentArtwork("");
+      setImageError(true);
     }
-    setCurrentArtwork(resolved);
-  }, [rawArtwork, trackVid]);
+  }, [track, rawArtwork, trackVid, getCandidateCovers]);
 
   const handleImageError = () => {
     if (currentArtwork) failedUrlsRef.current.add(currentArtwork);
+
+    const candidates = getCandidateCovers(track);
+    const nextCandidate = candidates.find(
+      (c) => c && !failedUrlsRef.current.has(c) && c !== currentArtwork
+    );
+    if (nextCandidate) {
+      setCurrentArtwork(nextCandidate);
+      return;
+    }
+
     if (trackVid) {
       const fallbackYt = `https://i.ytimg.com/vi/${trackVid}/hqdefault.jpg`;
       if (!failedUrlsRef.current.has(fallbackYt) && currentArtwork !== fallbackYt) {
         setCurrentArtwork(fallbackYt);
         return;
       }
-      const hqFallback = `https://i.ytimg.com/vi/${trackVid}/hqdefault.jpg`;
-      if (!failedUrlsRef.current.has(hqFallback) && currentArtwork !== hqFallback) {
-        setCurrentArtwork(hqFallback);
+      const mqFallback = `https://i.ytimg.com/vi/${trackVid}/mqdefault.jpg`;
+      if (!failedUrlsRef.current.has(mqFallback) && currentArtwork !== mqFallback) {
+        setCurrentArtwork(mqFallback);
         return;
       }
     }

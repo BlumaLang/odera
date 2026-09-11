@@ -1298,29 +1298,62 @@ export default function HomeScreen({ onNavigate } = {}) {
       const cid = cp.collabId || cp.id;
       if (cid && !seen.has(cid)) {
         seen.add(cid);
+        const cpTracks = cp.tracks ? (Array.isArray(cp.tracks) ? cp.tracks : Object.values(cp.tracks)) : [];
+        const cpCover = cp.cover_url || cp.coverUrl || cp.preview_artwork || cp.coverImage || cp.image || cp.artwork_url || cp.thumbnail;
         combined.push({
           id: cid,
           collabId: cid,
           name: cp.name || cp.title || "Collaborative Mix",
           creatorName: cp.ownerName || "Staytup User",
-          tracks: cp.tracks || [],
-          image: cp.coverImage || cp.image || cp.artwork_url,
+          tracks: cpTracks,
+          mixTracks: cpTracks,
+          cover_url: cpCover,
+          coverUrl: cpCover,
+          preview_artwork: cpCover,
+          coverImage: cpCover,
+          image: cpCover,
+          artwork_url: cpCover,
+          thumbnail: cpCover,
           isPublic: true,
         });
       }
     });
 
+    const getFirstPlaylistArt = (tracks, directCover) => {
+      if (directCover && typeof directCover === "string" && directCover.startsWith("http") && !directCover.includes("unsplash.com")) {
+        return getHighResArtwork(directCover) || directCover;
+      }
+      for (const t of (tracks || [])) {
+        if (!t) continue;
+        const art = t.artwork_url || t.thumbnail || t.image || t.coverImage || t.cover_url || t.preview_artwork;
+        if (art && typeof art === "string" && art.startsWith("http") && !art.includes("unsplash.com")) {
+          return getHighResArtwork(art) || art;
+        }
+        const vid = t.videoId || t.video_id || (typeof t.id === "string" && t.id.length === 11 ? t.id : null);
+        if (vid) return `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+      }
+      if (directCover && typeof directCover === "string" && directCover.startsWith("http")) {
+        return directCover;
+      }
+      return "";
+    };
+
     return combined.map((p) => {
       const rawTracks = p.tracks ? (Array.isArray(p.tracks) ? p.tracks : Object.values(p.tracks)) : [];
       const count = p.songCount || rawTracks.length;
-      const firstArt = rawTracks[0]?.artwork_url || rawTracks[0]?.thumbnail || rawTracks[0]?.image;
+      const firstArt = getFirstPlaylistArt(rawTracks, p.cover_url || p.coverUrl || p.preview_artwork || p.coverImage || p.image || p.artwork_url);
       return {
         ...p,
         id: p.id || p.collabId || `pl_${Math.random()}`,
         title: p.name || p.title || "Community Playlist",
         artist: p.creatorName ? `By @${p.creatorName}` : (count > 0 ? `${count} songs` : "Staytup Playlist"),
         subtitle: count > 0 ? `${count} songs` : "Community Mix",
-        image: p.coverImage || p.image || p.artwork_url || firstArt || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&q=80",
+        image: firstArt,
+        cover_url: firstArt,
+        preview_artwork: firstArt,
+        artwork_url: firstArt,
+        thumbnail: firstArt,
+        coverImage: firstArt,
         tracks: rawTracks,
         mixTracks: rawTracks,
         type: "playlist",
@@ -1356,7 +1389,7 @@ export default function HomeScreen({ onNavigate } = {}) {
     const uniquePool = [];
     for (const t of pool) {
       const vid = t.videoId || t.video_id || t.id;
-      if (vid && !seen.has(vid)) {
+      if (vid && !seenIds ? !seen.has(vid) : !seen.has(vid)) {
         seen.add(vid);
         uniquePool.push(t);
       }
@@ -1381,13 +1414,37 @@ export default function HomeScreen({ onNavigate } = {}) {
     });
     const finalPartyTracks = (partyTracks.length >= 6 ? partyTracks : seededShuffle(uniquePool, daySeed + 555).slice(0, 25)).slice(0, 25);
 
+    const getAutoArt = (tracks) => {
+      for (const t of (tracks || [])) {
+        if (!t) continue;
+        const art = t.artwork_url || t.thumbnail || t.image || t.coverImage;
+        if (art && typeof art === "string" && art.startsWith("http") && !art.includes("unsplash.com")) {
+          return getHighResArtwork(art) || art;
+        }
+        const vid = t.videoId || t.video_id || (typeof t.id === "string" && t.id.length === 11 ? t.id : null);
+        if (vid) return `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+      }
+      return "";
+    };
+
+    const top50Art = getAutoArt(top50Tracks);
+    const dailyArt = getAutoArt(dailyTracks);
+    const viralArt = getAutoArt(viralTracks);
+    const chillArt = getAutoArt(finalChillTracks);
+    const partyArt = getAutoArt(finalPartyTracks);
+
     return [
       {
         id: "auto_top_50",
         title: "Staytup Top 50",
         artist: "Platform Charts • Most Played",
         subtitle: `${top50Tracks.length} tracks`,
-        image: top50Tracks[0]?.artwork_url || top50Tracks[0]?.thumbnail || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80",
+        image: top50Art,
+        cover_url: top50Art,
+        preview_artwork: top50Art,
+        artwork_url: top50Art,
+        thumbnail: top50Art,
+        coverImage: top50Art,
         tracks: top50Tracks,
         mixTracks: top50Tracks,
         type: "playlist",
@@ -1399,7 +1456,12 @@ export default function HomeScreen({ onNavigate } = {}) {
         title: "Daily Vibe Mix",
         artist: "Auto-Curated • Daily Rotation",
         subtitle: `${dailyTracks.length} tracks`,
-        image: dailyTracks[0]?.artwork_url || dailyTracks[0]?.thumbnail || "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80",
+        image: dailyArt,
+        cover_url: dailyArt,
+        preview_artwork: dailyArt,
+        artwork_url: dailyArt,
+        thumbnail: dailyArt,
+        coverImage: dailyArt,
         tracks: dailyTracks,
         mixTracks: dailyTracks,
         type: "playlist",
@@ -1411,7 +1473,12 @@ export default function HomeScreen({ onNavigate } = {}) {
         title: "Viral Hits 2026",
         artist: "High Velocity Trending",
         subtitle: `${viralTracks.length} tracks`,
-        image: viralTracks[0]?.artwork_url || viralTracks[0]?.thumbnail || "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=500&q=80",
+        image: viralArt,
+        cover_url: viralArt,
+        preview_artwork: viralArt,
+        artwork_url: viralArt,
+        thumbnail: viralArt,
+        coverImage: viralArt,
         tracks: viralTracks,
         mixTracks: viralTracks,
         type: "playlist",
@@ -1423,7 +1490,12 @@ export default function HomeScreen({ onNavigate } = {}) {
         title: "Late Night Chill",
         artist: "Acoustic & Ambient Sounds",
         subtitle: `${finalChillTracks.length} tracks`,
-        image: finalChillTracks[0]?.artwork_url || finalChillTracks[0]?.thumbnail || "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&q=80",
+        image: chillArt,
+        cover_url: chillArt,
+        preview_artwork: chillArt,
+        artwork_url: chillArt,
+        thumbnail: chillArt,
+        coverImage: chillArt,
         tracks: finalChillTracks,
         mixTracks: finalChillTracks,
         type: "playlist",
@@ -1435,7 +1507,12 @@ export default function HomeScreen({ onNavigate } = {}) {
         title: "Weekend Party",
         artist: "Upbeat Dance & Club Anthems",
         subtitle: `${finalPartyTracks.length} tracks`,
-        image: finalPartyTracks[0]?.artwork_url || finalPartyTracks[0]?.thumbnail || "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=500&q=80",
+        image: partyArt,
+        cover_url: partyArt,
+        preview_artwork: partyArt,
+        artwork_url: partyArt,
+        thumbnail: partyArt,
+        coverImage: partyArt,
         tracks: finalPartyTracks,
         mixTracks: finalPartyTracks,
         type: "playlist",

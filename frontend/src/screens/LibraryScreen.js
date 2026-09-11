@@ -122,14 +122,65 @@ function LibrarySkeleton({ type }) {
   );
 }
 
-function PlaylistRowCover({ coverUrl }) {
+function PlaylistRowCover({ coverUrl, tracks }) {
   const [hasError, setHasError] = useState(false);
-  const cleanUri =
-    !hasError && coverUrl && typeof coverUrl === "string" && coverUrl.trim().length > 0
-      ? getHighResArtwork(coverUrl.trim()) || coverUrl.trim()
-      : null;
+  const failedUrlsRef = React.useRef(new Set());
 
-  if (!cleanUri) {
+  const getCandidateUri = () => {
+    // 1. Direct coverUrl if not failed and not unsplash
+    if (coverUrl && typeof coverUrl === "string" && coverUrl.trim().length > 0) {
+      const clean = coverUrl.trim();
+      if (!failedUrlsRef.current.has(clean) && !clean.includes("unsplash.com")) {
+        return getHighResArtwork(clean) || clean;
+      }
+    }
+    // 2. Extract from child tracks
+    if (tracks && Array.isArray(tracks) && tracks.length > 0) {
+      for (const t of tracks) {
+        if (!t) continue;
+        const art =
+          (t.artwork_url && !t.artwork_url.includes("unsplash.com") ? t.artwork_url : null) ||
+          (t.thumbnail && !t.thumbnail.includes("unsplash.com") ? t.thumbnail : null) ||
+          (t.image && !t.image.includes("unsplash.com") ? t.image : null) ||
+          (t.coverImage && !t.coverImage.includes("unsplash.com") ? t.coverImage : null) ||
+          (t.cover_url && !t.cover_url.includes("unsplash.com") ? t.cover_url : null);
+        if (art && typeof art === "string" && art.startsWith("http") && !failedUrlsRef.current.has(art)) {
+          return getHighResArtwork(art) || art;
+        }
+        const vid = t.videoId || t.video_id || (typeof t.id === "string" && t.id.length === 11 ? t.id : null);
+        if (vid) {
+          const ytArt = `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+          if (!failedUrlsRef.current.has(ytArt)) return ytArt;
+        }
+      }
+    }
+    // 3. Fallback to direct coverUrl even if unsplash if no other candidate
+    if (coverUrl && typeof coverUrl === "string" && coverUrl.trim().length > 0) {
+      const clean = coverUrl.trim();
+      if (!failedUrlsRef.current.has(clean)) return clean;
+    }
+    return null;
+  };
+
+  const [currentUri, setCurrentUri] = useState(getCandidateUri);
+
+  React.useEffect(() => {
+    failedUrlsRef.current = new Set();
+    setHasError(false);
+    setCurrentUri(getCandidateUri());
+  }, [coverUrl, tracks]);
+
+  const handleImgError = () => {
+    if (currentUri) failedUrlsRef.current.add(currentUri);
+    const nextUri = getCandidateUri();
+    if (nextUri && nextUri !== currentUri) {
+      setCurrentUri(nextUri);
+      return;
+    }
+    setHasError(true);
+  };
+
+  if (!currentUri || hasError) {
     return (
       <View style={[styles.playlistRowThumb, styles.playlistRowThumbFallback]}>
         <Ionicons name="musical-notes" size={24} color={colors.primary} />
@@ -139,10 +190,10 @@ function PlaylistRowCover({ coverUrl }) {
 
   return (
     <Image
-      source={{ uri: cleanUri }}
+      source={{ uri: currentUri }}
       style={styles.playlistRowThumb}
       resizeMode="cover"
-      onError={() => setHasError(true)}
+      onError={handleImgError}
     />
   );
 }
@@ -296,7 +347,7 @@ export default function LibraryScreen() {
       if (Array.isArray(tracks) && tracks.length > 0) {
         setAppTrending(tracks);
       }
-    }, 30);
+    }, 100);
     return () => unsub();
   }, []);
 
@@ -382,62 +433,105 @@ export default function LibraryScreen() {
     return list;
   }, [rawHistory, searchQuery]);
 
-  // Software Auto-Generated Playlists from User Listen History & App Database
+  // Software Auto-Generated Playlists from User Listen History & Platform Database
   const historyPlaylists = useMemo(() => {
+    const cleanTrackArtwork = (t) => {
+      if (!t) return null;
+      const vid = t.videoId || t.video_id || (typeof t.id === "string" && t.id.length === 11 ? t.id : null);
+      let art =
+        (t.artwork_url && !t.artwork_url.includes("unsplash.com") ? t.artwork_url : null) ||
+        (t.thumbnail && !t.thumbnail.includes("unsplash.com") ? t.thumbnail : null) ||
+        (t.image && !t.image.includes("unsplash.com") ? t.image : null) ||
+        (t.coverImage && !t.coverImage.includes("unsplash.com") ? t.coverImage : null) ||
+        (t.cover_url && !t.cover_url.includes("unsplash.com") ? t.cover_url : null);
+      if (art && typeof art === "string" && art.startsWith("http")) {
+        art = getHighResArtwork(art) || art;
+      } else if (vid) {
+        art = `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+      }
+      return {
+        ...t,
+        id: t.id || vid || `trk_${Math.random()}`,
+        videoId: vid || t.id,
+        video_id: vid || t.id,
+        artwork_url: art,
+        thumbnail: art,
+        image: art,
+        cover_url: art,
+        coverImage: art,
+      };
+    };
+
+    const getFirstTrackArt = (trackList) => {
+      for (const trk of (trackList || [])) {
+        if (!trk) continue;
+        const art = trk.artwork_url || trk.thumbnail || trk.image || trk.coverImage;
+        if (art && typeof art === "string" && art.startsWith("http") && !art.includes("unsplash.com")) {
+          return getHighResArtwork(art) || art;
+        }
+        const vid = trk.videoId || trk.video_id || (typeof trk.id === "string" && trk.id.length === 11 ? trk.id : null);
+        if (vid) return `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+      }
+      return "";
+    };
+
+    // Fallback seed tracks with real verified YouTube video IDs and artworks
+    const fallbackSeed = [
+      { videoId: "4NRXx6U8ABQ", title: "Blinding Lights", artist: "The Weeknd", album: "After Hours", playCount: 88 },
+      { videoId: "TUVcZfQe-Kw", title: "Levitating", artist: "Dua Lipa", album: "Future Nostalgia", playCount: 75 },
+      { videoId: "kTJczUoc26U", title: "Stay", artist: "The Kid LAROI, Justin Bieber", album: "F*CK LOVE 3", playCount: 71 },
+      { videoId: "H5v3kku4y6Q", title: "As It Was", artist: "Harry Styles", album: "Harry's House", playCount: 68 },
+      { videoId: "JGwWNGJdvx8", title: "Shape of You", artist: "Ed Sheeran", album: "÷ (Divide)", playCount: 65 },
+      { videoId: "m7Bc3pLyij0", title: "Heat Waves", artist: "Glass Animals", album: "Dreamland", playCount: 62 },
+      { videoId: "jfKfPfyJRdk", title: "Morning Coffee Beats", artist: "Chillhop Beats", album: "Lo-Fi Lounge", playCount: 55 },
+      { videoId: "5qap5aO4i9A", title: "Golden Hour Radiance", artist: "Lofi Radiance", album: "Sunset Dreams", playCount: 50 },
+      { videoId: "7NOSDKb0HlU", title: "Rainy Night Sanctuary", artist: "Sleepy Fish", album: "Nightfall Melodies", playCount: 48 },
+      { videoId: "DWcJFNfaw9c", title: "Lucid Dreams & Focus", artist: "Kudos Records", album: "Focus Flow", playCount: 45 },
+      { videoId: "k2qgadSvNyU", title: "Physical", artist: "Dua Lipa", album: "Future Nostalgia", playCount: 59 },
+      { videoId: "gNi_6U5Pm_o", title: "Higher Power", artist: "Coldplay", album: "Music of the Spheres", playCount: 54 },
+      { videoId: "0VwLoxv5u1o", title: "Shivers", artist: "Ed Sheeran", album: "=", playCount: 52 },
+      { videoId: "fJ9rUzIMcZQ", title: "Bohemian Rhapsody", artist: "Queen", album: "A Night at the Opera", playCount: 49 },
+      { videoId: "kJQP7kiw5Fk", title: "Despacito", artist: "Luis Fonsi, Daddy Yankee", album: "VIDA", playCount: 60 },
+    ];
+
     const result = [];
-    const pool = [...mergedHistory, ...(appTrending || [])].filter(Boolean);
+    const pool = [...mergedHistory, ...(appTrending || []), ...fallbackSeed].filter(Boolean);
     const seenIds = new Set();
     const uniquePool = [];
     for (const t of pool) {
       const vid = t.videoId || t.video_id || t.id;
       if (vid && !seenIds.has(vid)) {
         seenIds.add(vid);
-        uniquePool.push(t);
+        const cleaned = cleanTrackArtwork(t);
+        if (cleaned) uniquePool.push(cleaned);
       }
     }
 
     if (uniquePool.length >= 2) {
-      // 1. Staytup Community Top Tracks / Most Played
-      const topPlayed = [...uniquePool]
+      // 1. Staytup Global Top Hits
+      const globalTracks = [...uniquePool]
         .sort((a, b) => (b.playCount || b.play_count || 1) - (a.playCount || a.play_count || 1))
         .slice(0, 30);
-      const topArt = topPlayed[0]?.artwork_url || topPlayed[0]?.thumbnail || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&q=80";
+      const globalArt = getFirstTrackArt(globalTracks);
       result.push({
-        id: "history_auto_top_hits",
-        name: "Staytup Community Top Hits",
-        description: "The most listened tracks across all Staytup user profiles.",
-        cover_url: topArt,
-        preview_artwork: topArt,
-        image: topArt,
+        id: "public_pl_top_hits",
+        name: "Staytup Global Top Hits",
+        description: "The hottest trending tracks around the world right now based on all Staytup user activity.",
+        cover_url: globalArt,
+        preview_artwork: globalArt,
+        image: globalArt,
+        artwork_url: globalArt,
+        thumbnail: globalArt,
+        coverImage: globalArt,
         isPublic: true,
         is_public: true,
         type: "public",
-        creator_name: "Staytup Platform",
-        track_count: topPlayed.length,
-        tracks: topPlayed,
+        creator_name: "Staytup Community",
+        track_count: globalTracks.length,
+        tracks: globalTracks,
       });
 
-      // 2. Personal Listening Rotation (if user has played tracks)
-      if (mergedHistory.length >= 2) {
-        const userTracks = [...mergedHistory].slice(0, 25);
-        const userArt = userTracks[0]?.artwork_url || userTracks[0]?.thumbnail || "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&q=80";
-        result.push({
-          id: "history_auto_personal_rotation",
-          name: "Your Daily Rotation",
-          description: "Curated automatically from your recent listening activity.",
-          cover_url: userArt,
-          preview_artwork: userArt,
-          image: userArt,
-          isPublic: true,
-          is_public: true,
-          type: "public",
-          creator_name: "Your History",
-          track_count: userTracks.length,
-          tracks: userTracks,
-        });
-      }
-
-      // 3. Chill & Lo-Fi Vibes
+      // 2. Midnight Chill & Lo-Fi
       const chillTracks = uniquePool.filter((t) => {
         const str = `${t.title || ""} ${t.artist || ""} ${t.album || ""}`.toLowerCase();
         return (
@@ -448,25 +542,104 @@ export default function LibraryScreen() {
           str.includes("night") ||
           str.includes("relax") ||
           str.includes("sleep") ||
-          str.includes("coffee")
+          str.includes("coffee") ||
+          str.includes("ambient") ||
+          str.includes("calm") ||
+          str.includes("peaceful") ||
+          str.includes("soft")
         );
       });
-      const finalChill = (chillTracks.length >= 2 ? chillTracks : uniquePool.slice(2, 12)).slice(0, 20);
-      if (finalChill.length >= 2) {
-        const cArt = finalChill[0]?.artwork_url || finalChill[0]?.thumbnail || "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&q=80";
+      const finalChill = (chillTracks.length >= 4 ? chillTracks : uniquePool.slice(3, 23)).slice(0, 25);
+      const chillArt = getFirstTrackArt(finalChill);
+      result.push({
+        id: "public_pl_chill_vibes",
+        name: "Midnight Chill & Lo-Fi",
+        description: "Relaxing beats, calm melodies, and late night soundscapes to unwind or focus.",
+        cover_url: chillArt,
+        preview_artwork: chillArt,
+        image: chillArt,
+        artwork_url: chillArt,
+        thumbnail: chillArt,
+        coverImage: chillArt,
+        isPublic: true,
+        is_public: true,
+        type: "public",
+        creator_name: "Staytup Curator",
+        track_count: finalChill.length,
+        tracks: finalChill,
+      });
+
+      // 3. Viral Hits 2026
+      const viralTracks = [...uniquePool]
+        .sort((a, b) => {
+          const aTime = a.lastPlayedAt || a.last_played ? new Date(a.lastPlayedAt || a.last_played).getTime() : 0;
+          const bTime = b.lastPlayedAt || b.last_played ? new Date(b.lastPlayedAt || b.last_played).getTime() : 0;
+          if (bTime !== aTime) return bTime - aTime;
+          return (b.playCount || b.play_count || 1) - (a.playCount || a.play_count || 1);
+        })
+        .slice(0, 25);
+      const viralArt = getFirstTrackArt(viralTracks);
+      result.push({
+        id: "public_pl_viral_vibes",
+        name: "Viral Hits 2026",
+        description: "Most shared soundscapes and viral sensation tracks across Staytup.",
+        cover_url: viralArt,
+        preview_artwork: viralArt,
+        image: viralArt,
+        artwork_url: viralArt,
+        thumbnail: viralArt,
+        coverImage: viralArt,
+        isPublic: true,
+        is_public: true,
+        type: "public",
+        creator_name: "Staytup Viral",
+        track_count: viralTracks.length,
+        tracks: viralTracks,
+      });
+
+      // 4. Staytup Community Top Hits
+      const topPlayed = [...uniquePool]
+        .sort((a, b) => (b.playCount || b.play_count || 1) - (a.playCount || a.play_count || 1))
+        .slice(0, 30);
+      const topArt = getFirstTrackArt(topPlayed);
+      result.push({
+        id: "history_auto_top_hits",
+        name: "Staytup Community Top Hits",
+        description: "The most listened tracks across all Staytup user profiles.",
+        cover_url: topArt,
+        preview_artwork: topArt,
+        image: topArt,
+        artwork_url: topArt,
+        thumbnail: topArt,
+        coverImage: topArt,
+        isPublic: true,
+        is_public: true,
+        type: "public",
+        creator_name: "Staytup Platform",
+        track_count: topPlayed.length,
+        tracks: topPlayed,
+      });
+
+      // 5. Personal Listening Rotation (if user has played tracks)
+      if (mergedHistory.length >= 2) {
+        const userTracks = [...mergedHistory].map(cleanTrackArtwork).slice(0, 25);
+        const userArt = getFirstTrackArt(userTracks);
         result.push({
-          id: "history_auto_chill_vibes",
-          name: "Midnight Chill & Lo-Fi",
-          description: "Relaxing beats, calm melodies, and late night soundscapes to unwind or focus.",
-          cover_url: cArt,
-          preview_artwork: cArt,
-          image: cArt,
+          id: "history_auto_personal_rotation",
+          name: "Your Daily Rotation",
+          description: "Curated automatically from your recent listening activity.",
+          cover_url: userArt,
+          preview_artwork: userArt,
+          image: userArt,
+          artwork_url: userArt,
+          thumbnail: userArt,
+          coverImage: userArt,
           isPublic: true,
           is_public: true,
           type: "public",
-          creator_name: "Staytup Curator",
-          track_count: finalChill.length,
-          tracks: finalChill,
+          creator_name: "Your History",
+          track_count: userTracks.length,
+          tracks: userTracks,
         });
       }
     }
@@ -480,6 +653,7 @@ export default function LibraryScreen() {
     const collabNames = new Set();
     const result = [];
 
+    // 1. User's Collaborative & Blend Playlists
     for (const cp of collabPlaylists || []) {
       const id = String(cp.id || cp.collabId || "");
       if (id && !seen.has(id)) {
@@ -490,6 +664,7 @@ export default function LibraryScreen() {
       }
     }
 
+    // 2. User's Personal Playlists
     for (const p of rtdbPlaylists || []) {
       const id = String(p.id || p.collabId || "");
       const nameKey = String(p.name || "").trim().toLowerCase();
@@ -499,12 +674,52 @@ export default function LibraryScreen() {
       }
     }
 
-    for (const pub of [...(publicPlaylists || []), ...(historyPlaylists || [])]) {
+    // 3. Algorithmic User History Playlists (Take precedence over static backend fallbacks!)
+    for (const ap of historyPlaylists || []) {
+      const id = String(ap.id || ap.collabId || "");
+      const nameKey = String(ap.name || "").trim().toLowerCase();
+      if (!id || seen.has(id) || (nameKey && seen.has(nameKey))) continue;
+      seen.add(id);
+      if (nameKey) seen.add(nameKey);
+      result.push({ ...ap, isPublic: true, is_public: true });
+    }
+
+    // 4. Other Public Playlists (from RTDB / API)
+    for (const pub of publicPlaylists || []) {
       const id = String(pub.id || pub.collabId || "");
-      if (id && !seen.has(id)) {
-        seen.add(id);
-        result.push({ ...pub, isPublic: true, is_public: true });
+      const nameKey = String(pub.name || "").trim().toLowerCase();
+      if (!id || seen.has(id) || (nameKey && seen.has(nameKey))) continue;
+      seen.add(id);
+      if (nameKey) seen.add(nameKey);
+
+      // Clean tracks and ensure playlist cover is set from first track
+      const rawTracks = pub.tracks ? (Array.isArray(pub.tracks) ? pub.tracks : Object.values(pub.tracks)) : [];
+      let pubCover = pub.cover_url || pub.preview_artwork || pub.image || "";
+      if (!pubCover || pubCover.includes("unsplash.com")) {
+        for (const t of rawTracks) {
+          const art = t?.artwork_url || t?.thumbnail || t?.image;
+          if (art && typeof art === "string" && !art.includes("unsplash.com")) {
+            pubCover = art;
+            break;
+          }
+          const vid = t?.videoId || t?.video_id || (typeof t?.id === "string" && t.id.length === 11 ? t.id : null);
+          if (vid) {
+            pubCover = `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+            break;
+          }
+        }
       }
+      result.push({
+        ...pub,
+        cover_url: pubCover,
+        preview_artwork: pubCover,
+        image: pubCover,
+        artwork_url: pubCover,
+        thumbnail: pubCover,
+        coverImage: pubCover,
+        isPublic: true,
+        is_public: true,
+      });
     }
 
     return result;
@@ -1158,7 +1373,7 @@ export default function LibraryScreen() {
                       onPress={() => openPlaylist(item)}
                       activeOpacity={0.7}
                     >
-                      <PlaylistRowCover coverUrl={playlistCover} />
+                      <PlaylistRowCover coverUrl={playlistCover} tracks={item.tracks} />
                       <View style={styles.playlistRowInfo}>
                         <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
                           <Text style={styles.playlistRowTitle} numberOfLines={1}>
