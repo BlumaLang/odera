@@ -227,10 +227,6 @@ export default function LiveReactionOverlay() {
   const bannerOpacity = useRef(new Animated.Value(0)).current;
   const bannerTimerRef = useRef(null);
 
-  useEffect(() => {
-    injectKeyframesOnce();
-  }, []);
-
   const spawnBurst = useCallback(
     (reaction) => {
       const emoji = reaction.emoji || "🔥";
