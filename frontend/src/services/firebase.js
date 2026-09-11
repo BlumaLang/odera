@@ -3623,10 +3623,9 @@ export async function createListeningParty({
 
   await set(partyRef, partyData);
 
-  // Set disconnect cleanup for host
+  // Set disconnect cleanup: If host disconnects/leaves, immediately delete the entire party room
   try {
-    const memberRef = ref(db, `listening_parties/${partyId}/members/${hostUid}`);
-    onDisconnect(memberRef).remove();
+    onDisconnect(partyRef).remove();
   } catch (_) {}
 
   return partyId;
@@ -3637,20 +3636,26 @@ export async function createListeningParty({
  */
 export async function joinListeningParty(partyId, user) {
   if (!partyId || !user?.uid) return false;
+  const isHost = Boolean(user.isHost);
   const memberRef = ref(db, `listening_parties/${partyId}/members/${user.uid}`);
   const memberData = {
     uid: user.uid,
-    name: user.displayName || user.username || "Listener",
+    name: user.name || user.displayName || user.username || "Listener",
     avatar: user.avatar || user.photoURL || user.avatarUrl || "",
     avatarColor: user.avatarColor || "",
-    isHost: false,
+    isHost: isHost,
     joinedAt: Date.now(),
     isOnline: true,
   };
 
   await set(memberRef, memberData);
   try {
-    onDisconnect(memberRef).remove();
+    if (isHost) {
+      const partyRef = ref(db, `listening_parties/${partyId}`);
+      onDisconnect(partyRef).remove();
+    } else {
+      onDisconnect(memberRef).remove();
+    }
   } catch (_) {}
   return true;
 }
@@ -3658,9 +3663,13 @@ export async function joinListeningParty(partyId, user) {
 /**
  * Leave a listening party
  */
-export async function leaveListeningParty(partyId, uid) {
+export async function leaveListeningParty(partyId, uid, isHost = false) {
   if (!partyId || !uid) return;
   try {
+    if (isHost) {
+      await deleteListeningParty(partyId);
+      return;
+    }
     const memberRef = ref(db, `listening_parties/${partyId}/members/${uid}`);
     await remove(memberRef);
   } catch (err) {

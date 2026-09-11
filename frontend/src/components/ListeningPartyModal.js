@@ -18,6 +18,7 @@ import { useAudio } from "../context/AudioContext";
 import { api } from "../api/client";
 import {
   subscribeListeningParty,
+  joinListeningParty,
   leaveListeningParty,
   deleteListeningParty,
   updatePartyPlayback,
@@ -83,6 +84,10 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
       setLoading(false);
       if (!data) {
         setParty(null);
+        if (setActiveParty) {
+          setActiveParty(null);
+        }
+        if (onClose) onClose();
         return;
       }
       setParty(data);
@@ -104,6 +109,26 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
       unsubscribe();
     };
   }, [partyId, visible, myUid]);
+
+  // ─── Realtime Member Join & Presence Sync ────────────────────────────────
+  useEffect(() => {
+    if (!partyId || !visible || !myUid) return;
+
+    const curAvatar = userProfile?.avatar || userProfile?.photoURL || userProfile?.avatarUrl || "";
+    const userObj = {
+      uid: myUid,
+      name: myName,
+      displayName: userProfile?.displayName || userProfile?.name || myName,
+      username: userProfile?.username || myName,
+      avatar: curAvatar,
+      avatarColor: userProfile?.avatarColor || "",
+      isHost: party ? party.hostUid === myUid : false,
+    };
+
+    joinListeningParty(partyId, userObj).catch((err) => {
+      console.warn("joinListeningParty error:", err);
+    });
+  }, [partyId, visible, myUid, myName, userProfile?.avatar, userProfile?.photoURL, party?.hostUid]);
 
   // ─── Track / Queue Sync Engine ───────────────────────────────────────────
   const isHost = party?.hostUid === myUid;
@@ -193,7 +218,11 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
   // ─── Actions ─────────────────────────────────────────────────────────────
   const handleLeave = async () => {
     if (partyId && myUid) {
-      await leaveListeningParty(partyId, myUid);
+      if (isHost) {
+        await deleteListeningParty(partyId);
+      } else {
+        await leaveListeningParty(partyId, myUid, false);
+      }
     }
     if (setActiveParty) {
       setActiveParty(null);
@@ -301,7 +330,21 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
 
   if (!visible) return null;
 
-  const membersList = party?.members ? Object.values(party.members) : [];
+  const rawMembers = party?.members ? Object.values(party.members) : [];
+  const curAvatar = userProfile?.avatar || userProfile?.photoURL || userProfile?.avatarUrl || "";
+  const hasMyUser = rawMembers.some((m) => m?.uid === myUid);
+  const membersList = !hasMyUser && myUid ? [
+    ...rawMembers,
+    {
+      uid: myUid,
+      name: myName,
+      avatar: curAvatar,
+      avatarColor: userProfile?.avatarColor || "",
+      isHost: party?.hostUid === myUid,
+      isOnline: true,
+    }
+  ] : rawMembers;
+
   const onlineCount = membersList.filter((m) => m?.isOnline).length || membersList.length || 1;
 
   const queueObj = party?.queue || {};
@@ -369,14 +412,15 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
               >
                 {membersList.map((m, idx) => {
                   const isCur = m.uid === myUid || m.uid === currentUser?.uid;
+                  const curAvatar = userProfile?.avatar || userProfile?.photoURL || userProfile?.avatarUrl;
                   const memberUser = {
                     uid: m.uid,
                     name: m.name || (isCur ? myName : "Listener"),
                     username: m.name || (isCur ? myName : "Listener"),
                     displayName: m.name || (isCur ? myName : "Listener"),
-                    avatar: m.avatar || (isCur ? userProfile?.avatar || userProfile?.photoURL : "") || (m.isHost ? party?.hostPhoto : ""),
-                    avatarColor: m.avatarColor || (isCur ? userProfile?.avatarColor : ""),
-                    photoURL: m.avatar || (isCur ? userProfile?.photoURL : "") || (m.isHost ? party?.hostPhoto : ""),
+                    avatar: (isCur && curAvatar) ? curAvatar : (m.avatar || (m.isHost ? party?.hostPhoto : "") || ""),
+                    avatarColor: (isCur && userProfile?.avatarColor) ? userProfile.avatarColor : (m.avatarColor || ""),
+                    photoURL: (isCur && curAvatar) ? curAvatar : (m.avatar || (m.isHost ? party?.hostPhoto : "") || ""),
                   };
                   return (
                     <View key={(m.uid || idx) + "_m"} style={styles.memberAvatarWrap}>
