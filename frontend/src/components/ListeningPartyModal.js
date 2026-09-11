@@ -30,6 +30,7 @@ import {
 } from "../services/firebase";
 import { triggerLocalReactionBurst, triggerIncomingReaction } from "./LiveReactionOverlay";
 import { openShareSheet } from "./ShareSheetModal";
+import UserAvatar from "./UserAvatar";
 
 const REACTION_EMOJIS = ["❤️", "🔥", "😂", "😮", "👏"];
 
@@ -282,22 +283,28 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
               </View>
 
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.avatarsRow}>
-                {membersList.map((m, idx) => (
-                  <View key={(m.uid || idx) + "_m"} style={styles.memberAvatarWrap}>
-                    {m.avatar ? (
-                      <Image source={{ uri: m.avatar }} style={styles.memberAvatarImg} />
-                    ) : (
-                      <View style={styles.memberAvatarFallback}>
-                        <Text style={styles.memberAvatarText}>{(m.name || "U")[0].toUpperCase()}</Text>
-                      </View>
-                    )}
-                    {m.isHost && (
-                      <View style={styles.hostCrownBadge}>
-                        <Ionicons name="star" size={8} color="#000000" />
-                      </View>
-                    )}
-                  </View>
-                ))}
+                {membersList.map((m, idx) => {
+                  const isCur = m.uid === myUid || m.uid === currentUser?.uid;
+                  const memberUser = {
+                    uid: m.uid,
+                    name: m.name || (isCur ? myName : "Listener"),
+                    username: m.name || (isCur ? myName : "Listener"),
+                    displayName: m.name || (isCur ? myName : "Listener"),
+                    avatar: m.avatar || (isCur ? userProfile?.avatar || userProfile?.photoURL : "") || (m.isHost ? party?.hostPhoto : ""),
+                    avatarColor: m.avatarColor || (isCur ? userProfile?.avatarColor : ""),
+                    photoURL: m.avatar || (isCur ? userProfile?.photoURL : "") || (m.isHost ? party?.hostPhoto : ""),
+                  };
+                  return (
+                    <View key={(m.uid || idx) + "_m"} style={styles.memberAvatarWrap}>
+                      <UserAvatar user={memberUser} size={32} fontSize={12} />
+                      {m.isHost && (
+                        <View style={styles.hostCrownBadge}>
+                          <Ionicons name="star" size={8} color="#000000" />
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
               </ScrollView>
             </View>
 

@@ -21,8 +21,9 @@ export default function CreatePartyModal({ visible, onClose, onCreated }) {
   const { currentTrack } = useAudio() || {};
 
   const hostUid = currentUser?.uid || userProfile?.uid;
-  const hostName = userProfile?.username || userProfile?.displayName || "Host";
-  const hostPhoto = userProfile?.photoURL || userProfile?.avatar || "";
+  const hostName = userProfile?.username || userProfile?.displayName || currentUser?.displayName || "Host";
+  const hostPhoto = userProfile?.avatar || userProfile?.photoURL || userProfile?.avatarUrl || currentUser?.photoURL || "";
+  const hostColor = userProfile?.avatarColor || "";
 
   const [partyName, setPartyName] = useState(`${hostName}'s Room`);
   const [isPrivate, setIsPrivate] = useState(false);
@@ -49,6 +50,7 @@ export default function CreatePartyModal({ visible, onClose, onCreated }) {
         hostUid,
         hostName,
         hostPhoto,
+        hostColor,
         isPrivate,
         passcode: isPrivate ? passcode.trim() : "",
         initialTrack: currentTrack || null,
