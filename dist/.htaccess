@@ -1,10 +1,8 @@
 <IfModule mod_headers.c>
-    Header always set Access-Control-Allow-Origin "*"
-    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE, PATCH"
-    Header always set Access-Control-Allow-Headers "Authorization, Content-Type, Range, X-User-Id, Accept, Origin, User-Agent"
-    Header always set Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges"
+    # Security headers (CORS handled by PHP backend)
     Header always set Cross-Origin-Opener-Policy "same-origin-allow-popups"
     Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>
 
 # Explicitly grant public access to Web App Manifest and PWA assets
@@ -22,19 +20,31 @@
     RewriteEngine On
     RewriteBase /
 
-    # If stream.php or existing file/dir, serve directly
+    # If existing file or directory, serve directly
     RewriteCond %{REQUEST_FILENAME} -f [OR]
     RewriteCond %{REQUEST_FILENAME} -d
     RewriteRule ^ - [L]
 
-    # Otherwise forward to index.html for SPA
+    # Route /api/* to the PHP API router
+    RewriteRule ^api/(.*)$ api/index.php [QSA,L]
+
+    # Route /api to the PHP API router
+    RewriteRule ^api$ api/index.php [L]
+
+    # If file exists in public/, serve from public/
+    RewriteCond %{DOCUMENT_ROOT}/public/$1 -f
+    RewriteRule ^(.*)$ public/$1 [L]
+
+    # Serve SPA frontend from public/index.html or index.html
+    RewriteCond %{DOCUMENT_ROOT}/public/index.html -f
+    RewriteRule ^ public/index.html [L]
     RewriteRule ^ index.html [L]
 </IfModule>
 
 # PWA Cache Controls
 <IfModule mod_headers.c>
-    # Never cache service worker, index.html, or metadata.json to guarantee instantaneous PWA updates
-    <FilesMatch "^(index\.html|sw\.js|service-worker\.js|metadata\.json)$">
+    # Never cache service worker or index.html to guarantee instantaneous PWA updates
+    <FilesMatch "^(index\.html|sw\.js|service-worker\.js)$">
         Header set Cache-Control "no-cache, no-store, must-revalidate"
         Header set Pragma "no-cache"
         Header set Expires 0

@@ -517,6 +517,8 @@ export default function SearchScreen() {
     if (uid) {
       clearRecentSearches(uid).catch(() => {});
     }
+  };
+
   // Fetch trending searches on initial mount
   useEffect(() => {
     api.getTrendingSearches().then((res) => {

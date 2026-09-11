@@ -1380,6 +1380,7 @@ export default function PlaylistModal({
               ) : (
                 <View style={{ height: isDesktop || isTablet ? 40 : 130 }} />
               )
+            }
           />
 
           {/* Sticky Bulk Action Bar */}
