@@ -531,45 +531,7 @@ export default function LibraryScreen() {
         tracks: globalTracks,
       });
 
-      // 2. Midnight Chill & Lo-Fi
-      const chillTracks = uniquePool.filter((t) => {
-        const str = `${t.title || ""} ${t.artist || ""} ${t.album || ""}`.toLowerCase();
-        return (
-          str.includes("lofi") ||
-          str.includes("chill") ||
-          str.includes("acoustic") ||
-          str.includes("slow") ||
-          str.includes("night") ||
-          str.includes("relax") ||
-          str.includes("sleep") ||
-          str.includes("coffee") ||
-          str.includes("ambient") ||
-          str.includes("calm") ||
-          str.includes("peaceful") ||
-          str.includes("soft")
-        );
-      });
-      const finalChill = (chillTracks.length >= 4 ? chillTracks : uniquePool.slice(3, 23)).slice(0, 25);
-      const chillArt = getFirstTrackArt(finalChill);
-      result.push({
-        id: "public_pl_chill_vibes",
-        name: "Midnight Chill & Lo-Fi",
-        description: "Relaxing beats, calm melodies, and late night soundscapes to unwind or focus.",
-        cover_url: chillArt,
-        preview_artwork: chillArt,
-        image: chillArt,
-        artwork_url: chillArt,
-        thumbnail: chillArt,
-        coverImage: chillArt,
-        isPublic: true,
-        is_public: true,
-        type: "public",
-        creator_name: "Staytup Curator",
-        track_count: finalChill.length,
-        tracks: finalChill,
-      });
-
-      // 3. Viral Hits 2026
+      // 2. Viral Hits 2026
       const viralTracks = [...uniquePool]
         .sort((a, b) => {
           const aTime = a.lastPlayedAt || a.last_played ? new Date(a.lastPlayedAt || a.last_played).getTime() : 0;

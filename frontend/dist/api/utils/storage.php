@@ -432,67 +432,6 @@ class Storage {
                 ]
             ],
             [
-                'id' => 'public_pl_chill_vibes',
-                'name' => 'Midnight Chill & Lo-Fi',
-                'description' => 'Relaxing beats, calm melodies, and late night soundscapes to unwind or focus.',
-                'cover_url' => 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
-                'is_public' => true,
-                'isPublic' => true,
-                'type' => 'public',
-                'creator_name' => 'Staytup Curator',
-                'track_count' => 4,
-                'tracks' => [
-                    [
-                        'id' => 'trk_pub_c1',
-                        'videoId' => 'jfKfPfyJRdk',
-                        'video_id' => 'jfKfPfyJRdk',
-                        'title' => 'Morning Coffee Beats',
-                        'artist' => 'Chillhop Beats',
-                        'album' => 'Lo-Fi Lounge',
-                        'duration' => 175,
-                        'duration_seconds' => 175,
-                        'artwork_url' => 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg'
-                    ],
-                    [
-                        'id' => 'trk_pub_c2',
-                        'videoId' => '5qap5aO4i9A',
-                        'video_id' => '5qap5aO4i9A',
-                        'title' => 'Golden Hour Radiance',
-                        'artist' => 'Lofi Radiance',
-                        'album' => 'Sunset Dreams',
-                        'duration' => 190,
-                        'duration_seconds' => 190,
-                        'artwork_url' => 'https://i.ytimg.com/vi/5qap5aO4i9A/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/5qap5aO4i9A/hqdefault.jpg'
-                    ],
-                    [
-                        'id' => 'trk_pub_c3',
-                        'videoId' => '7NOSDKb0HlU',
-                        'video_id' => '7NOSDKb0HlU',
-                        'title' => 'Rainy Night Sanctuary',
-                        'artist' => 'Sleepy Fish',
-                        'album' => 'Nightfall Melodies',
-                        'duration' => 165,
-                        'duration_seconds' => 165,
-                        'artwork_url' => 'https://i.ytimg.com/vi/7NOSDKb0HlU/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/7NOSDKb0HlU/hqdefault.jpg'
-                    ],
-                    [
-                        'id' => 'trk_pub_c4',
-                        'videoId' => 'DWcJFNfaw9c',
-                        'video_id' => 'DWcJFNfaw9c',
-                        'title' => 'Lucid Dreams & Focus',
-                        'artist' => 'Kudos Records',
-                        'album' => 'Focus Flow',
-                        'duration' => 180,
-                        'duration_seconds' => 180,
-                        'artwork_url' => 'https://i.ytimg.com/vi/DWcJFNfaw9c/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/DWcJFNfaw9c/hqdefault.jpg'
-                    ]
-                ]
-            ],
-            [
                 'id' => 'public_pl_viral_vibes',
                 'name' => 'Viral Hits 2026',
                 'description' => 'Most shared soundscapes and viral sensation tracks on Staytup.',
