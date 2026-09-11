@@ -1389,7 +1389,7 @@ export default function HomeScreen({ onNavigate } = {}) {
     const uniquePool = [];
     for (const t of pool) {
       const vid = t.videoId || t.video_id || t.id;
-      if (vid && !seenIds ? !seen.has(vid) : !seen.has(vid)) {
+      if (vid && !seen.has(vid)) {
         seen.add(vid);
         uniquePool.push(t);
       }
