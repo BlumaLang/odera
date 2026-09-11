@@ -1159,10 +1159,15 @@ export default function LibraryScreen() {
                             </View>
                           ) : null}
                         </View>
-                        <Text style={styles.playlistRowCount}>
-                          {item.isPublic && !item.isCollab ? "Public • " : ""}
+                        <Text style={styles.playlistRowCount} numberOfLines={1}>
+                          {(() => {
+                            const creator = item.creator_name || item.creatorName;
+                            if (creator && !["Staytup Platform", "Your History", "Staytup Curator"].includes(creator)) {
+                              return `By ${creator.startsWith("@") ? creator : `@${creator}`} • `;
+                            }
+                            return "Playlist • ";
+                          })()}
                           {trackCount} {trackCount === 1 ? "track" : "tracks"}
-                          {item.description ? ` • ${item.description}` : ""}
                         </Text>
                       </View>
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
