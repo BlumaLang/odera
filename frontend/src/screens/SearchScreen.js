@@ -952,35 +952,6 @@ export default function SearchScreen() {
                   );
                 })}
               </ScrollView>
-
-              {/* Quick Search Operators Chips */}
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.operatorChipsContainer}
-              >
-                {[
-                  { label: "artist:", op: "artist:" },
-                  { label: "genre:", op: "genre:" },
-                  { label: "mood:", op: "mood:" },
-                  { label: "lyrics:", op: "lyrics:" },
-                  { label: "year:", op: "year:2024" },
-                  { label: "lang:", op: "lang:hindi" },
-                ].map((chip) => (
-                  <TouchableOpacity
-                    key={chip.label}
-                    style={styles.operatorChip}
-                    onPress={() => {
-                      const prefix = query ? query + " " : "";
-                      setQuery(prefix + chip.op);
-                      searchInputRef.current?.focus();
-                    }}
-                    activeOpacity={0.75}
-                  >
-                    <Text style={styles.operatorChipText}>{chip.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
             </View>
           )}
         </View>
