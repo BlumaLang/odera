@@ -199,15 +199,10 @@ export default function ActiveDevicesModal({ visible, onClose }) {
           {/* Header Row */}
           <View style={styles.headerRow}>
             <View style={styles.headerLeft}>
-              <View style={styles.headerIconCircle}>
-                <Ionicons name="hardware-chip-outline" size={18} color={colors.primary} />
-              </View>
-              <View>
-                <Text style={styles.headerTitle}>Active Devices</Text>
-                <Text style={styles.headerSubtitle}>
-                  {totalOnline} device{totalOnline === 1 ? "" : "s"} online on your account
-                </Text>
-              </View>
+              <Text style={styles.headerTitle}>Active Devices</Text>
+              <Text style={styles.headerSubtitle}>
+                {totalOnline} device{totalOnline === 1 ? "" : "s"} online on your account
+              </Text>
             </View>
 
             <TouchableOpacity
@@ -422,9 +417,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+    flex: 1,
   },
   headerIconCircle: {
     width: 36,
