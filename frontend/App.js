@@ -216,11 +216,15 @@ function MainTabs() {
   const [activeTab, setActiveTab] = useState(() => getRouteFromPathname());
   const insets = useSafeAreaInsets();
 
+  const [friendsSubTab, setFriendsSubTab] = useState("friends");
   const tabHistoryRef = React.useRef(["Home"]);
 
-  const handleSelectTab = (tabName) => {
+  const handleSelectTab = (tabName, params) => {
     if (tabName !== activeTab) {
       tabHistoryRef.current.push(tabName);
+    }
+    if (params?.tab) {
+      setFriendsSubTab(params.tab);
     }
     setActiveTab(tabName);
     updateBrowserPathname(tabName);
@@ -299,7 +303,7 @@ function MainTabs() {
               <LibraryScreen onNavigate={handleSelectTab} />
             </View>
             <View style={[styles.tabContentPane, activeTab !== "Friends" && styles.hiddenPane]}>
-              <FriendsScreen onNavigate={handleSelectTab} />
+              <FriendsScreen onNavigate={handleSelectTab} initialTab={friendsSubTab} />
             </View>
             <View style={[styles.tabContentPane, activeTab !== "Premium" && styles.hiddenPane]}>
               <PremiumScreen onNavigate={handleSelectTab} />
@@ -335,7 +339,7 @@ function MainTabs() {
           <LibraryScreen onNavigate={handleSelectTab} />
         </View>
         <View style={[styles.tabContentPane, activeTab !== "Friends" && styles.hiddenPane]}>
-          <FriendsScreen onNavigate={handleSelectTab} />
+          <FriendsScreen onNavigate={handleSelectTab} initialTab={friendsSubTab} />
         </View>
         <View style={[styles.tabContentPane, activeTab !== "Premium" && styles.hiddenPane]}>
           <PremiumScreen onNavigate={handleSelectTab} />

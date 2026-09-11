@@ -15,6 +15,19 @@ import { colors, fonts } from "../theme/colors";
  * Universal Share Sheet Modal for Staytup
  * Supports sharing: songs, albums, artists, playlists, user profiles, and listening rooms.
  */
+export function openShareSheet(shareData) {
+  if (typeof window !== "undefined" && window.dispatchEvent) {
+    window.dispatchEvent(
+      new CustomEvent("staytup-open-share", {
+        detail: {
+          type: shareData?.type || "song",
+          data: shareData?.data || shareData,
+        },
+      })
+    );
+  }
+}
+
 export default function ShareSheetModal({
   visible,
   onClose,

@@ -38,6 +38,7 @@ import {
   subscribeFriendActivity,
   sendLiveReaction,
   subscribePublicPlaylists,
+  subscribePublicParties,
 } from "../services/firebase";
 import { triggerLocalReactionBurst } from "../components/LiveReactionOverlay";
 import { getHighResArtwork } from "../utils/imageUtils";
@@ -237,14 +238,19 @@ export default function HomeScreen({ onNavigate } = {}) {
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
   const [publicPlaylists, setPublicPlaylists] = useState([]);
   const [selectedPlaylistModal, setSelectedPlaylistModal] = useState(null);
+  const [publicParties, setPublicParties] = useState([]);
 
-  // Subscribe to community public playlists from Firebase RTDB
+  // Subscribe to community public playlists and listening parties from Firebase RTDB
   useEffect(() => {
     const unsub = subscribePublicPlaylists((list) => {
       setPublicPlaylists(list || []);
     });
+    const unsubParties = subscribePublicParties((list) => {
+      setPublicParties(list || []);
+    });
     return () => {
       try { unsub?.(); } catch (_) {}
+      try { unsubParties?.(); } catch (_) {}
     };
   }, []);
 
@@ -1518,7 +1524,7 @@ export default function HomeScreen({ onNavigate } = {}) {
                           <Text style={styles.followingFriendsTitle}>Friends Listening Now</Text>
                         </View>
                         <TouchableOpacity
-                          onPress={() => onNavigate && onNavigate("Friends")}
+                          onPress={() => onNavigate && onNavigate("Friends", { tab: "parties" })}
                           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                           activeOpacity={0.7}
                         >
@@ -1729,6 +1735,81 @@ export default function HomeScreen({ onNavigate } = {}) {
                             <Text style={[styles.circleFriendStatusText, isPlaying && styles.circleFriendStatusPlaying]} numberOfLines={1}>
                               {isPlaying ? "Listening" : "Online"}
                             </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* 0.5. Active Listening Parties on Home Feed */}
+                {publicParties.length > 0 && (
+                  <View style={styles.homePartiesSection}>
+                    <View style={styles.homePartiesHeaderRow}>
+                      <View style={styles.homePartiesTitleGroup}>
+                        <Ionicons name="headset" size={17} color="#1DB954" />
+                        <Text style={styles.homePartiesTitle}>Live Listening Parties</Text>
+                        <View style={styles.livePill}>
+                          <Text style={styles.livePillText}>{publicParties.length} LIVE</Text>
+                        </View>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => onNavigate && onNavigate("Friends", { tab: "parties" })}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.homePartiesViewAllText}>View All</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.homePartiesScrollContent}
+                      style={styles.homePartiesScrollView}
+                    >
+                      {publicParties.map((p) => {
+                        const mCount = Object.keys(p.members || {}).length || 1;
+                        const currentTrk = p.currentTrack;
+                        return (
+                          <TouchableOpacity
+                            key={`home_party_${p.id}`}
+                            style={styles.homePartyCard}
+                            onPress={() => {
+                              if (typeof window !== "undefined") {
+                                window.dispatchEvent(new CustomEvent("staytup-open-party", { detail: { partyId: p.id } }));
+                              }
+                            }}
+                            activeOpacity={0.8}
+                          >
+                            <View style={styles.homePartyCardLeft}>
+                              {currentTrk ? (
+                                <Image
+                                  source={{ uri: currentTrk.image || currentTrk.thumbnail || currentTrk.artwork_url }}
+                                  style={styles.homePartyThumb}
+                                />
+                              ) : (
+                                <View style={[styles.homePartyThumb, { backgroundColor: "#1e1e24", alignItems: "center", justifyContent: "center" }]}>
+                                  <Ionicons name="musical-notes" size={20} color="#1DB954" />
+                                </View>
+                              )}
+                              <View style={styles.homePartyMeta}>
+                                <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 2 }}>
+                                  <View style={styles.homePartyLiveDot} />
+                                  <Text style={styles.homePartyListenerCount}>{mCount} listening</Text>
+                                </View>
+                                <Text style={styles.homePartyName} numberOfLines={1}>
+                                  {p.name || `${p.hostName || "Host"}'s Party`}
+                                </Text>
+                                <Text style={styles.homePartySub} numberOfLines={1}>
+                                  Host: {p.hostName || "Friend"}{currentTrk ? ` • ${currentTrk.title}` : ""}
+                                </Text>
+                              </View>
+                            </View>
+
+                            <View style={styles.homePartyJoinBtn}>
+                              <Text style={styles.homePartyJoinBtnText}>Join</Text>
+                            </View>
                           </TouchableOpacity>
                         );
                       })}
@@ -2519,6 +2600,107 @@ const styles = StyleSheet.create({
   circleFriendStatusPlaying: {
     color: "#1DB954",
     fontFamily: fonts.medium,
+  },
+
+  // ── Live Listening Parties Section on Home ──
+  homePartiesSection: {
+    marginTop: 4,
+    marginBottom: 20,
+    width: "100%",
+  },
+  homePartiesHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  homePartiesTitleGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  homePartiesTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: "#FFFFFF",
+  },
+  homePartiesViewAllText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12.5,
+    color: "#8E8E93",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  homePartiesScrollView: {
+    width: "100%",
+  },
+  homePartiesScrollContent: {
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  homePartyCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: 290,
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  homePartyCardLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    marginRight: 10,
+  },
+  homePartyThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: "#1e1e24",
+    marginRight: 10,
+  },
+  homePartyMeta: {
+    flex: 1,
+  },
+  homePartyLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#1DB954",
+  },
+  homePartyListenerCount: {
+    fontFamily: fonts.semiBold,
+    fontSize: 11,
+    color: "#1DB954",
+  },
+  homePartyName: {
+    fontFamily: fonts.bold,
+    fontSize: 13.5,
+    color: "#FFFFFF",
+    marginTop: 1,
+  },
+  homePartySub: {
+    fontFamily: fonts.regular,
+    fontSize: 11,
+    color: "#A7A7A7",
+    marginTop: 1,
+  },
+  homePartyJoinBtn: {
+    backgroundColor: "rgba(29, 185, 84, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.35)",
+    paddingHorizontal: 13,
+    paddingVertical: 6,
+    borderRadius: 14,
+  },
+  homePartyJoinBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: "#1DB954",
   },
 
   // ── Currently Listening Users (Circle + Active Waveform Icon) ──

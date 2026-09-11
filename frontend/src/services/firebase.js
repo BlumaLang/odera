@@ -3665,6 +3665,19 @@ export async function leaveListeningParty(partyId, uid) {
 }
 
 /**
+ * Delete / end a listening party (Host action)
+ */
+export async function deleteListeningParty(partyId) {
+  if (!partyId) return;
+  try {
+    const partyRef = ref(db, `listening_parties/${partyId}`);
+    await remove(partyRef);
+  } catch (err) {
+    console.warn("deleteListeningParty error:", err.message);
+  }
+}
+
+/**
  * Host updates playback state (play/pause/seek)
  */
 export async function updatePartyPlayback(partyId, { isPlaying, positionMillis, track, hostUid }) {
@@ -3784,6 +3797,45 @@ export async function votePartyQueueSong(partyId, queueItemId, uid) {
     });
   } catch (err) {
     console.warn("votePartyQueueSong error:", err.message);
+  }
+}
+
+/**
+ * Play a specific song from the party queue immediately (Host action)
+ */
+export async function playPartyQueueSong(partyId, queueItemId) {
+  if (!partyId || !queueItemId) return;
+  const partyRef = ref(db, `listening_parties/${partyId}`);
+  try {
+    await runTransaction(partyRef, (party) => {
+      if (!party || !party.queue || !party.queue[queueItemId]) return party;
+      const targetItem = party.queue[queueItemId];
+      party.currentTrack = targetItem.track;
+      delete party.queue[queueItemId];
+      party.skipVotes = {};
+      party.playbackState = {
+        isPlaying: true,
+        positionMillis: 0,
+        timestamp: Date.now(),
+        updatedBy: "host_play_queue",
+      };
+      return party;
+    });
+  } catch (err) {
+    console.warn("playPartyQueueSong error:", err.message);
+  }
+}
+
+/**
+ * Remove a song from the party queue
+ */
+export async function removePartyQueueSong(partyId, queueItemId) {
+  if (!partyId || !queueItemId) return;
+  try {
+    const itemRef = ref(db, `listening_parties/${partyId}/queue/${queueItemId}`);
+    await remove(itemRef);
+  } catch (err) {
+    console.warn("removePartyQueueSong error:", err.message);
   }
 }
 

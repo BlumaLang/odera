@@ -19,9 +19,12 @@ import { api } from "../api/client";
 import {
   subscribeListeningParty,
   leaveListeningParty,
+  deleteListeningParty,
   updatePartyPlayback,
   addSongToPartyQueue,
   votePartyQueueSong,
+  playPartyQueueSong,
+  removePartyQueueSong,
   voteToSkipParty,
   triggerPartyReaction,
 } from "../services/firebase";
@@ -123,6 +126,18 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
     if (onClose) onClose();
   };
 
+  const handleDeleteParty = async () => {
+    if (!partyId || !isHost) return;
+    const confirmDelete =
+      typeof window !== "undefined" && window.confirm
+        ? window.confirm("Are you sure you want to end and delete this listening party?")
+        : true;
+    if (!confirmDelete) return;
+
+    await deleteListeningParty(partyId);
+    if (onClose) onClose();
+  };
+
   const handleHostPlayPause = async () => {
     if (!isHost || !partyId) return;
     const nextPlay = !isPlaying;
@@ -173,8 +188,9 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
     }
     setIsSearching(true);
     try {
-      const res = await api.searchWithFilter(q, "songs", 0, 10);
-      setSearchResults(res?.songs || []);
+      const res = await api.searchWithFilter(q, "songs", 0, 15);
+      const list = res?.tracks || res?.results || res?.songs || [];
+      setSearchResults(list);
     } catch (_) {
       setSearchResults([]);
     } finally {
@@ -182,9 +198,18 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
     }
   };
 
-  const handleAddTrackToQueue = async (track) => {
-    if (!partyId || !track) return;
-    await addSongToPartyQueue(partyId, track, {
+  const handleAddTrackToQueue = async (rawTrack) => {
+    if (!partyId || !rawTrack) return;
+    const normalized = {
+      ...rawTrack,
+      id: rawTrack.videoId || rawTrack.video_id || rawTrack.id,
+      videoId: rawTrack.videoId || rawTrack.video_id || rawTrack.id,
+      title: rawTrack.title || rawTrack.name || "Unknown Track",
+      artist: rawTrack.artist || rawTrack.subtitle || "Unknown Artist",
+      image: rawTrack.image || rawTrack.thumbnail || rawTrack.artwork_url || "",
+      thumbnail: rawTrack.thumbnail || rawTrack.image || "",
+    };
+    await addSongToPartyQueue(partyId, normalized, {
       uid: myUid,
       displayName: myName,
       photoURL: userProfile?.photoURL || "",
@@ -231,9 +256,21 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
               </Text>
             </View>
 
-            <TouchableOpacity style={styles.shareBtn} onPress={handleShareRoom} activeOpacity={0.8}>
-              <Ionicons name="share-social-outline" size={18} color="#FFFFFF" />
-            </TouchableOpacity>
+            <View style={styles.headerRightBtns}>
+              {isHost && (
+                <TouchableOpacity
+                  style={styles.deleteBtn}
+                  onPress={handleDeleteParty}
+                  activeOpacity={0.8}
+                  accessibilityLabel="End and delete party"
+                >
+                  <Ionicons name="trash-outline" size={17} color="#FF4D4D" />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={styles.shareBtn} onPress={handleShareRoom} activeOpacity={0.8}>
+                <Ionicons name="share-social-outline" size={18} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
           </View>
 
           <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -356,16 +393,41 @@ export default function ListeningPartyModal({ partyId, visible, onClose }) {
                         </Text>
                       </View>
 
-                      <TouchableOpacity
-                        style={[styles.upvoteBtn, hasVotedItem && styles.upvoteBtnActive]}
-                        onPress={() => votePartyQueueSong(partyId, item.id, myUid)}
-                        activeOpacity={0.8}
-                      >
-                        <Ionicons name="caret-up" size={14} color={hasVotedItem ? "#1DB954" : "#888888"} />
-                        <Text style={[styles.upvoteCount, hasVotedItem && styles.upvoteCountActive]}>
-                          {item.voteCount || 1}
-                        </Text>
-                      </TouchableOpacity>
+                      <View style={styles.queueActionsRow}>
+                        {isHost && (
+                          <TouchableOpacity
+                            style={styles.hostPlayQueueBtn}
+                            onPress={() => playPartyQueueSong(partyId, item.id)}
+                            activeOpacity={0.8}
+                            accessibilityLabel="Play this track now"
+                          >
+                            <Ionicons name="play" size={12} color="#000000" />
+                            <Text style={styles.hostPlayQueueText}>Play</Text>
+                          </TouchableOpacity>
+                        )}
+
+                        <TouchableOpacity
+                          style={[styles.upvoteBtn, hasVotedItem && styles.upvoteBtnActive]}
+                          onPress={() => votePartyQueueSong(partyId, item.id, myUid)}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="caret-up" size={14} color={hasVotedItem ? "#1DB954" : "#888888"} />
+                          <Text style={[styles.upvoteCount, hasVotedItem && styles.upvoteCountActive]}>
+                            {item.voteCount || 1}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {(isHost || item.suggestedBy === myUid) && (
+                          <TouchableOpacity
+                            style={styles.removeQueueBtn}
+                            onPress={() => removePartyQueueSong(partyId, item.id)}
+                            activeOpacity={0.8}
+                            accessibilityLabel="Remove from queue"
+                          >
+                            <Ionicons name="close" size={13} color="#888888" />
+                          </TouchableOpacity>
+                        )}
+                      </View>
                     </View>
                   );
                 })
@@ -503,6 +565,21 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: "#FFFFFF",
     marginTop: 2,
+  },
+  headerRightBtns: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  deleteBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255, 77, 77, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 77, 77, 0.25)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   shareBtn: {
     width: 36,
@@ -757,6 +834,35 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#777777",
     marginTop: 2,
+  },
+  queueActionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  hostPlayQueueBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1DB954",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    gap: 4,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  hostPlayQueueText: {
+    fontFamily: fonts.bold || "System",
+    fontSize: 11,
+    color: "#000000",
+  },
+  removeQueueBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   upvoteBtn: {
     flexDirection: "row",
