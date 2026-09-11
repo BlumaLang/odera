@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts } from "../theme/colors";
 import { useResponsive } from "../context/ResponsiveContext";
 import InstallAppModal from "../components/InstallAppModal";
+import { LEGAL_TERMS_OF_SERVICE, LEGAL_PRIVACY_POLICY, LEGAL_DISCLAIMER } from "../config/legal";
 
 const STAYTUP_LOGO = require("../../assets/staytup_logo.png");
 const GOOGLE_ICON = require("../../assets/google_icon.png");
@@ -80,6 +81,7 @@ export default function LoginScreen({ onLoginSuccess }) {
   // Modals
   const [showTerms, setShowTerms] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
+  const [showDisclaimer, setShowDisclaimer] = useState(false);
   const [invitedUsername, setInvitedUsername] = useState("");
 
   // Check URL pathname for /friend/:username invite
@@ -285,8 +287,10 @@ export default function LoginScreen({ onLoginSuccess }) {
             <Text style={styles.footerTerms}>
               By continuing, you agree to Staytup's{" "}
               <Text style={styles.footerLink} onPress={() => setShowTerms(true)}>Terms of Service</Text>
-              {" "}and{" "}
-              <Text style={styles.footerLink} onPress={() => setShowPrivacy(true)}>Privacy Policy</Text>.
+              {", "}
+              <Text style={styles.footerLink} onPress={() => setShowPrivacy(true)}>Privacy Policy</Text>
+              {", and "}
+              <Text style={styles.footerLink} onPress={() => setShowDisclaimer(true)}>Disclaimer</Text>.
             </Text>
           </View>
         </View>
@@ -306,10 +310,8 @@ export default function LoginScreen({ onLoginSuccess }) {
               <Text style={styles.legalTitle}>Terms of Service</Text>
               <View style={{ width: 32 }} />
             </View>
-            <ScrollView contentContainerStyle={styles.legalContent}>
-              <Text style={styles.legalBody}>
-{`STAYTUP — TERMS OF SERVICE\n\n1. Acceptance of Terms\nBy accessing or using Staytup ("the App"), you agree to be bound by these Terms of Service.\n\n2. Description of Service\nStaytup is a music discovery and streaming application that aggregates publicly available music content. We do not host copyrighted audio files.\n\n3. User Accounts\nYou are responsible for safeguarding your account access and any activity conducted under your credentials.`}
-              </Text>
+            <ScrollView contentContainerStyle={styles.legalContent} showsVerticalScrollIndicator={false}>
+              <Text style={styles.legalBody}>{LEGAL_TERMS_OF_SERVICE}</Text>
             </ScrollView>
           </View>
         </View>
@@ -326,10 +328,26 @@ export default function LoginScreen({ onLoginSuccess }) {
               <Text style={styles.legalTitle}>Privacy Policy</Text>
               <View style={{ width: 32 }} />
             </View>
-            <ScrollView contentContainerStyle={styles.legalContent}>
-              <Text style={styles.legalBody}>
-{`STAYTUP — PRIVACY POLICY\n\n1. Information We Collect\n- Account Information (Username, email if authenticated via Google)\n- Usage Data (Playlists, Liked Songs, Listening History)\n\n2. Data Protection\nAll user communication and authentication are protected with industry-standard encryption.`}
-              </Text>
+            <ScrollView contentContainerStyle={styles.legalContent} showsVerticalScrollIndicator={false}>
+              <Text style={styles.legalBody}>{LEGAL_PRIVACY_POLICY}</Text>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Disclaimer Modal */}
+      <Modal visible={showDisclaimer} transparent animationType="slide" onRequestClose={() => setShowDisclaimer(false)}>
+        <View style={styles.legalOverlay}>
+          <View style={styles.legalContainer}>
+            <View style={styles.legalHeader}>
+              <TouchableOpacity onPress={() => setShowDisclaimer(false)} style={styles.legalCloseBtn}>
+                <Ionicons name="close" size={24} color="rgba(255,255,255,0.6)" />
+              </TouchableOpacity>
+              <Text style={styles.legalTitle}>Disclaimer</Text>
+              <View style={{ width: 32 }} />
+            </View>
+            <ScrollView contentContainerStyle={styles.legalContent} showsVerticalScrollIndicator={false}>
+              <Text style={styles.legalBody}>{LEGAL_DISCLAIMER}</Text>
             </ScrollView>
           </View>
         </View>

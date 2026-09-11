@@ -29,6 +29,7 @@ import { registerBackAction } from "../services/navigation";
 import { auth, getOrCreateReferralCode, getReferralCount } from "../services/firebase";
 import { resolveLocalArtistImage } from "../theme/artistImages";
 import { APP_VERSION, BUILD_NUMBER, BUILD_DATE } from "../config/version";
+import { LEGAL_TERMS_OF_SERVICE, LEGAL_PRIVACY_POLICY, LEGAL_DISCLAIMER } from "../config/legal";
 import LiveReactionOverlay from "../components/LiveReactionOverlay";
 
 const globalArtistPhotoCache = {};
@@ -681,18 +682,18 @@ export default function ProfileScreen({ visible, onClose }) {
           </TouchableOpacity>
           <View style={styles.simpleRowDivider} />
 
-          {/* Ad Disclaimer */}
+          {/* Disclaimer */}
           <TouchableOpacity
             style={styles.simpleActionRow}
             onPress={() => setShowDisclaimerModal(true)}
             activeOpacity={0.7}
           >
             <View style={styles.simpleActionIconWrap}>
-              <Ionicons name="alert-circle-outline" size={20} color="rgba(255,255,255,0.55)" />
+              <Ionicons name="information-circle-outline" size={20} color="rgba(255,255,255,0.55)" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.simpleActionTitle}>Ad Disclaimer</Text>
-              <Text style={styles.simpleActionSub}>Third-party ad content notice</Text>
+              <Text style={styles.simpleActionTitle}>Disclaimer</Text>
+              <Text style={styles.simpleActionSub}>Educational use & copyright notice</Text>
             </View>
             <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.25)" />
           </TouchableOpacity>
@@ -1194,9 +1195,7 @@ export default function ProfileScreen({ visible, onClose }) {
               <View style={{ width: 32 }} />
             </View>
             <ScrollView contentContainerStyle={styles.legalContent} showsVerticalScrollIndicator={false}>
-              <Text style={styles.legalBody}>
-{`STAYTUP — TERMS OF SERVICE\n\nLast Updated: September 2025\n\n1. Acceptance of Terms\nBy accessing or using Staytup ("the App"), you agree to be bound by these Terms of Service. If you do not agree, do not use the App.\n\n2. Description of Service\nStaytup is a music discovery and streaming application that aggregates publicly available music content from YouTube and other public sources. We do not host, store, or distribute any copyrighted audio files.\n\n3. User Conduct\nYou agree not to:\n- Use the App for any unlawful purpose\n- Attempt to reverse-engineer or exploit the App\n- Use automated tools to access the App\n- Interfere with the App's servers or infrastructure\n\n4. Intellectual Property\nAll trademarks, logos, and branding associated with Staytup are the property of their respective owners. Music content is sourced from publicly available platforms.\n\n5. Third-Party Content\nThe App streams content from YouTube. Your use of such content is subject to YouTube's Terms of Service. Staytup is not affiliated with YouTube or Google.\n\n6. Limitation of Liability\nStaytup is provided "as is" without warranties of any kind. We are not liable for any damages arising from your use of the App.\n\n7. Modifications\nWe reserve the right to modify these Terms at any time. Continued use of the App after changes constitutes acceptance of the new Terms.\n\n8. Contact\nFor questions about these Terms, contact: info.to.animikh@gmail.com`}
-              </Text>
+              <Text style={styles.legalBody}>{LEGAL_TERMS_OF_SERVICE}</Text>
             </ScrollView>
           </View>
         </View>
@@ -1214,15 +1213,13 @@ export default function ProfileScreen({ visible, onClose }) {
               <View style={{ width: 32 }} />
             </View>
             <ScrollView contentContainerStyle={styles.legalContent} showsVerticalScrollIndicator={false}>
-              <Text style={styles.legalBody}>
-{`STAYTUP — PRIVACY POLICY\n\nLast Updated: September 2025\n\n1. Information We Collect\n- Account Information: When you sign in with Google, we receive your name, email, and profile photo.\n- Usage Data: We collect listening history, search queries, and app interaction data to personalize your experience.\n- Device Information: We may collect device type, browser, and operating system for optimization.\n\n2. How We Use Information\n- To provide and improve the App\n- To personalize your music recommendations\n- To track listening statistics for your profile\n- To communicate updates (if you opt in)\n\n3. Data Storage\nYour data is stored securely in Firebase (Google Cloud). We do not sell, trade, or share your personal data with third parties for marketing purposes.\n\n4. Third-Party Services\n- Firebase Authentication & Database (Google)\n- YouTube API (for content streaming)\n- Analytics services for app improvement\n\n5. Data Retention\nYour account data and listening history are retained as long as your account is active. You may delete your account at any time.\n\n6. Your Rights\n- Access your data\n- Request deletion of your data\n- Opt out of personalized recommendations\n\n7. Children's Privacy\nThe App is not intended for users under 13 years of age.\n\n8. Changes to This Policy\nWe may update this Privacy Policy periodically. Material changes will be communicated through the App.\n\n9. Contact\nFor privacy-related inquiries: info.to.animikh@gmail.com`}
-              </Text>
+              <Text style={styles.legalBody}>{LEGAL_PRIVACY_POLICY}</Text>
             </ScrollView>
           </View>
         </View>
       </Modal>
 
-      {/* Ad Disclaimer Modal */}
+      {/* Disclaimer Modal */}
       <Modal visible={showDisclaimerModal} transparent animationType="slide" onRequestClose={() => setShowDisclaimerModal(false)}>
         <View style={styles.legalOverlay}>
           <View style={styles.legalContainer}>
@@ -1230,13 +1227,11 @@ export default function ProfileScreen({ visible, onClose }) {
               <TouchableOpacity onPress={() => setShowDisclaimerModal(false)} style={styles.legalCloseBtn}>
                 <Ionicons name="close" size={24} color="rgba(255,255,255,0.6)" />
               </TouchableOpacity>
-              <Text style={styles.legalTitle}>Ad Disclaimer</Text>
+              <Text style={styles.legalTitle}>Disclaimer</Text>
               <View style={{ width: 32 }} />
             </View>
             <ScrollView contentContainerStyle={styles.legalContent} showsVerticalScrollIndicator={false}>
-              <Text style={styles.legalBody}>
-{`STAYTUP — AD DISCLAIMER\n\nLast Updated: September 2025\n\n1. Advertising Content\nStaytup may display advertisements provided by third-party ad networks including Google AdSense. These ads help keep the App free for all users.\n\n2. Ad Responsibility\nThe advertisements shown in Staytup are served by third-party ad networks. Staytup does not create, endorse, or take responsibility for the content of any advertisements displayed.\n\n3. Ad Tracking\nThird-party advertisers may use cookies and similar technologies to serve ads based on your prior visits to this and other websites. You may opt out of personalized advertising through your browser settings or platform-specific ad preferences.\n\n4. No Endorsement\nThe presence of any advertisement in Staytup does not constitute an endorsement of the advertised product, service, or company by Staytup or its developers.\n\n5. Ad-Free Experience\nPremium subscribers may enjoy an ad-free experience. Ad removal is subject to the current Premium subscription terms.\n\n6. Content Accuracy\nAd content, including pricing, availability, and promotions, is determined solely by the advertisers and may change without notice. Staytup is not responsible for the accuracy of ad content.\n\n7. Contact\nFor ad-related concerns: info.to.animikh@gmail.com`}
-              </Text>
+              <Text style={styles.legalBody}>{LEGAL_DISCLAIMER}</Text>
             </ScrollView>
           </View>
         </View>

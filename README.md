@@ -204,5 +204,13 @@ staytup/
 
 ---
 
-## License
+## License & Legal Disclaimer
+
+**Last Updated**: September 12, 2026 (September 2026)
+
 Staytup is developed for personal and educational music streaming purposes. All audio copyrights belong to their respective artists and record labels.
+
+- **Non-Commercial Educational Project**: Staytup is an independent demonstration of modern progressive web app capabilities, the Web Audio API, and real-time social listening synchronization.
+- **Intermediary Architecture**: Staytup does not host, store, or distribute proprietary audio recordings on its servers. All audio streams and metadata are dynamically queried on-the-fly from publicly accessible third-party APIs and content delivery networks.
+- **Non-Affiliation**: Staytup is not affiliated with, endorsed by, or sponsored by Google, YouTube, Spotify, Apple, JioSaavn, or any record label.
+- **DMCA / Copyright Inquiries**: If you are a copyright holder and wish to have specific content references removed, please contact: `info.to.animikh@gmail.com`. Valid requests will be processed promptly within 24–48 hours.

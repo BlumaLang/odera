@@ -1,0 +1,49 @@
+STAYTUP — SOFTWARE LICENSE & DISCLAIMER
+Last Updated: September 12, 2026 (September 2026)
+
+Staytup is developed for personal and educational music streaming purposes. All audio copyrights belong to their respective artists and record labels.
+
+MIT License (Software Codebase)
+
+Copyright (c) 2026 Animikh & Staytup Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice, this permission notice, and the following legal
+disclaimers shall be included in all copies or substantial portions of the Software.
+
+DISCLAIMER OF LIABILITY & NON-HOSTING INTERMEDIARY NOTICE:
+
+1. Educational & Non-Commercial Demonstration:
+   The Software is an experimental research and educational interface demonstrating
+   Web Audio technologies, progressive web application capabilities, and real-time
+   synchronization architectures.
+
+2. Intellectual Property & Third-Party Media:
+   The Software DOES NOT host, store, replicate, or distribute proprietary sound
+   recordings, audio files, or music videos. All media streams, metadata, album
+   artwork, and lyrics are retrieved dynamically on-demand through third-party public
+   APIs and services (including YouTube and public metadata directories).
+
+3. All audio copyrights, musical compositions, performance rights, trademarks,
+   and logos belong exclusively to their respective artists, songwriters, record labels,
+   and corporate copyright owners.
+
+4. DMCA Compliance:
+   Copyright holders may request the removal or restriction of any stream references
+   or metadata by contacting: info.to.animikh@gmail.com. Valid notices will be
+   honored immediately.
+
+5. "AS IS" WARRANTY DISCLAIMER:
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
