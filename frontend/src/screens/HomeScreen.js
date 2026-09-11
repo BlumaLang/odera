@@ -206,10 +206,18 @@ function HomeSkeleton() {
 
 export default function HomeScreen({ onNavigate } = {}) {
   const { isDesktop, isTablet, isPhone, width } = useResponsive();
-  const [feed, setFeed] = useState(null);
-  const feedRef = useRef(null);
+  const [feed, setFeed] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage?.getItem("@staytup_cached_home_feed");
+        return raw ? JSON.parse(raw) : null;
+      } catch (_) {}
+    }
+    return null;
+  });
+  const feedRef = useRef(feed);
   const [activeFilter, setActiveFilter] = useState("All");
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => !feed);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
@@ -373,6 +381,9 @@ export default function HomeScreen({ onNavigate } = {}) {
         };
         feedRef.current = cleanIndianData;
         setFeed(cleanIndianData);
+        if (typeof window !== "undefined") {
+          try { window.localStorage?.setItem("@staytup_cached_home_feed", JSON.stringify(cleanIndianData)); } catch (_) {}
+        }
         // Persist fresh Indian feed to Firebase Realtime Database
         saveTrendingFeedRTDB(cleanIndianData);
       }

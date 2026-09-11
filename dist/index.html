@@ -296,13 +296,8 @@
               }
             }
           }
-          if ('caches' in window) {
-            var keys = await caches.keys();
-            await Promise.all(
-              keys.filter(function(k) { return !k.includes('offline-audio'); }).map(function(k) { return caches.delete(k); })
-            );
-          }
-          window.location.href = window.location.pathname + '?update=' + Date.now();
+          // Do not delete cache storage here; let sw.js manage version activation cleanly
+          window.location.reload();
         } catch (e) {
           window.location.reload();
         }
@@ -324,7 +319,7 @@
           splash.classList.add('hidden');
           setTimeout(function() {
             try { splash.remove(); } catch(_) {}
-          }, 360);
+          }, 300);
         }
         var observer = new MutationObserver(function() {
           var root = document.getElementById('root');
@@ -341,15 +336,15 @@
             clearInterval(pollTimer);
             dismissSplash();
           }
-        }, 100);
+        }, 80);
 
-        // Safety: always remove after 1.2s max so user never sees a long black screen
+        // Safety: always remove after 600ms max so user never sees a long screen
         setTimeout(function() {
           clearInterval(pollTimer);
           dismissSplash();
-        }, 1200);
+        }, 600);
       })();
     </script>
-  <script src="/_expo/static/js/web/index-ef25f5725fb6d401ef95b6fdefdb7cea.js" defer></script>
+  <script src="/_expo/static/js/web/index-7f18a612b412b4bfb87cbb3b9f40c305.js" defer></script>
 </body>
 </html>

@@ -33,10 +33,10 @@ export default function SplashScreen({ onFinish }) {
       }),
     ]).start();
 
-    // Auto-transition to next screen after 1.5 seconds
+    // Auto-transition to next screen (immediate on web, 1.5s on native)
     const timer = setTimeout(() => {
       if (onFinish) onFinish();
-    }, 1500);
+    }, Platform.OS === "web" ? 150 : 1500);
 
     return () => {
       clearTimeout(timer);

@@ -98,6 +98,7 @@ const VALID_ROUTES = {
   friends: "Friends",
   friend: "Friends",
   premium: "Premium",
+  profile: "Home",
   // Deep link routes
   song: "Home",
   album: "Home",
@@ -367,12 +368,13 @@ function AppContent() {
     isOnboardingCompleted,
     isLoadingUser,
     isProfileOpen,
+    openProfile,
     closeProfile,
   } = useUser();
   const { isDeviceModalOpen, closeDeviceModal } = useAudio();
 
   const [showUpdateChangelog, setShowUpdateChangelog] = useState(false);
-  const [forceReady, setForceReady] = useState(false);
+  const [forceReady, setForceReady] = useState(Platform.OS === "web");
 
   // Deep Link Web Preview & Sharing State
   const [deepLinkData, setDeepLinkData] = useState(null);
@@ -513,31 +515,15 @@ function AppContent() {
     }
   }, []);
 
-  // Show changelog on app open: ONLY ONCE per version/build update
+  // Auto-open profile modal if URL starts with /profile
   useEffect(() => {
-    if (!isLoggedIn || !isOnboardingCompleted) return;
-
-    try {
-      const updateKey = `@staytup_changelog_seen_${BUILD_NUMBER}`;
-      let seen = null;
-      if (typeof window !== "undefined" && window.localStorage) {
-        seen = window.localStorage.getItem(updateKey);
-      }
-      if (!seen) {
-        // First time opening after this update -> show changelog modal
-        setShowUpdateChangelog(true);
-      }
-    } catch (_) {}
-  }, [isLoggedIn, isOnboardingCompleted]);
+    if (typeof window !== "undefined" && window.location.pathname.toLowerCase().startsWith("/profile")) {
+      openProfile();
+    }
+  }, [openProfile]);
 
   const handleDismissUpdateChangelog = () => {
     setShowUpdateChangelog(false);
-    try {
-      const updateKey = `@staytup_changelog_seen_${BUILD_NUMBER}`;
-      if (typeof window !== "undefined" && window.localStorage) {
-        window.localStorage.setItem(updateKey, "true");
-      }
-    } catch (_) {}
   };
 
   if (isLoadingUser && !forceReady) {
