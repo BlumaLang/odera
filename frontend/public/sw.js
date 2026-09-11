@@ -1,5 +1,5 @@
 // Staytup Service Worker for PWA
-const CACHE_NAME = 'staytup-pwa-v35';
+const CACHE_NAME = 'staytup-pwa-v36';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -94,6 +94,26 @@ self.addEventListener('fetch', (event) => {
   // Only handle static asset files
   const isStatic = /\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|webp|json|map)(\?.*)?$/i.test(p);
   if (!isStatic) {
+    return;
+  }
+
+  // Application JS bundles: network-first to ensure instant deployment updates
+  if (p.includes('/_expo/static/js/web/index-')) {
+    event.respondWith(
+      (async () => {
+        try {
+          const networkRes = await fetch(event.request);
+          if (networkRes && networkRes.status === 200) {
+            const cache = await caches.open(CACHE_NAME);
+            cache.put(event.request, networkRes.clone()).catch(() => {});
+            return networkRes;
+          }
+        } catch (_) {}
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        return new Response('', { status: 404, statusText: 'Not Found' });
+      })()
+    );
     return;
   }
 

@@ -39,8 +39,12 @@ function formatRelativeTime(timestamp) {
 
 export default function ActiveDevicesModal({ visible, onClose }) {
   const { userProfile } = useUser() || {};
-  const { currentTrack, isPlaying } = useAudio() || {};
-  const { isDesktop, isTablet, deviceName, deviceIcon, deviceType } = useResponsive();
+  const responsive = (typeof useResponsive === "function" ? useResponsive() : null) || {};
+  const isDesktop = responsive.isDesktop ?? (typeof window !== "undefined" ? window.innerWidth >= 1024 : false);
+  const isTablet = responsive.isTablet ?? (typeof window !== "undefined" ? (window.innerWidth >= 768 && window.innerWidth < 1024) : false);
+  const deviceName = responsive.deviceName || "This Device";
+  const deviceIcon = responsive.deviceIcon || (isDesktop ? "laptop-outline" : isTablet ? "tablet-portrait-outline" : "phone-portrait-outline");
+  const deviceType = responsive.deviceType || (isDesktop ? "desktop" : isTablet ? "tablet" : "phone");
 
   const [internalVisible, setInternalVisible] = useState(false);
   const isShown = visible !== undefined ? visible : internalVisible;

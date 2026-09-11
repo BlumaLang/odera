@@ -1,27 +1,43 @@
 // Staytup Service Worker for PWA
-const CACHE_NAME = 'staytup-pwa-v35';
+const CACHE_NAME = 'staytup-pwa-v36';
 
-self.addEventListener('install', () => {
-  self.skipWaiting();
-});
+const PRECACHE_ASSETS = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/favicon.ico',
+];
 
-self.addEventListener('activate', (event) => {
+// Install: precache core app shell
+self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys.map((key) => {
-          if (key !== CACHE_NAME) {
-            return caches.delete(key);
-          }
-        })
-      )
-    ).then(() => self.clients.claim())
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(PRECACHE_ASSETS).catch((err) => {
+        console.warn('[SW] Pre-caching non-fatal warning:', err);
+      });
+    }).then(() => self.skipWaiting())
   );
 });
 
+// Activate: purge stale caches
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys
+          .filter((k) => k !== CACHE_NAME)
+          .map((k) => caches.delete(k))
+      );
+    }).then(() => self.clients.claim())
+  );
+});
+
+// Fetch: smart network-first for SPA routes, cache-first for static assets
 self.addEventListener('fetch', (event) => {
   // Never intercept non-GET requests
-  if (event.request.method !== 'GET') return;
+  if (event.request.method !== 'GET') {
+    return;
+  }
 
   let url;
   try {
@@ -37,50 +53,40 @@ self.addEventListener('fetch', (event) => {
 
   const p = url.pathname.toLowerCase();
 
-  // NEVER intercept API calls, dynamic routes, home feeds, or streaming
-  if (
-    p.startsWith('/api') ||
-    p.startsWith('/stream') ||
-    p.startsWith('/home') ||
-    p.startsWith('/search') ||
-    p.startsWith('/suggest') ||
-    p.startsWith('/lyrics') ||
-    p.startsWith('/favorites') ||
-    p.startsWith('/personalized') ||
-    p.startsWith('/playlists') ||
-    p.startsWith('/qr-login') ||
-    p.startsWith('/user-qr') ||
-    p.startsWith('/referral') ||
-    p.startsWith('/artists') ||
-    p.startsWith('/play-event') ||
-    p.startsWith('/favorite') ||
-    p.startsWith('/track-info') ||
-    p.includes('/health')
-  ) {
-    return; // Pass through to browser natively without Service Worker interception
+  // NEVER intercept backend API calls or audio streaming
+  if (p.startsWith('/api') || p.startsWith('/stream') || p.includes('/health')) {
+    return; // Pass through to server directly
   }
 
-  // Handle SPA navigation requests
+  // Handle SPA navigation requests (e.g. /, /home, /search, /friends, /library)
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', clone)).catch(() => {});
+      (async () => {
+        try {
+          // Fetch /index.html from network (SPA app shell)
+          const networkRes = await fetch('/index.html');
+          if (networkRes && networkRes.status === 200) {
+            const cache = await caches.open(CACHE_NAME);
+            cache.put('/index.html', networkRes.clone()).catch(() => {});
+            return networkRes;
           }
-          return response;
-        })
-        .catch(async () => {
-          try {
-            const cached = (await caches.match('/index.html')) || (await caches.match('/'));
-            if (cached) return cached;
-          } catch (_) {}
-          return new Response(
-            '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Staytup</title></head><body style="background:#000;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div><h2>Staytup is offline</h2><p>Please check your connection and refresh.</p></div></body></html>',
-            { status: 200, headers: { 'Content-Type': 'text/html' } }
-          );
-        })
+        } catch (_) {
+          // Network failed or offline - fall back to cache
+        }
+
+        try {
+          const cached = (await caches.match('/index.html')) || (await caches.match('/'));
+          if (cached) {
+            return cached;
+          }
+        } catch (_) {}
+
+        // Ultimate safe fallback: always returns a valid Response object
+        return new Response(
+          '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Staytup</title></head><body style="background:#000;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div><h2>Staytup</h2><p>Loading application...</p><script>window.location.reload();</script></div></body></html>',
+          { status: 200, headers: { 'Content-Type': 'text/html' } }
+        );
+      })()
     );
     return;
   }
@@ -91,28 +97,50 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) {
-        fetch(event.request).then((networkRes) => {
+  // Application JS bundles: network-first to ensure instant deployment updates
+  if (p.includes('/_expo/static/js/web/index-')) {
+    event.respondWith(
+      (async () => {
+        try {
+          const networkRes = await fetch(event.request);
           if (networkRes && networkRes.status === 200) {
-            const clone = networkRes.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone)).catch(() => {});
+            const cache = await caches.open(CACHE_NAME);
+            cache.put(event.request, networkRes.clone()).catch(() => {});
+            return networkRes;
           }
-        }).catch(() => {});
-        return cached;
-      }
-      return fetch(event.request).then((networkRes) => {
+        } catch (_) {}
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        return new Response('', { status: 404, statusText: 'Not Found' });
+      })()
+    );
+    return;
+  }
+
+  event.respondWith(
+    (async () => {
+      try {
+        const cached = await caches.match(event.request);
+        if (cached) {
+          // Revalidate in background
+          fetch(event.request).then(async (networkRes) => {
+            if (networkRes && networkRes.status === 200) {
+              const cache = await caches.open(CACHE_NAME);
+              cache.put(event.request, networkRes.clone()).catch(() => {});
+            }
+          }).catch(() => {});
+          return cached;
+        }
+
+        const networkRes = await fetch(event.request);
         if (networkRes && networkRes.status === 200) {
-          const clone = networkRes.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone)).catch(() => {});
+          const cache = await caches.open(CACHE_NAME);
+          cache.put(event.request, networkRes.clone()).catch(() => {});
         }
         return networkRes;
-      }).catch(() => {
+      } catch (err) {
         return new Response('', { status: 404, statusText: 'Not Found' });
-      });
-    }).catch(() => {
-      return new Response('', { status: 404, statusText: 'Not Found' });
-    })
+      }
+    })()
   );
 });
