@@ -435,7 +435,7 @@ class Storage {
                 'id' => 'public_pl_chill_vibes',
                 'name' => 'Midnight Chill & Lo-Fi',
                 'description' => 'Relaxing beats, calm melodies, and late night soundscapes to unwind or focus.',
-                'cover_url' => 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
+                'cover_url' => 'https://i.ytimg.com/vi/5yx6BWlEVcY/hqdefault.jpg',
                 'is_public' => true,
                 'isPublic' => true,
                 'type' => 'public',
@@ -444,15 +444,15 @@ class Storage {
                 'tracks' => [
                     [
                         'id' => 'trk_pub_c1',
-                        'videoId' => 'jfKfPfyJRdk',
-                        'video_id' => 'jfKfPfyJRdk',
+                        'videoId' => '5yx6BWlEVcY',
+                        'video_id' => '5yx6BWlEVcY',
                         'title' => 'Morning Coffee Beats',
                         'artist' => 'Chillhop Beats',
                         'album' => 'Lo-Fi Lounge',
                         'duration' => 175,
                         'duration_seconds' => 175,
-                        'artwork_url' => 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg'
+                        'artwork_url' => 'https://i.ytimg.com/vi/5yx6BWlEVcY/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/5yx6BWlEVcY/hqdefault.jpg'
                     ],
                     [
                         'id' => 'trk_pub_c2',
@@ -529,15 +529,15 @@ class Storage {
                     ],
                     [
                         'id' => 'trk_pub_v3',
-                        'videoId' => '0VwLoxv5u1o',
-                        'video_id' => '0VwLoxv5u1o',
+                        'videoId' => 'Il0S8BoucSA',
+                        'video_id' => 'Il0S8BoucSA',
                         'title' => 'Shivers',
                         'artist' => 'Ed Sheeran',
                         'album' => '=',
                         'duration' => 207,
                         'duration_seconds' => 207,
-                        'artwork_url' => 'https://i.ytimg.com/vi/0VwLoxv5u1o/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/0VwLoxv5u1o/hqdefault.jpg'
+                        'artwork_url' => 'https://i.ytimg.com/vi/Il0S8BoucSA/hqdefault.jpg',
+                        'thumbnail' => 'https://i.ytimg.com/vi/Il0S8BoucSA/hqdefault.jpg'
                     ]
                 ]
             ]
