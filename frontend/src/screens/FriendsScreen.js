@@ -289,6 +289,9 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
 
   // Listening Parties Realtime Subscription
   const [publicParties, setPublicParties] = useState([]);
+  const [partyToDelete, setPartyToDelete] = useState(null);
+  const [isDeletingParty, setIsDeletingParty] = useState(false);
+
   useEffect(() => {
     const unsub = subscribePublicParties((list) => setPublicParties(list || []));
     return () => unsub();
@@ -306,15 +309,18 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
     }
   };
 
-  const handleDeletePartyRoom = async (partyId) => {
-    if (!partyId) return;
-    const confirmDelete =
-      typeof window !== "undefined" && window.confirm
-        ? window.confirm("Are you sure you want to end and delete your listening party?")
-        : true;
-    if (!confirmDelete) return;
-
-    await deleteListeningParty(partyId);
+  const handleConfirmDeletePartyRoom = async () => {
+    if (!partyToDelete) return;
+    try {
+      setIsDeletingParty(true);
+      const pid = partyToDelete.id || partyToDelete;
+      await deleteListeningParty(pid);
+      setPartyToDelete(null);
+    } catch (err) {
+      console.warn("Failed to delete listening party:", err);
+    } finally {
+      setIsDeletingParty(false);
+    }
   };
 
   // Discoverable users & global search results
@@ -1490,6 +1496,9 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                         {publicParties.map((p) => {
                           const mCount = Object.keys(p.members || {}).length || 1;
                           const currentTrk = p.currentTrack;
+                          const isPartyHost =
+                            p.hostUid === currentUser?.uid ||
+                            p.hostUid === auth.currentUser?.uid;
                           return (
                             <TouchableOpacity
                               key={p.id}
@@ -1498,8 +1507,24 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                               activeOpacity={0.8}
                             >
                               <View style={styles.partyRoomHeader}>
-                                <View style={styles.partyRoomLiveDot} />
-                                <Text style={styles.partyRoomListenersCount}>{mCount} listening</Text>
+                                <View style={styles.partyRoomHeaderLeft}>
+                                  <View style={styles.partyRoomLiveDot} />
+                                  <Text style={styles.partyRoomListenersCount}>{mCount} listening</Text>
+                                </View>
+                                {isPartyHost && (
+                                  <TouchableOpacity
+                                    style={styles.partyRoomCardDeleteBtn}
+                                    onPress={(e) => {
+                                      e.stopPropagation();
+                                      setPartyToDelete(p);
+                                    }}
+                                    activeOpacity={0.8}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    accessibilityLabel="Delete party room"
+                                  >
+                                    <Ionicons name="close" size={14} color="#FF4D4D" />
+                                  </TouchableOpacity>
+                                )}
                               </View>
                               <Text style={styles.partyRoomName} numberOfLines={1}>{p.name}</Text>
                               <Text style={styles.partyRoomHost} numberOfLines={1}>Host: {p.hostName}</Text>
@@ -1759,13 +1784,13 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                                   style={styles.partyHostDeleteBtn}
                                   onPress={(e) => {
                                     e.stopPropagation();
-                                    handleDeletePartyRoom(p.id);
+                                    setPartyToDelete(p);
                                   }}
                                   activeOpacity={0.8}
                                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                                   accessibilityLabel="Delete party room"
                                 >
-                                  <Ionicons name="trash-outline" size={15} color="#FF4D4D" />
+                                  <Ionicons name="close" size={18} color="#FF4D4D" />
                                 </TouchableOpacity>
                               )}
                               <TouchableOpacity
@@ -2524,6 +2549,65 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* ═══════════ END & DELETE LISTENING PARTY CONFIRMATION MODAL ═══════════ */}
+      <Modal
+        visible={Boolean(partyToDelete)}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => !isDeletingParty && setPartyToDelete(null)}
+      >
+        <TouchableOpacity
+          style={styles.partyDeleteModalOverlay}
+          activeOpacity={1}
+          onPress={() => !isDeletingParty && setPartyToDelete(null)}
+        >
+          <View
+            style={styles.partyDeleteModalCard}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.partyDeleteIconCircle}>
+              <Ionicons name="close-circle-outline" size={32} color="#FF4D4D" />
+            </View>
+
+            <Text style={styles.partyDeleteModalTitle}>
+              End Listening Party?
+            </Text>
+
+            <Text style={styles.partyDeleteModalSub}>
+              Are you sure you want to end and delete{" "}
+              <Text style={{ color: "#FFFFFF", fontFamily: fonts.bold }}>
+                "{partyToDelete?.name || "Listening Party"}"
+              </Text>
+              ? All active listeners will be disconnected from this room.
+            </Text>
+
+            <View style={styles.partyDeleteModalButtons}>
+              <TouchableOpacity
+                style={styles.partyDeleteCancelBtn}
+                onPress={() => setPartyToDelete(null)}
+                disabled={isDeletingParty}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.partyDeleteCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.partyDeleteConfirmBtn}
+                onPress={handleConfirmDeletePartyRoom}
+                disabled={isDeletingParty}
+                activeOpacity={0.8}
+              >
+                {isDeletingParty ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.partyDeleteConfirmText}>End Party</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
       </Modal>
 
       {/* Collaborative Playlist Details Modal */}
@@ -4845,15 +4929,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   partyRoomJoinBtn: {
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    borderRadius: 12,
-    paddingVertical: 6,
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#1DB954",
+    paddingHorizontal: 16,
+    height: 32,
+    borderRadius: 16,
+    minWidth: 64,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   partyRoomJoinText: {
-    fontFamily: fonts.semiBold || "System",
-    fontSize: 11.5,
-    color: "#FFFFFF",
+    fontFamily: fonts.bold || "System",
+    fontSize: 12.5,
+    color: "#000000",
+    letterSpacing: 0.2,
   },
 
   // Top Header Party Button
@@ -4974,7 +5064,7 @@ const styles = StyleSheet.create({
   partyCardActionsRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
   },
   partyHostDeleteBtn: {
     width: 32,
@@ -4982,9 +5072,119 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: "rgba(255, 77, 77, 0.12)",
     borderWidth: 1,
-    borderColor: "rgba(255, 77, 77, 0.25)",
+    borderColor: "rgba(255, 77, 77, 0.28)",
     alignItems: "center",
     justifyContent: "center",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+
+  // ═══════════ DELETE LISTENING PARTY CONFIRMATION MODAL ═══════════
+  partyDeleteModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    ...(Platform.OS === "web" ? { backdropFilter: "blur(6px)" } : {}),
+  },
+  partyDeleteModalCard: {
+    width: "100%",
+    maxWidth: 380,
+    backgroundColor: "#16161A",
+    borderRadius: 24,
+    padding: 24,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  partyDeleteIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "rgba(255, 77, 77, 0.12)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255, 77, 77, 0.28)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  partyDeleteModalTitle: {
+    fontFamily: fonts.bold || "System",
+    fontSize: 18,
+    color: "#FFFFFF",
+    textAlign: "center",
+    marginBottom: 10,
+    letterSpacing: -0.3,
+  },
+  partyDeleteModalSub: {
+    fontFamily: fonts.regular || "System",
+    fontSize: 13.5,
+    color: colors.textSecondary || "#A7A7A7",
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  partyDeleteModalButtons: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    width: "100%",
+  },
+  partyDeleteCancelBtn: {
+    flex: 1,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  partyDeleteCancelText: {
+    fontFamily: fonts.semiBold || "System",
+    fontSize: 14,
+    color: "#FFFFFF",
+  },
+  partyDeleteConfirmBtn: {
+    flex: 1,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#FF453A",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#FF453A",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  partyDeleteConfirmText: {
+    fontFamily: fonts.bold || "System",
+    fontSize: 14,
+    color: "#FFFFFF",
+  },
+  partyRoomCardDeleteBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(255, 77, 77, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 77, 77, 0.25)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: "auto",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  partyRoomHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
   },
 });
