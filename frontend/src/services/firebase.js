@@ -25,6 +25,7 @@ import {
   runTransaction,
   goOnline,
   goOffline,
+  push,
 } from "firebase/database";
 
 const firebaseConfig = {
@@ -2210,7 +2211,7 @@ export function subscribeFriendActivity(friendUid, callback) {
     const sessionAge = currentSession?.updatedAt ? Date.now() - currentSession.updatedAt : Infinity;
     const isLive = isPlaying && sessionAge < 1000 * 60 * 30; // Within 30 minutes
     callback({
-      track: currentPlayback?.track || null,
+      track: currentPlayback?.track || currentSession?.track || null,
       isPlaying: isLive,
       updatedAt: currentPlayback?.updatedAt || currentSession?.updatedAt || null,
     });
@@ -2233,6 +2234,89 @@ export function subscribeFriendActivity(friendUid, callback) {
     } catch (_) {}
   };
 }
+
+/**
+ * Send an Airbuds-style live reaction burst to a friend currently listening
+ */
+export async function sendLiveReaction(targetUid, { emoji, senderId, senderName, senderAvatar, trackTitle, trackId }) {
+  if (!targetUid || !emoji) return false;
+  try {
+    const reactionsRef = ref(db, `users/${targetUid}/liveReactions`);
+    const newRef = push(reactionsRef);
+    await set(newRef, {
+      id: newRef.key,
+      emoji: String(emoji || "🔥"),
+      senderId: String(senderId || "friend"),
+      senderName: String(senderName || "Friend"),
+      senderAvatar: senderAvatar || null,
+      trackTitle: trackTitle ? String(trackTitle) : "",
+      trackId: trackId ? String(trackId) : "",
+      timestamp: Date.now(),
+    });
+    return true;
+  } catch (error) {
+    console.warn("[Firebase] Failed to send live reaction:", error?.message);
+    return false;
+  }
+}
+
+/**
+ * Subscribe to incoming live reactions for the current user
+ */
+export function subscribeLiveReactions(uid, callback) {
+  if (!uid || !callback) return () => {};
+  const reactionsRef = ref(db, `users/${uid}/liveReactions`);
+  const seenReactions = new Set();
+  const mountTime = Date.now() - 5000; // Only trigger for reactions within last 5 seconds
+
+  const listener = onValue(
+    reactionsRef,
+    (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+
+      const now = Date.now();
+      const staleKeys = [];
+
+      Object.entries(data).forEach(([key, val]) => {
+        if (!val || typeof val !== "object") return;
+        const ts = val.timestamp || 0;
+
+        // Auto-purge reactions older than 60s
+        if (now - ts > 60000) {
+          staleKeys.push(key);
+          return;
+        }
+
+        if (ts >= mountTime && !seenReactions.has(key)) {
+          seenReactions.add(key);
+          callback({
+            id: key,
+            ...val,
+          });
+        }
+      });
+
+      if (staleKeys.length > 0) {
+        staleKeys.forEach((k) => {
+          try {
+            set(ref(db, `users/${uid}/liveReactions/${k}`), null).catch(() => {});
+          } catch (_) {}
+        });
+      }
+    },
+    (error) => {
+      console.warn("[Firebase] RTDB live reactions subscription error:", error?.message);
+    }
+  );
+
+  return () => {
+    try {
+      off(reactionsRef, "value", listener);
+    } catch (_) {}
+  };
+}
+
 
 
 // ─── ARTIST DATABASE CACHE ──────────────────────────────────────────────────

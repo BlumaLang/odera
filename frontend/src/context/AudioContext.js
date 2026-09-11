@@ -1573,6 +1573,7 @@ const AudioProvider = ({ children }) => {
         deviceName: myDeviceName,
         trackId: sanitizedTrack.videoId,
         trackTitle: sanitizedTrack.title,
+        track: sanitizedTrack,
         isPlaying: true,
       });
 
@@ -1882,6 +1883,7 @@ const AudioProvider = ({ children }) => {
           deviceName: myDeviceName,
           trackId: currentTrack?.videoId || currentTrack?.video_id || currentTrack?.id,
           trackTitle: currentTrack?.title,
+          track: currentTrack || null,
           isPlaying: true,
         });
       }
@@ -1922,6 +1924,7 @@ const AudioProvider = ({ children }) => {
           deviceName: myDeviceName,
           trackId: currentTrack?.videoId || currentTrack?.video_id || currentTrack?.id,
           trackTitle: currentTrack?.title,
+          track: currentTrack || null,
           isPlaying: true,
         });
         if (LockScreenControls?.updateNowPlaying && currentTrackRef.current) {

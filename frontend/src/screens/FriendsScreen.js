@@ -20,6 +20,7 @@ import { useUser, formatPersonName, formatUsername, getDeterministicAvatarColor 
 import { useAudioPlayback } from "../context/AudioContext";
 import {
   subscribeFriendActivity,
+  sendLiveReaction,
   getUserData,
   getUserStreamCount,
   getLikedSongs,
@@ -299,6 +300,31 @@ export default function FriendsScreen({ onNavigate }) {
 
   // Live activities mapped by friend UID: { [uid]: { track, isPlaying, updatedAt } }
   const [friendsActivity, setFriendsActivity] = useState({});
+  const [sentReactions, setSentReactions] = useState({});
+
+  // Trigger Airbuds live reaction burst to a friend
+  const handleTriggerReaction = useCallback((targetFriend, emoji, track) => {
+    if (!targetFriend?.uid || !emoji) return;
+    const targetUid = targetFriend.uid;
+    setSentReactions((prev) => ({ ...prev, [targetUid]: emoji }));
+
+    sendLiveReaction(targetUid, {
+      emoji,
+      senderId: currentUser?.uid || userProfile?.uid || "friend",
+      senderName: userProfile?.username || currentUser?.displayName || "Friend",
+      senderAvatar: userProfile?.avatar || currentUser?.photoURL || null,
+      trackTitle: track?.title || "",
+      trackId: track?.videoId || track?.id || "",
+    });
+
+    setTimeout(() => {
+      setSentReactions((prev) => {
+        const copy = { ...prev };
+        delete copy[targetUid];
+        return copy;
+      });
+    }, 2200);
+  }, [currentUser, userProfile]);
 
   // Focused user for Friend Profile Modal
   const [selectedUserProfile, setSelectedUserProfile] = useState(null);
@@ -1394,105 +1420,138 @@ export default function FriendsScreen({ onNavigate }) {
                             currentTrack.id === activity.track.id);
 
                         return (
-                          <TouchableOpacity
-                            key={friend.uid}
-                            style={styles.userRowItem}
-                            onPress={() => setSelectedUserProfile(friend)}
-                            activeOpacity={0.7}
-                          >
-                            {/* Avatar & Online Dot */}
-                            <View style={styles.avatarWrapper}>
-                              <UserAvatar user={friend} size={46} fontSize={16} />
-                              <View
-                                style={[
-                                  styles.statusDot,
-                                  isLive ? styles.statusDotLive : styles.statusDotOffline,
-                                ]}
-                              />
-                            </View>
-
-                            {/* Friend Info & Song */}
-                            <View style={styles.userInfoWrap}>
-                              <Text style={styles.userNameText} numberOfLines={1}>
-                                {formatPersonName(friend.displayName || friend.name || friend.username || "")}
-                              </Text>
-
-                              {isLive ? (
-                                <View style={styles.liveTrackRow}>
-                                  <MaterialCommunityIcons
-                                    name="waveform"
-                                    size={14}
-                                    color="#1DB954"
-                                    style={{ marginRight: 4 }}
-                                  />
-                                  <Text style={styles.liveTrackTitle} numberOfLines={1}>
-                                    {activity.track.title}
-                                  </Text>
-                                  {activity.track.artist ? (
-                                    <Text style={styles.liveTrackArtist} numberOfLines={1}>
-                                      {"  "}• {activity.track.artist}
-                                    </Text>
-                                  ) : null}
-                                </View>
-                              ) : (activity?.track || friend.lastPlayback?.track || friend.lastPlayback || friend.lastPlayed) ? (
-                                (() => {
-                                  const s = activity?.track || friend.lastPlayback?.track || friend.lastPlayback || friend.lastPlayed;
-                                  const sTitle = s?.title || s?.name || "";
-                                  const sArtist = s?.artist || s?.subtitle || "";
-                                  return (
-                                    <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
-                                      <Ionicons name="musical-note" size={12} color="#888888" style={{ marginRight: 4 }} />
-                                      <Text style={styles.userHandleSubText} numberOfLines={1}>
-                                        {sTitle}{sArtist ? ` • ${sArtist}` : ""}
-                                      </Text>
-                                    </View>
-                                  );
-                                })()
-                              ) : (
-                                <Text style={styles.userHandleSubText} numberOfLines={1}>
-                                  Staytup Listener
-                                </Text>
-                              )}
-                            </View>
-
-                            {/* Action Buttons */}
-                            <View style={styles.userActionsRow}>
-                              {isLive && activity?.track && (
-                                <TouchableOpacity
+                          <View key={friend.uid} style={styles.friendCardWrapper}>
+                            <TouchableOpacity
+                              style={styles.userRowItem}
+                              onPress={() => setSelectedUserProfile(friend)}
+                              activeOpacity={0.7}
+                            >
+                              {/* Avatar & Online Dot */}
+                              <View style={styles.avatarWrapper}>
+                                <UserAvatar user={friend} size={46} fontSize={16} />
+                                <View
                                   style={[
-                                    styles.listenAlongBtn,
-                                    isCurrentPlayingThis && styles.listenAlongBtnActive,
+                                    styles.statusDot,
+                                    isLive ? styles.statusDotLive : styles.statusDotOffline,
                                   ]}
+                                />
+                              </View>
+
+                              {/* Friend Info & Song */}
+                              <View style={styles.userInfoWrap}>
+                                <Text style={styles.userNameText} numberOfLines={1}>
+                                  {formatPersonName(friend.displayName || friend.name || friend.username || "")}
+                                </Text>
+
+                                {isLive ? (
+                                  <View style={styles.liveTrackRow}>
+                                    <MaterialCommunityIcons
+                                      name="waveform"
+                                      size={14}
+                                      color="#1DB954"
+                                      style={{ marginRight: 4 }}
+                                    />
+                                    <Text style={styles.liveTrackTitle} numberOfLines={1}>
+                                      {activity.track.title}
+                                    </Text>
+                                    {activity.track.artist ? (
+                                      <Text style={styles.liveTrackArtist} numberOfLines={1}>
+                                        {"  "}• {activity.track.artist}
+                                      </Text>
+                                    ) : null}
+                                  </View>
+                                ) : (activity?.track || friend.lastPlayback?.track || friend.lastPlayback || friend.lastPlayed) ? (
+                                  (() => {
+                                    const s = activity?.track || friend.lastPlayback?.track || friend.lastPlayback || friend.lastPlayed;
+                                    const sTitle = s?.title || s?.name || "";
+                                    const sArtist = s?.artist || s?.subtitle || "";
+                                    return (
+                                      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+                                        <Ionicons name="musical-note" size={12} color="#888888" style={{ marginRight: 4 }} />
+                                        <Text style={styles.userHandleSubText} numberOfLines={1}>
+                                          {sTitle}{sArtist ? ` • ${sArtist}` : ""}
+                                        </Text>
+                                      </View>
+                                    );
+                                  })()
+                                ) : (
+                                  <Text style={styles.userHandleSubText} numberOfLines={1}>
+                                    Staytup Listener
+                                  </Text>
+                                )}
+                              </View>
+
+                              {/* Action Buttons */}
+                              <View style={styles.userActionsRow}>
+                                {isLive && activity?.track && (
+                                  <TouchableOpacity
+                                    style={[
+                                      styles.listenAlongBtn,
+                                      isCurrentPlayingThis && styles.listenAlongBtnActive,
+                                    ]}
+                                    onPress={(e) => {
+                                      e.stopPropagation();
+                                      handleListenAlong(activity.track);
+                                    }}
+                                    activeOpacity={0.8}
+                                  >
+                                    <Ionicons
+                                      name={isCurrentPlayingThis ? "volume-high" : "play"}
+                                      size={12}
+                                      color="#000000"
+                                    />
+                                    <Text style={styles.listenAlongText}>
+                                      {isCurrentPlayingThis ? "Listening" : "Listen"}
+                                    </Text>
+                                  </TouchableOpacity>
+                                )}
+
+                                <TouchableOpacity
+                                  style={styles.dismissCloseBtn}
                                   onPress={(e) => {
                                     e.stopPropagation();
-                                    handleListenAlong(activity.track);
+                                    setFriendToDelete(friend);
                                   }}
-                                  activeOpacity={0.8}
+                                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                  accessibilityLabel="Remove friend"
                                 >
-                                  <Ionicons
-                                    name={isCurrentPlayingThis ? "volume-high" : "play"}
-                                    size={12}
-                                    color="#000000"
-                                  />
-                                  <Text style={styles.listenAlongText}>
-                                    {isCurrentPlayingThis ? "Listening" : "Listen"}
-                                  </Text>
+                                  <Ionicons name="close" size={18} color="#888888" />
                                 </TouchableOpacity>
-                              )}
+                              </View>
+                            </TouchableOpacity>
 
-                              <TouchableOpacity
-                                style={styles.dismissCloseBtn}
-                                onPress={(e) => {
-                                  e.stopPropagation();
-                                  setFriendToDelete(friend);
-                                }}
-                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                accessibilityLabel="Remove friend"
-                              >
-                                <Ionicons name="close" size={18} color="#888888" />
-                              </TouchableOpacity>
-                            </View>
-                          </TouchableOpacity>
+                            {/* Airbuds Live Reaction Quick Emoji Bar */}
+                            {isLive && activity?.track && (
+                              <View style={styles.reactionBarContainer}>
+                                <Text style={styles.reactionBarLabel}>REACT</Text>
+                                <View style={styles.reactionEmojiRow}>
+                                  {["🔥", "😭", "💀", "🫶", "🕺", "💔"].map((emoji) => (
+                                    <TouchableOpacity
+                                      key={emoji}
+                                      style={[
+                                        styles.reactionEmojiBtn,
+                                        sentReactions[friend.uid] === emoji && styles.reactionEmojiBtnActive,
+                                      ]}
+                                      onPress={(e) => {
+                                        e.stopPropagation();
+                                        handleTriggerReaction(friend, emoji, activity.track);
+                                      }}
+                                      activeOpacity={0.7}
+                                      hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                                      accessibilityLabel={`React with ${emoji}`}
+                                    >
+                                      <Text style={styles.reactionEmojiText}>{emoji}</Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </View>
+                                {sentReactions[friend.uid] ? (
+                                  <View style={styles.reactionSentBadge}>
+                                    <Text style={styles.reactionSentText}>Sent {sentReactions[friend.uid]}!</Text>
+                                  </View>
+                                ) : null}
+                              </View>
+                            )}
+                          </View>
                         );
                       })}
                     </View>
@@ -2067,6 +2126,37 @@ export default function FriendsScreen({ onNavigate }) {
                       />
                     </TouchableOpacity>
                   </TouchableOpacity>
+
+                  {/* Airbuds Live Reaction Quick Emoji Bar in Profile Modal */}
+                  {isFriendPlaying && (
+                    <View style={styles.pmReactionBar}>
+                      <Text style={styles.pmReactionLabel}>REACT TO VIBE</Text>
+                      <View style={styles.reactionEmojiRow}>
+                        {["🔥", "😭", "💀", "🫶", "🕺", "💔"].map((emoji) => (
+                          <TouchableOpacity
+                            key={emoji}
+                            style={[
+                              styles.reactionEmojiBtn,
+                              sentReactions[selectedUserProfile?.uid] === emoji && styles.reactionEmojiBtnActive,
+                            ]}
+                            onPress={() => handleTriggerReaction(selectedUserProfile, emoji, friendTrack)}
+                            activeOpacity={0.7}
+                            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                            accessibilityLabel={`React with ${emoji}`}
+                          >
+                            <Text style={styles.reactionEmojiText}>{emoji}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                      {sentReactions[selectedUserProfile?.uid] ? (
+                        <View style={[styles.reactionSentBadge, { marginTop: 6 }]}>
+                          <Text style={styles.reactionSentText}>
+                            Sent {sentReactions[selectedUserProfile?.uid]} to {formatPersonName(selectedUserProfile?.displayName || selectedUserProfile?.name || selectedUserProfile?.username || "")}!
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  )}
                 </View>
               );
             })() : null}
@@ -2943,6 +3033,79 @@ const styles = StyleSheet.create({
   unifiedUserList: {
     gap: 2,
     width: "100%",
+  },
+  friendCardWrapper: {
+    width: "100%",
+    paddingVertical: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.04)",
+  },
+  reactionBarContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 56,
+    paddingBottom: 8,
+    marginTop: -2,
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  reactionBarLabel: {
+    fontFamily: fonts.semiBold,
+    fontSize: 10,
+    color: "#777777",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginRight: 2,
+  },
+  reactionEmojiRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  reactionEmojiBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.06)",
+  },
+  reactionEmojiBtnActive: {
+    backgroundColor: "rgba(29, 185, 84, 0.25)",
+    borderColor: "#1DB954",
+    transform: [{ scale: 1.15 }],
+  },
+  reactionEmojiText: {
+    fontSize: 15,
+  },
+  reactionSentBadge: {
+    backgroundColor: "rgba(29, 185, 84, 0.16)",
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    marginLeft: 4,
+  },
+  reactionSentText: {
+    color: "#1DB954",
+    fontSize: 10.5,
+    fontFamily: fonts.bold,
+  },
+  pmReactionBar: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255, 255, 255, 0.08)",
+    alignItems: "center",
+    width: "100%",
+  },
+  pmReactionLabel: {
+    fontFamily: fonts.bold,
+    fontSize: 10,
+    color: "#888888",
+    letterSpacing: 1.2,
+    marginBottom: 8,
   },
   userRowItem: {
     flexDirection: "row",

@@ -32,6 +32,7 @@ import DesktopSidebar from "./src/components/DesktopSidebar";
 import DesktopPlayerBar from "./src/components/DesktopPlayerBar";
 import ChangelogModal from "./src/components/ChangelogModal";
 import QueueNoticeBanner from "./src/components/QueueNoticeBanner";
+import LiveReactionOverlay from "./src/components/LiveReactionOverlay";
 import { BUILD_NUMBER, APP_VERSION } from "./src/config/version";
 import { colors, fonts } from "./src/theme/colors";
 import { handleGlobalBack, registerBackAction } from "./src/services/navigation";
@@ -475,6 +476,8 @@ function AppContent() {
         visible={showUpdateChangelog}
         onClose={handleDismissUpdateChangelog}
       />
+      {/* Real-time Airbuds Live Reaction Bursts & Floating Emojis */}
+      <LiveReactionOverlay />
     </NavigationContainer>
   );
 }

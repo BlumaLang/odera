@@ -22,6 +22,7 @@ import { api } from "../api/client";
 import AddToPlaylistModal from "./AddToPlaylistModal";
 import ArtistModal from "./ArtistModal";
 import LikeConfetti from "./LikeConfetti";
+import LiveReactionOverlay from "./LiveReactionOverlay";
 import { resolveLocalArtistImage } from "../theme/artistImages";
 import { useResponsive } from "../context/ResponsiveContext";
 import { registerBackAction } from "../services/navigation";
@@ -2004,6 +2005,8 @@ export default function FullPlayerModal() {
               : null
           }
         />
+        {/* Airbuds Live Reaction Bursts Floating Over Player & Artwork */}
+        <LiveReactionOverlay />
       </View>
       )}
     </Modal>

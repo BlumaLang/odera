@@ -21,7 +21,7 @@ import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
 import { useAudioPlayback } from "../context/AudioContext";
 import { useResponsive } from "../context/ResponsiveContext";
-import { useUser } from "../context/UserContext";
+import { useUser, formatPersonName } from "../context/UserContext";
 import { resolveLocalArtistImage } from "../theme/artistImages";
 import {
   auth,
@@ -33,6 +33,7 @@ import {
   getAppTrendingTracksRTDB,
   subscribeAppTrendingRTDB,
   subscribeFriendActivity,
+  sendLiveReaction,
 } from "../services/firebase";
 import { getHighResArtwork } from "../utils/imageUtils";
 
@@ -220,7 +221,43 @@ export default function HomeScreen({ onNavigate } = {}) {
   const [appTrending, setAppTrending] = useState([]);
   const [artistImages, setArtistImages] = useState({});
   const [friendsActivity, setFriendsActivity] = useState({});
+  const [sentHomeReactions, setSentHomeReactions] = useState({});
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
+
+  // Trigger Airbuds live reaction burst to a friend from Home
+  const handleTriggerHomeReaction = useCallback((targetFriend, emoji, track) => {
+    if (!targetFriend?.uid || !emoji) return;
+    const targetUid = targetFriend.uid;
+    setSentHomeReactions((prev) => ({ ...prev, [targetUid]: emoji }));
+
+    sendLiveReaction(targetUid, {
+      emoji,
+      senderId: auth?.currentUser?.uid || userProfile?.uid || "friend",
+      senderName: userProfile?.username || auth?.currentUser?.displayName || "Friend",
+      senderAvatar: userProfile?.avatar || auth?.currentUser?.photoURL || null,
+      trackTitle: track?.title || "",
+      trackId: track?.videoId || track?.id || "",
+    });
+
+    setTimeout(() => {
+      setSentHomeReactions((prev) => {
+        const copy = { ...prev };
+        delete copy[targetUid];
+        return copy;
+      });
+    }, 2200);
+  }, [userProfile]);
+
+  // Strictly ONLY online and actively listening users
+  const liveListeningFriends = useMemo(() => {
+    if (!friendsList || friendsList.length === 0) return [];
+    return friendsList.filter((f) => {
+      const act = friendsActivity[f.uid];
+      if (!act || !act.isPlaying || !act.track) return false;
+      const isRecent = act.updatedAt ? (Date.now() - act.updatedAt < 1000 * 60 * 30) : true;
+      return Boolean(act.isPlaying && act.track && isRecent);
+    });
+  }, [friendsList, friendsActivity]);
 
   const { currentTrack, isPlaying, togglePlayPause, playTrack } = useAudioPlayback();
 
@@ -1374,9 +1411,142 @@ export default function HomeScreen({ onNavigate } = {}) {
               </View>
             ) : (
               /* Home / All Feed: Fresh New Releases -> Daily Mix -> Trending Now -> Friends Are Listening To -> Jump Back In */
-              allDisplayedSections?.map((section, idx) => (
-                <SectionList key={section.id || `section_${idx}`} section={section} sectionIndex={idx} />
-              ))
+              <>
+                {/* 0. Live Now / Currently Listening Users (Circle + Active Waveform Icon) */}
+                {liveListeningFriends.length > 0 && (
+                  <View style={styles.liveListeningSection}>
+                    <View style={styles.liveListeningHeaderRow}>
+                      <View style={styles.liveListeningTitleGroup}>
+                        <View style={styles.livePulseDot} />
+                        <Text style={styles.liveListeningTitle}>Listening Now</Text>
+                        <View style={styles.livePill}>
+                          <Text style={styles.livePillText}>LIVE</Text>
+                        </View>
+                      </View>
+                      {onNavigate && (
+                        <TouchableOpacity
+                          onPress={() => onNavigate("Friends")}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.liveListeningViewAllText}>View All</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.liveListeningScrollContent}
+                      style={styles.liveListeningScrollView}
+                    >
+                      {liveListeningFriends.map((friend) => {
+                        const act = friendsActivity[friend.uid];
+                        const track = act?.track;
+                        const isCurrentPlayingThis =
+                          currentTrack &&
+                          track &&
+                          ((track.videoId && currentTrack.videoId === track.videoId) ||
+                            (track.video_id && currentTrack.videoId === track.video_id) ||
+                            currentTrack.id === track.id);
+
+                        return (
+                          <View key={`live_user_circle_${friend.uid}`} style={styles.liveUserCircleItem}>
+                            {/* Circle Avatar with Active Border & Icon */}
+                            <TouchableOpacity
+                              style={styles.liveCircleTouchArea}
+                              onPress={() => {
+                                if (track) {
+                                  playTrack(
+                                    {
+                                      ...track,
+                                      videoId: track.videoId || track.video_id || track.id,
+                                    },
+                                    [track],
+                                    0
+                                  );
+                                }
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <View
+                                style={[
+                                  styles.liveCircleRing,
+                                  isCurrentPlayingThis && styles.liveCircleRingActive,
+                                ]}
+                              >
+                                <UserAvatar user={friend} size={56} fontSize={19} />
+                              </View>
+
+                              {/* Active Icon: Equalizer Waveform */}
+                              <View style={styles.liveActiveBadge}>
+                                <MaterialCommunityIcons
+                                  name={isCurrentPlayingThis ? "volume-high" : "waveform"}
+                                  size={13}
+                                  color="#000000"
+                                />
+                              </View>
+                            </TouchableOpacity>
+
+                            {/* User Name */}
+                            <Text style={styles.liveCircleName} numberOfLines={1}>
+                              {formatPersonName(friend.displayName || friend.name || friend.username || "")}
+                            </Text>
+
+                            {/* Track Name */}
+                            {track ? (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  playTrack(
+                                    {
+                                      ...track,
+                                      videoId: track.videoId || track.video_id || track.id,
+                                    },
+                                    [track],
+                                    0
+                                  );
+                                }}
+                                activeOpacity={0.7}
+                                style={{ maxWidth: 88 }}
+                              >
+                                <Text style={styles.liveCircleTrack} numberOfLines={1}>
+                                  {track.title}
+                                </Text>
+                              </TouchableOpacity>
+                            ) : null}
+
+                            {/* Quick Airbuds Reaction Bursts on Home */}
+                            <View style={styles.liveCircleReactionsRow}>
+                              {["🔥", "😭", "🫶", "💀"].map((emoji) => (
+                                <TouchableOpacity
+                                  key={emoji}
+                                  style={[
+                                    styles.liveCircleReactionBtn,
+                                    sentHomeReactions[friend.uid] === emoji && styles.liveCircleReactionBtnActive,
+                                  ]}
+                                  onPress={() => handleTriggerHomeReaction(friend, emoji, track)}
+                                  activeOpacity={0.65}
+                                  hitSlop={{ top: 4, bottom: 4, left: 3, right: 3 }}
+                                  accessibilityLabel={`React with ${emoji}`}
+                                >
+                                  <Text style={styles.liveCircleReactionEmoji}>{emoji}</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                            {sentHomeReactions[friend.uid] ? (
+                              <Text style={styles.liveCircleSentText}>Sent!</Text>
+                            ) : null}
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {allDisplayedSections?.map((section, idx) => (
+                  <SectionList key={section.id || `section_${idx}`} section={section} sectionIndex={idx} />
+                ))}
+              </>
             )}
 
             <View style={{ height: isDesktop || isTablet ? 24 : 140 }} />
@@ -1723,6 +1893,161 @@ const styles = StyleSheet.create({
     textAlign: "center",
     maxWidth: 320,
     lineHeight: 18,
+  },
+
+  // ── Currently Listening Users (Circle + Active Waveform Icon) ──
+  liveListeningSection: {
+    marginTop: 8,
+    marginBottom: 22,
+    paddingHorizontal: 16,
+  },
+  liveListeningHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  liveListeningTitleGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  livePulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#1DB954",
+    marginRight: 8,
+  },
+  liveListeningTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: "#FFFFFF",
+    letterSpacing: -0.2,
+  },
+  livePill: {
+    backgroundColor: "rgba(29, 185, 84, 0.2)",
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: "rgba(29, 185, 84, 0.4)",
+  },
+  livePillText: {
+    fontFamily: fonts.bold,
+    fontSize: 9.5,
+    color: "#1DB954",
+    letterSpacing: 0.8,
+  },
+  liveListeningViewAllText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: colors.primary,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  liveListeningScrollView: {
+    marginLeft: -16,
+    marginRight: -16,
+  },
+  liveListeningScrollContent: {
+    paddingHorizontal: 16,
+    gap: 16,
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
+  liveUserCircleItem: {
+    alignItems: "center",
+    width: 86,
+  },
+  liveCircleTouchArea: {
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  liveCircleRing: {
+    width: 66,
+    height: 66,
+    borderRadius: 33,
+    borderWidth: 2.5,
+    borderColor: "#1DB954",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#121212",
+    shadowColor: "#1DB954",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.45,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  liveCircleRingActive: {
+    borderColor: "#FFFFFF",
+    shadowColor: "#FFFFFF",
+    shadowOpacity: 0.7,
+  },
+  liveActiveBadge: {
+    position: "absolute",
+    bottom: -2,
+    right: -2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "#1DB954",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#000000",
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  liveCircleName: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: "#FFFFFF",
+    marginTop: 7,
+    textAlign: "center",
+    width: "100%",
+  },
+  liveCircleTrack: {
+    fontFamily: fonts.regular,
+    fontSize: 10.5,
+    color: "#1DB954",
+    marginTop: 2,
+    textAlign: "center",
+    width: "100%",
+  },
+  liveCircleReactionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    marginTop: 6,
+  },
+  liveCircleReactionBtn: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
+  },
+  liveCircleReactionBtnActive: {
+    backgroundColor: "rgba(29, 185, 84, 0.35)",
+    transform: [{ scale: 1.2 }],
+  },
+  liveCircleReactionEmoji: {
+    fontSize: 10.5,
+  },
+  liveCircleSentText: {
+    fontFamily: fonts.bold,
+    fontSize: 9.5,
+    color: "#1DB954",
+    marginTop: 3,
+    textAlign: "center",
   },
 
   // Following Friends Live Activity
