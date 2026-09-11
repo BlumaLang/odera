@@ -27,6 +27,10 @@ class SearchRoutes {
         $limit = (int)(getQueryParam('limit', DEFAULT_SEARCH_LIMIT));
         $page = max(1, floor($offset / $limit) + 1);
         
+        if ($type === 'trending' || getQueryParam('action') === 'trending') {
+            return self::trending();
+        }
+
         if (empty($query)) {
             sendError('Search query is required');
         }

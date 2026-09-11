@@ -110,7 +110,18 @@ try {
         // ==================== SEARCH ====================
         case 'search':
             require_once __DIR__ . '/routes/search.php';
-            SearchRoutes::handle('search', $method);
+            if ($subresource === 'trending') {
+                SearchRoutes::handle('trending', $method);
+            } elseif ($subresource === 'suggestions') {
+                SearchRoutes::handle('suggestions', $method);
+            } else {
+                SearchRoutes::handle('search', $method);
+            }
+            break;
+        
+        case 'trending':
+            require_once __DIR__ . '/routes/search.php';
+            SearchRoutes::handle('trending', $method);
             break;
         
         case 'suggestions':
