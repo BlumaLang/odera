@@ -28,7 +28,7 @@ import { api } from "../api/client";
 import { useAudioPlayback, fisherYatesShuffle } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
 import { useResponsive } from "../context/ResponsiveContext";
-import { auth, getRecentlyPlayed, subscribeRecentlyPlayed, removeRecentlyPlayed, subscribePublicPlaylists, subscribeAppTrendingRTDB } from "../services/firebase";
+import { auth, getRecentlyPlayed, subscribeRecentlyPlayed, removeRecentlyPlayed, subscribePublicPlaylists, subscribeAppTrendingRTDB, purgeBlockedPublicPlaylistsRTDB } from "../services/firebase";
 import { resolveLocalArtistImage } from "../theme/artistImages";
 import { getHighResArtwork, decodeHtml } from "../utils/imageUtils";
 import {
@@ -238,9 +238,38 @@ const BLOCKED_PUBLIC_PLAYLIST_NAMES = new Set([
   "midnight chill & lo-fi",
   "midnight chill and lo-fi",
 ]);
-const isBlockedPlaylist = (id, name) => {
-  if (id && BLOCKED_PUBLIC_PLAYLIST_IDS.has(String(id))) return true;
-  if (name && BLOCKED_PUBLIC_PLAYLIST_NAMES.has(String(name).trim().toLowerCase())) return true;
+const isBlockedPlaylist = (itemOrId, maybeName) => {
+  let id = "";
+  let name = "";
+  if (itemOrId && typeof itemOrId === "object") {
+    id = String(itemOrId.id || itemOrId.collabId || itemOrId.playlistId || itemOrId._id || "");
+    name = String(itemOrId.name || itemOrId.title || itemOrId.playlistName || "").trim().toLowerCase();
+  } else {
+    id = String(itemOrId || "");
+    name = String(maybeName || "").trim().toLowerCase();
+  }
+  const idLower = id.toLowerCase();
+  if (
+    idLower.includes("top_hits") ||
+    idLower.includes("viral_vibes") ||
+    idLower.includes("chill_vibes") ||
+    idLower === "public_pl_top_hits" ||
+    idLower === "public_pl_viral_vibes" ||
+    idLower === "public_pl_chill_vibes"
+  ) {
+    return true;
+  }
+  if (
+    name.includes("global top hits") ||
+    name.includes("viral hits") ||
+    name.includes("midnight chill") ||
+    name === "staytup global top hits" ||
+    name === "viral hits 2026" ||
+    name === "midnight chill & lo-fi" ||
+    name === "midnight chill and lo-fi"
+  ) {
+    return true;
+  }
   return false;
 };
 
@@ -316,13 +345,17 @@ export default function LibraryScreen() {
   // Subscribe to public playlists from RTDB & API
   useEffect(() => {
     let isMounted = true;
+    try {
+      purgeBlockedPublicPlaylistsRTDB().catch(() => {});
+    } catch (_) {}
+
     api.getPublicPlaylists()
       .then((res) => {
         if (isMounted) {
           if (Array.isArray(res) && res.length > 0) {
             setPublicPlaylists(
               res
-                .filter((p) => !isBlockedPlaylist(p.id, p.name))
+                .filter((p) => !isBlockedPlaylist(p))
                 .map((p) => ({ ...p, isPublic: true, is_public: true }))
             );
           }
@@ -339,7 +372,7 @@ export default function LibraryScreen() {
         setPublicPlaylists((prev) => {
           const map = new Map();
           for (const item of [...list, ...prev]) {
-            if (item.id && !map.has(item.id) && !isBlockedPlaylist(item.id, item.name)) {
+            if (item.id && !map.has(item.id) && !isBlockedPlaylist(item)) {
               map.set(item.id, item);
             }
           }
@@ -590,7 +623,7 @@ export default function LibraryScreen() {
     // 1. User's Collaborative & Blend Playlists
     for (const cp of collabPlaylists || []) {
       const id = String(cp.id || cp.collabId || "");
-      if (isBlockedPlaylist(id, cp.name)) continue;
+      if (isBlockedPlaylist(cp)) continue;
       if (id && !seen.has(id)) {
         seen.add(id);
         if (cp.originalPlaylistId) collabOriginalIds.add(String(cp.originalPlaylistId));
@@ -603,7 +636,7 @@ export default function LibraryScreen() {
     for (const p of rtdbPlaylists || []) {
       const id = String(p.id || p.collabId || "");
       const nameKey = String(p.name || "").trim().toLowerCase();
-      if (isBlockedPlaylist(id, p.name)) continue;
+      if (isBlockedPlaylist(p)) continue;
       if (id && !seen.has(id) && !collabOriginalIds.has(id) && (!nameKey || !collabNames.has(nameKey))) {
         seen.add(id);
         result.push({ ...p, isPersonal: true });
@@ -614,7 +647,7 @@ export default function LibraryScreen() {
     for (const ap of historyPlaylists || []) {
       const id = String(ap.id || ap.collabId || "");
       const nameKey = String(ap.name || "").trim().toLowerCase();
-      if (isBlockedPlaylist(id, ap.name)) continue;
+      if (isBlockedPlaylist(ap)) continue;
       if (!id || seen.has(id) || (nameKey && seen.has(nameKey))) continue;
       seen.add(id);
       if (nameKey) seen.add(nameKey);
@@ -625,7 +658,7 @@ export default function LibraryScreen() {
     for (const pub of publicPlaylists || []) {
       const id = String(pub.id || pub.collabId || "");
       const nameKey = String(pub.name || "").trim().toLowerCase();
-      if (isBlockedPlaylist(id, pub.name)) continue;
+      if (isBlockedPlaylist(pub)) continue;
       if (!id || seen.has(id) || (nameKey && seen.has(nameKey))) continue;
       seen.add(id);
       if (nameKey) seen.add(nameKey);
@@ -661,12 +694,12 @@ export default function LibraryScreen() {
       });
     }
 
-    return result;
+    return result.filter((p) => !isBlockedPlaylist(p));
   }, [rtdbPlaylists, collabPlaylists, publicPlaylists, historyPlaylists]);
 
   // Filtered & Sorted Playlists
   const playlists = useMemo(() => {
-    let list = [...rawPlaylists];
+    let list = rawPlaylists.filter((p) => !isBlockedPlaylist(p));
 
     if (playlistSubFilter === "my") {
       list = list.filter((p) => {
@@ -712,7 +745,7 @@ export default function LibraryScreen() {
       );
     }
 
-    return list;
+    return list.filter((p) => !isBlockedPlaylist(p));
   }, [rawPlaylists, playlistSubFilter, activeFolder, searchQuery, sortBy]);
 
   // Liked Songs
@@ -1305,6 +1338,7 @@ export default function LibraryScreen() {
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
                 renderItem={({ item }) => {
+                  if (isBlockedPlaylist(item)) return null;
                   const playlistCover =
                     item.cover_url ||
                     item.preview_artwork ||

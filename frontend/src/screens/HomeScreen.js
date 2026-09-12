@@ -1359,7 +1359,14 @@ export default function HomeScreen({ onNavigate } = {}) {
         type: "playlist",
         isPlaylist: true,
       };
-    }).filter((p) => p.tracks && p.tracks.length > 0);
+    }).filter((p) => {
+      if (!p.tracks || p.tracks.length === 0) return false;
+      const id = String(p.id || p.collabId || "").toLowerCase();
+      const title = String(p.title || p.name || "").toLowerCase();
+      if (id.includes("top_hits") || id.includes("viral_vibes") || id.includes("chill_vibes")) return false;
+      if (title.includes("global top hits") || title.includes("viral hits") || title.includes("midnight chill")) return false;
+      return true;
+    });
   }, [publicPlaylists, collabPlaylists]);
 
   const communityPlaylistsSection = useMemo(() => {

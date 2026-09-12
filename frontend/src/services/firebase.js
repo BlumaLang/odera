@@ -3933,11 +3933,19 @@ export function subscribePublicPlaylists(callback) {
         return;
       }
       const data = snapshot.val() || {};
-      const list = Object.values(data).map((p) => ({
-        ...p,
-        isPublic: true,
-        is_public: true,
-      }));
+      const list = Object.values(data)
+        .filter((p) => {
+          const id = String(p?.id || "").toLowerCase();
+          const name = String(p?.name || p?.title || "").toLowerCase();
+          if (id.includes("top_hits") || id.includes("viral_vibes") || id.includes("chill_vibes")) return false;
+          if (name.includes("global top hits") || name.includes("viral hits") || name.includes("midnight chill")) return false;
+          return true;
+        })
+        .map((p) => ({
+          ...p,
+          isPublic: true,
+          is_public: true,
+        }));
       callback(list);
     },
     (err) => {
@@ -3947,5 +3955,16 @@ export function subscribePublicPlaylists(callback) {
   );
   return () => off(publicPlRef, "value", listener);
 }
+
+export async function purgeBlockedPublicPlaylistsRTDB() {
+  if (!db) return;
+  const blocked = ["public_pl_top_hits", "public_pl_viral_vibes", "public_pl_chill_vibes"];
+  for (const bid of blocked) {
+    try {
+      await remove(ref(db, `public_playlists/${bid}`));
+    } catch (_) {}
+  }
+}
+
 
 

@@ -356,9 +356,9 @@ class Storage {
         $blockedIds = ['public_pl_top_hits', 'public_pl_viral_vibes', 'public_pl_chill_vibes'];
         $blockedNames = ['staytup global top hits', 'viral hits 2026', 'midnight chill & lo-fi', 'midnight chill and lo-fi'];
         foreach ($allPublic as $p) {
-            $pid = $p['id'] ?? null;
+            $pid = strtolower(trim($p['id'] ?? ''));
             $pname = strtolower(trim($p['name'] ?? ''));
-            if (in_array($pid, $blockedIds) || in_array($pname, $blockedNames)) {
+            if (in_array($pid, $blockedIds) || in_array($pname, $blockedNames) || strpos($pid, 'top_hits') !== false || strpos($pid, 'viral_vibes') !== false || strpos($pname, 'global top hits') !== false || strpos($pname, 'viral hits') !== false || strpos($pname, 'midnight chill') !== false) {
                 continue;
             }
             if ($pid && !isset($seen[$pid])) {
