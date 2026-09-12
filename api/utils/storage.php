@@ -344,143 +344,8 @@ class Storage {
             ];
         }
 
-        // 3. High quality curated public playlists with verified working covers & rich track lists
-        $curatedPublic = [
-            [
-                'id' => 'public_pl_top_hits',
-                'name' => 'Staytup Global Top Hits',
-                'description' => 'The hottest trending tracks around the world right now based on all Staytup user activity.',
-                'cover_url' => 'https://i.ytimg.com/vi/4NRXx6U8ABQ/hqdefault.jpg',
-                'is_public' => true,
-                'isPublic' => true,
-                'type' => 'public',
-                'creator_name' => 'Staytup Community',
-                'track_count' => 6,
-                'tracks' => [
-                    [
-                        'id' => 'trk_pub_1',
-                        'videoId' => '4NRXx6U8ABQ',
-                        'video_id' => '4NRXx6U8ABQ',
-                        'title' => 'Blinding Lights',
-                        'artist' => 'The Weeknd',
-                        'album' => 'After Hours',
-                        'duration' => 200,
-                        'duration_seconds' => 200,
-                        'artwork_url' => 'https://i.ytimg.com/vi/4NRXx6U8ABQ/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/4NRXx6U8ABQ/hqdefault.jpg'
-                    ],
-                    [
-                        'id' => 'trk_pub_2',
-                        'videoId' => 'TUVcZfQe-Kw',
-                        'video_id' => 'TUVcZfQe-Kw',
-                        'title' => 'Levitating',
-                        'artist' => 'Dua Lipa',
-                        'album' => 'Future Nostalgia',
-                        'duration' => 203,
-                        'duration_seconds' => 203,
-                        'artwork_url' => 'https://i.ytimg.com/vi/TUVcZfQe-Kw/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/TUVcZfQe-Kw/hqdefault.jpg'
-                    ],
-                    [
-                        'id' => 'trk_pub_3',
-                        'videoId' => 'kTJczUoc26U',
-                        'video_id' => 'kTJczUoc26U',
-                        'title' => 'Stay',
-                        'artist' => 'The Kid LAROI, Justin Bieber',
-                        'album' => 'F*CK LOVE 3',
-                        'duration' => 141,
-                        'duration_seconds' => 141,
-                        'artwork_url' => 'https://i.ytimg.com/vi/kTJczUoc26U/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/kTJczUoc26U/hqdefault.jpg'
-                    ],
-                    [
-                        'id' => 'trk_pub_4',
-                        'videoId' => 'H5v3kku4y6Q',
-                        'video_id' => 'H5v3kku4y6Q',
-                        'title' => 'As It Was',
-                        'artist' => 'Harry Styles',
-                        'album' => "Harry's House",
-                        'duration' => 167,
-                        'duration_seconds' => 167,
-                        'artwork_url' => 'https://i.ytimg.com/vi/H5v3kku4y6Q/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/H5v3kku4y6Q/hqdefault.jpg'
-                    ],
-                    [
-                        'id' => 'trk_pub_5',
-                        'videoId' => 'JGwWNGJdvx8',
-                        'video_id' => 'JGwWNGJdvx8',
-                        'title' => 'Shape of You',
-                        'artist' => 'Ed Sheeran',
-                        'album' => '÷ (Divide)',
-                        'duration' => 233,
-                        'duration_seconds' => 233,
-                        'artwork_url' => 'https://i.ytimg.com/vi/JGwWNGJdvx8/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/JGwWNGJdvx8/hqdefault.jpg'
-                    ],
-                    [
-                        'id' => 'trk_pub_6',
-                        'videoId' => 'm7Bc3pLyij0',
-                        'video_id' => 'm7Bc3pLyij0',
-                        'title' => 'Heat Waves',
-                        'artist' => 'Glass Animals',
-                        'album' => 'Dreamland',
-                        'duration' => 238,
-                        'duration_seconds' => 238,
-                        'artwork_url' => 'https://i.ytimg.com/vi/m7Bc3pLyij0/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/m7Bc3pLyij0/hqdefault.jpg'
-                    ]
-                ]
-            ],
-            [
-                'id' => 'public_pl_viral_vibes',
-                'name' => 'Viral Hits 2026',
-                'description' => 'Most shared soundscapes and viral sensation tracks on Staytup.',
-                'cover_url' => 'https://i.ytimg.com/vi/k2qgadSvNyU/hqdefault.jpg',
-                'is_public' => true,
-                'isPublic' => true,
-                'type' => 'public',
-                'creator_name' => 'Staytup Viral',
-                'track_count' => 3,
-                'tracks' => [
-                    [
-                        'id' => 'trk_pub_v1',
-                        'videoId' => 'k2qgadSvNyU',
-                        'video_id' => 'k2qgadSvNyU',
-                        'title' => 'Physical',
-                        'artist' => 'Dua Lipa',
-                        'album' => 'Future Nostalgia',
-                        'duration' => 193,
-                        'duration_seconds' => 193,
-                        'artwork_url' => 'https://i.ytimg.com/vi/k2qgadSvNyU/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/k2qgadSvNyU/hqdefault.jpg'
-                    ],
-                    [
-                        'id' => 'trk_pub_v2',
-                        'videoId' => 'gNi_6U5Pm_o',
-                        'video_id' => 'gNi_6U5Pm_o',
-                        'title' => 'Higher Power',
-                        'artist' => 'Coldplay',
-                        'album' => 'Music of the Spheres',
-                        'duration' => 211,
-                        'duration_seconds' => 211,
-                        'artwork_url' => 'https://i.ytimg.com/vi/gNi_6U5Pm_o/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/gNi_6U5Pm_o/hqdefault.jpg'
-                    ],
-                    [
-                        'id' => 'trk_pub_v3',
-                        'videoId' => 'Il0S8BoucSA',
-                        'video_id' => 'Il0S8BoucSA',
-                        'title' => 'Shivers',
-                        'artist' => 'Ed Sheeran',
-                        'album' => '=',
-                        'duration' => 207,
-                        'duration_seconds' => 207,
-                        'artwork_url' => 'https://i.ytimg.com/vi/Il0S8BoucSA/hqdefault.jpg',
-                        'thumbnail' => 'https://i.ytimg.com/vi/Il0S8BoucSA/hqdefault.jpg'
-                    ]
-                ]
-            ]
-        ];
+        // 3. High quality curated public playlists
+        $curatedPublic = [];
 
         // Combine: community top history + user public playlists + curated playlists
         $allPublic = array_merge($historyBasedPlaylists, $userPublicPlaylists, $curatedPublic);
@@ -488,8 +353,14 @@ class Storage {
         // Deduplicate by ID and ensure first track artwork is used as playlist cover
         $seen = [];
         $result = [];
+        $blockedIds = ['public_pl_top_hits', 'public_pl_viral_vibes', 'public_pl_chill_vibes'];
+        $blockedNames = ['staytup global top hits', 'viral hits 2026', 'midnight chill & lo-fi', 'midnight chill and lo-fi'];
         foreach ($allPublic as $p) {
             $pid = $p['id'] ?? null;
+            $pname = strtolower(trim($p['name'] ?? ''));
+            if (in_array($pid, $blockedIds) || in_array($pname, $blockedNames)) {
+                continue;
+            }
             if ($pid && !isset($seen[$pid])) {
                 $seen[$pid] = true;
 

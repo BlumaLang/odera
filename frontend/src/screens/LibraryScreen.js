@@ -227,6 +227,23 @@ function ArtistRowAvatar({ name, photoUrl }) {
 
 const FOLDER_COLORS = ["#1DB954", "#8B5CF6", "#3B82F6", "#EC4899", "#F59E0B", "#10B981", "#6366F1"];
 
+const BLOCKED_PUBLIC_PLAYLIST_IDS = new Set([
+  "public_pl_top_hits",
+  "public_pl_viral_vibes",
+  "public_pl_chill_vibes",
+]);
+const BLOCKED_PUBLIC_PLAYLIST_NAMES = new Set([
+  "staytup global top hits",
+  "viral hits 2026",
+  "midnight chill & lo-fi",
+  "midnight chill and lo-fi",
+]);
+const isBlockedPlaylist = (id, name) => {
+  if (id && BLOCKED_PUBLIC_PLAYLIST_IDS.has(String(id))) return true;
+  if (name && BLOCKED_PUBLIC_PLAYLIST_NAMES.has(String(name).trim().toLowerCase())) return true;
+  return false;
+};
+
 export default function LibraryScreen() {
   const navigation = useNavigation();
   const { isDesktop, isTablet } = useResponsive();
@@ -303,7 +320,11 @@ export default function LibraryScreen() {
       .then((res) => {
         if (isMounted) {
           if (Array.isArray(res) && res.length > 0) {
-            setPublicPlaylists(res.map((p) => ({ ...p, isPublic: true, is_public: true })));
+            setPublicPlaylists(
+              res
+                .filter((p) => !isBlockedPlaylist(p.id, p.name))
+                .map((p) => ({ ...p, isPublic: true, is_public: true }))
+            );
           }
           setPublicLoaded(true);
         }
@@ -318,7 +339,9 @@ export default function LibraryScreen() {
         setPublicPlaylists((prev) => {
           const map = new Map();
           for (const item of [...list, ...prev]) {
-            if (item.id && !map.has(item.id)) map.set(item.id, item);
+            if (item.id && !map.has(item.id) && !isBlockedPlaylist(item.id, item.name)) {
+              map.set(item.id, item);
+            }
           }
           return Array.from(map.values());
         });
@@ -508,58 +531,7 @@ export default function LibraryScreen() {
     }
 
     if (uniquePool.length >= 2) {
-      // 1. Staytup Global Top Hits
-      const globalTracks = [...uniquePool]
-        .sort((a, b) => (b.playCount || b.play_count || 1) - (a.playCount || a.play_count || 1))
-        .slice(0, 30);
-      const globalArt = getFirstTrackArt(globalTracks);
-      result.push({
-        id: "public_pl_top_hits",
-        name: "Staytup Global Top Hits",
-        description: "The hottest trending tracks around the world right now based on all Staytup user activity.",
-        cover_url: globalArt,
-        preview_artwork: globalArt,
-        image: globalArt,
-        artwork_url: globalArt,
-        thumbnail: globalArt,
-        coverImage: globalArt,
-        isPublic: true,
-        is_public: true,
-        type: "public",
-        creator_name: "Staytup Community",
-        track_count: globalTracks.length,
-        tracks: globalTracks,
-      });
-
-      // 2. Viral Hits 2026
-      const viralTracks = [...uniquePool]
-        .sort((a, b) => {
-          const aTime = a.lastPlayedAt || a.last_played ? new Date(a.lastPlayedAt || a.last_played).getTime() : 0;
-          const bTime = b.lastPlayedAt || b.last_played ? new Date(b.lastPlayedAt || b.last_played).getTime() : 0;
-          if (bTime !== aTime) return bTime - aTime;
-          return (b.playCount || b.play_count || 1) - (a.playCount || a.play_count || 1);
-        })
-        .slice(0, 25);
-      const viralArt = getFirstTrackArt(viralTracks);
-      result.push({
-        id: "public_pl_viral_vibes",
-        name: "Viral Hits 2026",
-        description: "Most shared soundscapes and viral sensation tracks across Staytup.",
-        cover_url: viralArt,
-        preview_artwork: viralArt,
-        image: viralArt,
-        artwork_url: viralArt,
-        thumbnail: viralArt,
-        coverImage: viralArt,
-        isPublic: true,
-        is_public: true,
-        type: "public",
-        creator_name: "Staytup Viral",
-        track_count: viralTracks.length,
-        tracks: viralTracks,
-      });
-
-      // 4. Staytup Community Top Hits
+      // 1. Staytup Community Top Hits
       const topPlayed = [...uniquePool]
         .sort((a, b) => (b.playCount || b.play_count || 1) - (a.playCount || a.play_count || 1))
         .slice(0, 30);
@@ -582,7 +554,7 @@ export default function LibraryScreen() {
         tracks: topPlayed,
       });
 
-      // 5. Personal Listening Rotation (if user has played tracks)
+      // 2. Personal Listening Rotation (if user has played tracks)
       if (mergedHistory.length >= 2) {
         const userTracks = [...mergedHistory].map(cleanTrackArtwork).slice(0, 25);
         const userArt = getFirstTrackArt(userTracks);
@@ -618,6 +590,7 @@ export default function LibraryScreen() {
     // 1. User's Collaborative & Blend Playlists
     for (const cp of collabPlaylists || []) {
       const id = String(cp.id || cp.collabId || "");
+      if (isBlockedPlaylist(id, cp.name)) continue;
       if (id && !seen.has(id)) {
         seen.add(id);
         if (cp.originalPlaylistId) collabOriginalIds.add(String(cp.originalPlaylistId));
@@ -630,6 +603,7 @@ export default function LibraryScreen() {
     for (const p of rtdbPlaylists || []) {
       const id = String(p.id || p.collabId || "");
       const nameKey = String(p.name || "").trim().toLowerCase();
+      if (isBlockedPlaylist(id, p.name)) continue;
       if (id && !seen.has(id) && !collabOriginalIds.has(id) && (!nameKey || !collabNames.has(nameKey))) {
         seen.add(id);
         result.push({ ...p, isPersonal: true });
@@ -640,6 +614,7 @@ export default function LibraryScreen() {
     for (const ap of historyPlaylists || []) {
       const id = String(ap.id || ap.collabId || "");
       const nameKey = String(ap.name || "").trim().toLowerCase();
+      if (isBlockedPlaylist(id, ap.name)) continue;
       if (!id || seen.has(id) || (nameKey && seen.has(nameKey))) continue;
       seen.add(id);
       if (nameKey) seen.add(nameKey);
@@ -650,6 +625,7 @@ export default function LibraryScreen() {
     for (const pub of publicPlaylists || []) {
       const id = String(pub.id || pub.collabId || "");
       const nameKey = String(pub.name || "").trim().toLowerCase();
+      if (isBlockedPlaylist(id, pub.name)) continue;
       if (!id || seen.has(id) || (nameKey && seen.has(nameKey))) continue;
       seen.add(id);
       if (nameKey) seen.add(nameKey);
