@@ -622,7 +622,7 @@ export default function LibraryScreen() {
         seen.add(id);
         if (cp.originalPlaylistId) collabOriginalIds.add(String(cp.originalPlaylistId));
         if (cp.name) collabNames.add(String(cp.name).trim().toLowerCase());
-        result.push({ ...cp, isCollab: true });
+        result.push({ ...cp, isCollab: true, is_collab: true, type: "collab" });
       }
     }
 
@@ -632,7 +632,7 @@ export default function LibraryScreen() {
       const nameKey = String(p.name || "").trim().toLowerCase();
       if (id && !seen.has(id) && !collabOriginalIds.has(id) && (!nameKey || !collabNames.has(nameKey))) {
         seen.add(id);
-        result.push(p);
+        result.push({ ...p, isPersonal: true });
       }
     }
 
@@ -643,7 +643,7 @@ export default function LibraryScreen() {
       if (!id || seen.has(id) || (nameKey && seen.has(nameKey))) continue;
       seen.add(id);
       if (nameKey) seen.add(nameKey);
-      result.push({ ...ap, isPublic: true, is_public: true });
+      result.push({ ...ap, isPublic: true, is_public: true, type: "public" });
     }
 
     // 4. Other Public Playlists (from RTDB / API)
@@ -681,6 +681,7 @@ export default function LibraryScreen() {
         coverImage: pubCover,
         isPublic: true,
         is_public: true,
+        type: "public",
       });
     }
 
@@ -692,11 +693,21 @@ export default function LibraryScreen() {
     let list = [...rawPlaylists];
 
     if (playlistSubFilter === "my") {
-      list = list.filter((p) => !p.isPublic && !p.isCollab);
+      list = list.filter((p) => {
+        const isPub = Boolean(p.isPublic || p.is_public || p.type === "public");
+        const isCol = Boolean(p.isCollab || p.is_collab || p.type === "collab");
+        return !isPub && !isCol;
+      });
     } else if (playlistSubFilter === "public") {
-      list = list.filter((p) => p.isPublic && !p.isCollab);
+      list = list.filter((p) => {
+        const isPub = Boolean(p.isPublic || p.is_public || p.type === "public");
+        const isCol = Boolean(p.isCollab || p.is_collab || p.type === "collab");
+        return isPub && !isCol;
+      });
     } else if (playlistSubFilter === "collab") {
-      list = list.filter((p) => p.isCollab);
+      list = list.filter((p) => {
+        return Boolean(p.isCollab || p.is_collab || p.type === "collab");
+      });
     }
 
     if (activeFolder) {
@@ -726,7 +737,7 @@ export default function LibraryScreen() {
     }
 
     return list;
-  }, [rawPlaylists, activeFolder, searchQuery, sortBy]);
+  }, [rawPlaylists, playlistSubFilter, activeFolder, searchQuery, sortBy]);
 
   // Liked Songs
   const favorites = useMemo(() => {
@@ -1398,7 +1409,15 @@ export default function LibraryScreen() {
                     <Ionicons name="folder-open-outline" size={44} color={colors.textMuted} />
                     <Text style={styles.emptyText}>No playlists found</Text>
                     <Text style={styles.emptySub}>
-                      {searchQuery ? "Try a different search query" : "Tap '+' at the top right to create your first playlist!"}
+                      {searchQuery
+                        ? "Try a different search query"
+                        : playlistSubFilter === "my"
+                        ? "You haven't created any playlists yet. Tap '+' at the top right to create one!"
+                        : playlistSubFilter === "collab"
+                        ? "No collaborative playlists found. Tap '+' to create a collaborative blend with friends!"
+                        : playlistSubFilter === "public"
+                        ? "No public playlists found right now."
+                        : "Tap '+' at the top right to create your first playlist!"}
                     </Text>
                   </View>
                 }

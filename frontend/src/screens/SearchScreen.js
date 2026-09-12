@@ -409,46 +409,32 @@ export default function SearchScreen() {
     };
   }, [currentUser]);
 
-  // Load recent items from localStorage / Firebase
+  // Load recent items from localStorage (Tracks played from search ONLY)
   useEffect(() => {
     let localList = [];
     if (typeof window !== "undefined" && window.localStorage) {
       try {
         const stored = window.localStorage.getItem(LOCAL_RECENTS_KEY);
         if (stored) {
-          localList = JSON.parse(stored);
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            // Keep ONLY valid songs played from search, NEVER raw typing queries
+            localList = parsed.filter(
+              (item) => item && !item.query && item.type !== "query" && (item.videoId || item.video_id || item.id)
+            );
+            // Re-write sanitized list to localStorage to remove all legacy typing entries
+            window.localStorage.setItem(LOCAL_RECENTS_KEY, JSON.stringify(localList));
+          }
         }
       } catch (_) {}
     }
 
+    setRecentItems(localList);
+
+    // Purge legacy raw typing history from user's RTDB account
     const uid = currentUser?.uid || auth.currentUser?.uid;
     if (uid) {
-      getRecentSearches(uid)
-        .then((items) => {
-          if (Array.isArray(items) && items.length > 0) {
-            const queryItems = items.map((q) => (typeof q === "string" ? { type: "query", query: q } : { type: "query", ...q }));
-            // Merge query items with track items
-            const seen = new Set();
-            const merged = [];
-            [...localList, ...queryItems].forEach((it) => {
-              const k = it.videoId || it.video_id || it.id || it.query;
-              if (k && !seen.has(k)) {
-                seen.add(k);
-                merged.push(it);
-              }
-            });
-            setRecentItems(merged);
-            return;
-          }
-          if (localList.length > 0) {
-            setRecentItems(localList);
-          }
-        })
-        .catch(() => {
-          if (localList.length > 0) setRecentItems(localList);
-        });
-    } else if (localList.length > 0) {
-      setRecentItems(localList);
+      clearRecentSearches(uid).catch(() => {});
     }
   }, [currentUser]);
 
@@ -472,10 +458,13 @@ export default function SearchScreen() {
 
   // Sync recent items back to localStorage
   const persistRecentItems = (items) => {
-    setRecentItems(items);
+    const sanitized = (items || []).filter(
+      (item) => item && !item.query && item.type !== "query" && (item.videoId || item.video_id || item.id)
+    );
+    setRecentItems(sanitized);
     if (typeof window !== "undefined" && window.localStorage) {
       try {
-        window.localStorage.setItem(LOCAL_RECENTS_KEY, JSON.stringify(items.slice(0, 20)));
+        window.localStorage.setItem(LOCAL_RECENTS_KEY, JSON.stringify(sanitized.slice(0, 20)));
       } catch (_) {}
     }
   };
@@ -483,8 +472,14 @@ export default function SearchScreen() {
   const addTrackToRecent = (track) => {
     if (!track) return;
     const trackId = track.videoId || track.video_id || track.id;
+    if (!trackId) return;
+
     setRecentItems((prev) => {
-      const filtered = prev.filter((item) => (item.videoId || item.video_id || item.id) !== trackId);
+      const filtered = (prev || []).filter((item) => {
+        if (!item || item.query || item.type === "query") return false;
+        const id = item.videoId || item.video_id || item.id;
+        return id !== trackId;
+      });
       const updated = [{ ...track, type: "track" }, ...filtered].slice(0, 20);
       if (typeof window !== "undefined" && window.localStorage) {
         try {
@@ -496,19 +491,13 @@ export default function SearchScreen() {
   };
 
   const handleRemoveRecentItem = (itemToRemove) => {
-    const targetKey = itemToRemove.videoId || itemToRemove.video_id || itemToRemove.id || itemToRemove.query;
+    const targetKey = itemToRemove?.videoId || itemToRemove?.video_id || itemToRemove?.id;
+    if (!targetKey) return;
     const updated = recentItems.filter((item) => {
-      const k = item.videoId || item.video_id || item.id || item.query;
+      const k = item?.videoId || item?.video_id || item?.id;
       return k !== targetKey;
     });
     persistRecentItems(updated);
-
-    if (itemToRemove.query) {
-      const uid = currentUser?.uid || auth.currentUser?.uid;
-      if (uid) {
-        removeRecentSearch(uid, itemToRemove.query).catch(() => {});
-      }
-    }
   };
 
   const handleClearAllRecent = () => {
@@ -700,11 +689,6 @@ export default function SearchScreen() {
         }
 
         setHasSearched(true);
-
-        const uid = auth.currentUser?.uid;
-        if (uid && trimmed) {
-          addRecentSearch(uid, trimmed).catch(() => {});
-        }
       } catch (err) {
         console.warn("Search error:", err);
       } finally {
@@ -793,11 +777,12 @@ export default function SearchScreen() {
   const isQueryActive = Boolean(query.trim());
   const topArtist = artistResults && artistResults.length > 0 ? artistResults[0] : null;
 
-  // Effective recent items for Screenshot 2 display
-  const displayRecents =
-    recentItems.length > 0
-      ? recentItems
-      : effectiveRecentlyPlayed.slice(0, 6).map((t) => ({ ...t, type: "track" }));
+  // Effective recent items: strictly tracks played from search
+  const displayRecents = useMemo(() => {
+    return (recentItems || []).filter(
+      (item) => item && !item.query && item.type !== "query" && (item.videoId || item.video_id || item.id)
+    );
+  }, [recentItems]);
 
   return (
     <View style={styles.container}>

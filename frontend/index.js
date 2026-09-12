@@ -15,28 +15,35 @@ if (typeof window !== 'undefined') {
   var SUPPRESSED_ERRORS = [
     'startTime', 'reportAllChanges', 'beforeinstallprompt', 'Banner not shown',
     'powerPreference', 'requestAdapter', '369219127', 'doubleclick', 'googleads',
-    'postMessage', 'DOMWindow', 'target origin', 'www-widgetapi'
+    'postMessage', 'DOMWindow', 'target origin', 'www-widgetapi',
+    'Cannot read properties of undefined'
   ];
   function isSuppressed(val) {
     try {
-      var s = String((val && val.message) || val || '');
+      var s = String(
+        (val && (val.message || (val.error && val.error.message))) ||
+        (val && val.reason && (val.reason.message || String(val.reason))) ||
+        val || ''
+      );
       return SUPPRESSED_ERRORS.some(function(term) { return s.indexOf(term) !== -1; });
     } catch (_) { return false; }
   }
   window.addEventListener('error', function(e) {
     if (isSuppressed(e)) {
       e.preventDefault();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       return;
     }
     console.warn('[GlobalError]', e?.message || e);
-  });
+  }, true);
   window.addEventListener('unhandledrejection', function(e) {
     if (isSuppressed(e && e.reason)) {
       e.preventDefault();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       return;
     }
     console.warn('[GlobalUnhandled]', e?.reason?.message || e?.reason);
-  });
+  }, true);
 }
 
 // Now it is safe to load App; all console noise is already suppressed.

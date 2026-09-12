@@ -154,7 +154,8 @@
           'Banner not shown', 'beforeinstallprompt', 'powerPreference', 'requestAdapter',
           '369219127', 'postMessage', 'DOMWindow', 'target origin', 'www-widgetapi',
           'Failed to convert value to \'Response\'', 'FetchEvent for', 'network error response',
-          'doubleclick', 'googleads', 'ytimg', 'innertube', 'startTime', 'reportAllChanges'
+          'doubleclick', 'googleads', 'ytimg', 'innertube', 'startTime', 'reportAllChanges',
+          'Cannot read properties of undefined', 'reading \'startTime\''
         ];
         function shouldIgnore(args) {
           try {
@@ -210,6 +211,24 @@
           }
         }, true);
         if (typeof window !== 'undefined') {
+          if (typeof window.PerformanceObserver === 'function') {
+            var _origPO = window.PerformanceObserver;
+            window.PerformanceObserver = function(cb) {
+              return new _origPO(function(list, observer) {
+                try {
+                  return cb(list, observer);
+                } catch (err) {
+                  var s = (err && (err.message || err.stack)) ? (err.message + ' ' + (err.stack || '')) : String(err || '');
+                  if (IGNORE.some(function(term) { return s.indexOf(term) !== -1; })) {
+                    return;
+                  }
+                  throw err;
+                }
+              });
+            };
+            window.PerformanceObserver.prototype = _origPO.prototype;
+            window.PerformanceObserver.supportedEntryTypes = _origPO.supportedEntryTypes;
+          }
           if (typeof window.requestIdleCallback === 'function') {
             var _origRIC = window.requestIdleCallback;
             window.requestIdleCallback = function(cb, opts) {
