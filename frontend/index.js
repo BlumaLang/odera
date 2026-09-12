@@ -29,6 +29,14 @@ if (typeof window !== 'undefined') {
     } catch (_) { return false; }
   }
   window.addEventListener('error', function(e) {
+    // Ignore resource/media loading errors on DOM elements (e.g. <audio>, <img>, <video>)
+    if (
+      !e ||
+      (typeof ErrorEvent !== 'undefined' && e instanceof Event && !(e instanceof ErrorEvent)) ||
+      (e.target && e.target !== window && (e.target.nodeType || e.target.tagName || e.target.nodeName))
+    ) {
+      return;
+    }
     if (isSuppressed(e)) {
       e.preventDefault();
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();

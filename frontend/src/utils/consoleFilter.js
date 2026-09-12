@@ -33,10 +33,15 @@ var IGNORED = [
   'Invalid style property',
   'Invalid style property of "outline"',
   'outline',
+  'staytup-audio-player',
 ];
 function bad(a){
   try{
     var t=Array.prototype.slice.call(a).map(function(x){
+      if (x && (x.target || x.srcElement)) {
+        var elem = x.target || x.srcElement;
+        return (elem.id || elem.tagName || '') + ' ' + (x.message || '') + ' ' + (x.type || '');
+      }
       return typeof x==='string'?x:(x&&typeof x==='object'?(x.message||'')+(x.stack||''):String(x||''));
     }).join(' ');
     return IGNORED.some(function(p){return t.indexOf(p)!==-1;});
@@ -66,6 +71,9 @@ if(typeof console!=='undefined'){
       return false;
     };
     window.addEventListener('error',function(e){
+      if (!e || (typeof ErrorEvent !== 'undefined' && e instanceof Event && !(e instanceof ErrorEvent)) || (e.target && e.target !== window && (e.target.nodeType || e.target.tagName))) {
+        return;
+      }
       var msg=(e&&e.message)||'';
       var src=(e&&e.filename)||'';
       var combined=msg+' '+src;

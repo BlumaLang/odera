@@ -155,11 +155,15 @@
           '369219127', 'postMessage', 'DOMWindow', 'target origin', 'www-widgetapi',
           'Failed to convert value to \'Response\'', 'FetchEvent for', 'network error response',
           'doubleclick', 'googleads', 'ytimg', 'innertube', 'startTime', 'reportAllChanges',
-          'Cannot read properties of undefined', 'reading \'startTime\''
+          'Cannot read properties of undefined', 'reading \'startTime\'', 'staytup-audio-player'
         ];
         function shouldIgnore(args) {
           try {
             var str = Array.prototype.slice.call(args).map(function(x) {
+              if (x && (x.target || x.srcElement)) {
+                var elem = x.target || x.srcElement;
+                return (elem.id || elem.tagName || '') + ' ' + (x.message || '') + ' ' + (x.type || '');
+              }
               return typeof x === 'string' ? x : (x && typeof x === 'object' ? (x.message || '') + ' ' + (x.stack || '') : String(x || ''));
             }).join(' ');
             return IGNORE.some(function(term) { return str.indexOf(term) !== -1; });
@@ -183,6 +187,9 @@
           return false;
         };
         window.addEventListener('error', function(e) {
+          if (!e || (typeof ErrorEvent !== 'undefined' && e instanceof Event && !(e instanceof ErrorEvent)) || (e.target && e.target !== window && (e.target.nodeType || e.target.tagName))) {
+            return;
+          }
           var m = ((e && e.message) || '') + ' ' + ((e && e.filename) || '') + ' ' + ((e && e.error && e.error.stack) || '');
           if (IGNORE.some(function(term) { return m.indexOf(term) !== -1; })) {
             e.preventDefault();
@@ -362,6 +369,6 @@
         }, 1200);
       })();
     </script>
-  <script src="/_expo/static/js/web/index-279dd922c93c6dd8dbd7ef90661af54a.js" defer></script>
+  <script src="/_expo/static/js/web/index-8b79b3a27e9aab61936d02c246aad0e0.js" defer></script>
 </body>
 </html>
