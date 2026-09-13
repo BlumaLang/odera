@@ -42,6 +42,7 @@ function SongCard({
   showRank = true,
   index,
   onAddToPlaylist,
+  showRowAddButton = true,
   showPlayButton = true,
   showDuration = true,
   onRemove,
@@ -530,7 +531,7 @@ function SongCard({
           {showDuration && formatCardDuration(track) ? (
             <Text style={styles.durationText}>{formatCardDuration(track)}</Text>
           ) : null}
-          {onAddToPlaylist && (
+          {onAddToPlaylist && showRowAddButton && (
             <TouchableOpacity
               style={styles.actionIconBtn}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}

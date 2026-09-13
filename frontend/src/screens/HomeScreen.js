@@ -342,84 +342,82 @@ export default function HomeScreen({ onNavigate } = {}) {
     try {
       setError(null);
 
-      // 1. Try immediate load from Firebase Realtime Database (only if purely Indian content)
-      if (!forceRefresh) {
-        const rtdbFeed = await withTimeout(
-          getTrendingFeedRTDB(),
-          3500,
-          "Cached feed request timed out"
+      const sanitizeSections = (sections) => {
+        if (!Array.isArray(sections)) return [];
+        return sections.filter(
+          (s) => s.id !== "trending_global" &&
+                 s.id !== "trending_india" &&
+                 !s.id?.startsWith("mood_") &&
+                 !s.id?.includes("morning") &&
+                 !s.id?.includes("chill") &&
+                 !s.title?.toLowerCase().includes("global") &&
+                 !s.title?.toLowerCase().includes("youtube india") &&
+                 !s.title?.toLowerCase().includes("morning energy") &&
+                 !s.title?.toLowerCase().includes("chill vibes")
         );
-        const hasInvalidSection = rtdbFeed?.sections?.some(
-          (s) => s.id === "trending_global" ||
-                 s.id === "trending_india" ||
-                 s.id?.startsWith("mood_") ||
-                 s.id?.includes("morning") ||
-                 s.id?.includes("chill") ||
-                 s.title?.toLowerCase().includes("global") ||
-                 s.title?.toLowerCase().includes("youtube india") ||
-                 s.title?.toLowerCase().includes("morning energy") ||
-                 s.title?.toLowerCase().includes("chill vibes")
-        );
-        if (rtdbFeed && Array.isArray(rtdbFeed.sections) && rtdbFeed.sections.length > 0 && !hasInvalidSection) {
-          feedRef.current = rtdbFeed;
-          setFeed(rtdbFeed);
-          setIsLoading(false);
-          // If RTDB data was updated in the last 4 hours, use it immediately
-          const ageMs = rtdbFeed.lastUpdated
-            ? Date.now() - new Date(rtdbFeed.lastUpdated).getTime()
-            : Infinity;
-          if (ageMs < 4 * 60 * 60 * 1000) {
-            return;
-          }
-        }
+      };
+
+      // 1. If we already have feed cached in memory/localStorage, paint immediately (0ms delay)
+      if (feedRef.current && Array.isArray(feedRef.current.sections) && feedRef.current.sections.length > 0) {
+        setIsLoading(false);
       }
 
-      if (!forceRefresh && !feedRef.current) setIsLoading(true);
-
-      // 2. Fetch fresh 3-month trending Indian feed from backend (zero seed data)
-      const data = await withTimeout(
+      // 2. Query fresh feed from Backend API and RTDB in parallel (fastest paint wins)
+      const fetchApiPromise = withTimeout(
         api.getHomeFeed(undefined, forceRefresh),
-        7500,
-        "Latest feed request timed out"
-      );
-      if (data && Array.isArray(data.sections) && data.sections.length > 0) {
-        // Ensure only clean Indian sections within 3-month fresh range, removing global, trending_india, and mood sections
-        const cleanIndianData = {
-          ...data,
-          sections: data.sections.filter(
-            (s) => s.id !== "trending_global" &&
-                   s.id !== "trending_india" &&
-                   !s.id?.startsWith("mood_") &&
-                   !s.id?.includes("morning") &&
-                   !s.id?.includes("chill") &&
-                   !s.title?.toLowerCase().includes("global") &&
-                   !s.title?.toLowerCase().includes("youtube india") &&
-                   !s.title?.toLowerCase().includes("morning energy") &&
-                   !s.title?.toLowerCase().includes("chill vibes")
-          ),
-        };
-        feedRef.current = cleanIndianData;
-        setFeed(cleanIndianData);
-        if (typeof window !== "undefined") {
-          try { window.localStorage?.setItem("@staytup_cached_home_feed", JSON.stringify(cleanIndianData)); } catch (_) {}
+        5500,
+        "Feed API timed out"
+      ).then((data) => {
+        const clean = sanitizeSections(data?.sections);
+        return clean.length > 0 ? { ...data, sections: clean } : null;
+      }).catch(() => null);
+
+      const fetchRtdbPromise = (!forceRefresh && !feedRef.current)
+        ? withTimeout(getTrendingFeedRTDB(), 1800, "RTDB timed out").then((rtdb) => {
+            const clean = sanitizeSections(rtdb?.sections);
+            return clean.length > 0 ? { ...rtdb, sections: clean } : null;
+          }).catch(() => null)
+        : Promise.resolve(null);
+
+      let resolved = false;
+      const onFirstData = (firstFeed) => {
+        if (firstFeed && !resolved) {
+          resolved = true;
+          feedRef.current = firstFeed;
+          setFeed(firstFeed);
+          setIsLoading(false);
         }
-        // Persist fresh Indian feed to Firebase Realtime Database
-        saveTrendingFeedRTDB(cleanIndianData);
+      };
+
+      // Race for fastest render
+      Promise.race([
+        fetchApiPromise.then((f) => { if (f) onFirstData(f); return f; }),
+        fetchRtdbPromise.then((f) => { if (f) onFirstData(f); return f; }),
+      ]);
+
+      const apiFeed = await fetchApiPromise;
+      if (apiFeed && Array.isArray(apiFeed.sections) && apiFeed.sections.length > 0) {
+        feedRef.current = apiFeed;
+        setFeed(apiFeed);
+        if (typeof window !== "undefined") {
+          try {
+            window.localStorage?.setItem("@staytup_cached_home_feed", JSON.stringify(apiFeed));
+          } catch (_) {}
+        }
+        saveTrendingFeedRTDB(apiFeed);
+      } else if (!feedRef.current) {
+        const rtdbFallback = await fetchRtdbPromise;
+        if (rtdbFallback && Array.isArray(rtdbFallback.sections) && rtdbFallback.sections.length > 0) {
+          feedRef.current = rtdbFallback;
+          setFeed(rtdbFallback);
+        } else {
+          setError("Unable to load latest trending feed.");
+        }
       }
     } catch (err) {
       console.warn("Error fetching feed:", err);
       if (!feedRef.current) {
-        const rtdbFeed = await withTimeout(
-          getTrendingFeedRTDB(),
-          2000,
-          "Cached feed request timed out"
-        ).catch(() => null);
-        if (rtdbFeed && Array.isArray(rtdbFeed.sections) && rtdbFeed.sections.length > 0) {
-          feedRef.current = rtdbFeed;
-          setFeed(rtdbFeed);
-        } else {
-          setError("Unable to load latest trending feed.");
-        }
+        setError("Unable to load latest trending feed.");
       }
     } finally {
       setIsLoading(false);

@@ -251,11 +251,27 @@ const AudioProvider = ({ children }) => {
     };
   }, []);
 
-  // Sleep Timer state
-  const [sleepSecondsLeft, setSleepSecondsLeft] = useState(null);
-  const [sleepEndOnTrack, setSleepEndOnTrack] = useState(false);
-  const sleepEndOnTrackRef = useRef(false);
-  const sleepTimerEndAtRef = useRef(null);
+  // Screen WakeLock to prevent mobile browsers from throttling/suspending background playback
+  const wakeLockRef = useRef(null);
+  const requestWakeLock = useCallback(async () => {
+    if (typeof window !== "undefined" && "wakeLock" in navigator && !wakeLockRef.current) {
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+        wakeLockRef.current.addEventListener("release", () => {
+          wakeLockRef.current = null;
+        });
+      } catch (_) {}
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(() => {
+    try {
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    } catch (_) {}
+  }, []);
 
   // Native player reference (expo-av)
   const soundRef = useRef(null);
@@ -390,40 +406,17 @@ const AudioProvider = ({ children }) => {
   queueIndexRef.current = queueIndex;
   isRepeatRef.current = isRepeat;
   isShuffleRef.current = isShuffle;
-  sleepEndOnTrackRef.current = sleepEndOnTrack;
   currentTrackRef.current = currentTrack;
   positionMillisRef.current = positionMillis;
   durationMillisRef.current = durationMillis;
 
-  // Use an absolute deadline rather than subtracting one second per render.
-  // iOS may throttle JavaScript timers while the screen is locked; comparing
-  // against the clock keeps the timer accurate as soon as playback reports.
-  const stopForSleepTimer = () => {
-    if (Platform.OS === "web" && webAudioRef.current) {
-      webAudioRef.current.pause();
+  useEffect(() => {
+    if (isPlaying) {
+      requestWakeLock();
+    } else {
+      releaseWakeLock();
     }
-    if (soundRef.current) {
-      soundRef.current.pauseAsync().catch(() => {});
-    }
-    setIsPlaying(false);
-    isPlayingRef.current = false;
-    updateMediaSessionPlaybackState(false);
-    sleepTimerEndAtRef.current = null;
-    setSleepSecondsLeft(null);
-    setSleepEndOnTrack(false);
-  };
-
-  const refreshSleepTimer = () => {
-    const endAt = sleepTimerEndAtRef.current;
-    if (!endAt) return false;
-    const remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
-    if (remaining <= 0) {
-      stopForSleepTimer();
-      return true;
-    }
-    setSleepSecondsLeft((previous) => (previous === remaining ? previous : remaining));
-    return false;
-  };
+  }, [isPlaying, requestWakeLock, releaseWakeLock]);
 
   // MediaSession API helper: renders high-res 512x512 album banner on OS lock screens & notification panels
   const setupMediaSessionHandlers = useCallback(() => {
@@ -704,7 +697,6 @@ const AudioProvider = ({ children }) => {
 
     const onTimeUpdate = () => {
       if (!audio || !audio.src || audio.src === "" || audio.src.startsWith("data:") || audio.src === window.location.href) return;
-      if (refreshSleepTimer()) return;
       const curSec = audio.currentTime || 0;
       const durSec = audio.duration || 0;
       const curMs = Math.round(curSec * 1000);
@@ -783,13 +775,6 @@ const AudioProvider = ({ children }) => {
 
     const onEnded = () => {
       if (advancingRef.current) return;
-      if (sleepEndOnTrackRef.current) {
-        setSleepEndOnTrack(false);
-        setIsPlaying(false);
-        isPlayingRef.current = false;
-        updateMediaSessionPlaybackState(false);
-        return;
-      }
       if (isRepeatRef.current) {
         audio.currentTime = 0;
         audio.play().catch(() => {});
@@ -1122,7 +1107,6 @@ const AudioProvider = ({ children }) => {
 
   // Update playback status handler for native expo-av
   const onPlaybackStatusUpdate = (status) => {
-    if (refreshSleepTimer()) return;
     if (!status.isLoaded) {
       if (status.error) {
         console.error(`Native audio playback error: ${status.error}`);
@@ -1179,14 +1163,6 @@ const AudioProvider = ({ children }) => {
 
     if (status.didJustFinish && !status.isLooping) {
       if (advancingRef.current) return;
-      if (sleepEndOnTrackRef.current) {
-        setSleepEndOnTrack(false);
-        setIsPlaying(false);
-        isPlayingRef.current = false;
-        soundRef.current?.pauseAsync();
-        updateMediaSessionPlaybackState(false);
-        return;
-      }
       if (isRepeatRef.current) {
         seekTo(0);
         soundRef.current?.playAsync();
@@ -1194,40 +1170,6 @@ const AudioProvider = ({ children }) => {
         if (playNextRef.current) playNextRef.current();
       }
     }
-  };
-
-  // Sleep timer countdown
-  useEffect(() => {
-    if (sleepSecondsLeft === null) return;
-    if (refreshSleepTimer()) return;
-    const timer = setTimeout(() => {
-      refreshSleepTimer();
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [sleepSecondsLeft]);
-
-  const setSleepTimerMinutes = (minutes) => {
-    setSleepEndOnTrack(false);
-    if (minutes === null) {
-      sleepTimerEndAtRef.current = null;
-      setSleepSecondsLeft(null);
-      return;
-    }
-    const seconds = Math.max(1, Math.round(Number(minutes) * 60));
-    sleepTimerEndAtRef.current = Date.now() + seconds * 1000;
-    setSleepSecondsLeft(seconds);
-  };
-
-  const setSleepEndOfTrackMode = () => {
-    sleepTimerEndAtRef.current = null;
-    setSleepSecondsLeft(null);
-    setSleepEndOnTrack(true);
-  };
-
-  const cancelSleepTimer = () => {
-    sleepTimerEndAtRef.current = null;
-    setSleepSecondsLeft(null);
-    setSleepEndOnTrack(false);
   };
 
   // ─── Song Title Root Normalizer & Similarity Checker ──
@@ -1716,11 +1658,11 @@ const AudioProvider = ({ children }) => {
   };
 
 
-  // Pre-resolve stream URLs for upcoming tracks so track transitions in background/PWA
+  // Pre-resolve stream URLs for upcoming tracks immediately so track transitions in background/PWA
   // happen SYNCHRONOUSLY with 0ms gap — preventing iOS & Android from muting background audio.
   const prefetchUpcomingStreams = (q, currentIndex) => {
     if (!q || !Array.isArray(q) || q.length === 0) return;
-    const targets = [currentIndex + 1, currentIndex + 2];
+    const targets = [currentIndex + 1, currentIndex + 2, currentIndex + 3];
     if (isRepeatRef.current && currentIndex + 1 >= q.length) {
       targets.push(0);
     }
@@ -1730,26 +1672,23 @@ const AudioProvider = ({ children }) => {
         const tId = t?.videoId || t?.video_id || t?.id;
         const cleanId = String(tId).replace(/^saavn_/, "").trim();
         if (cleanId && !globalStreamCache.has(cleanId)) {
-          const delay = idx === currentIndex + 1 ? 0 : 400 * (idx - currentIndex);
-          setTimeout(() => {
-            api.getStream(cleanId, 1, t.title, t.artist).then((data) => {
-              if (data && data.stream_url) {
-                globalStreamCache.set(cleanId, {
-                  stream_url: data.stream_url,
-                  duration: data.duration,
-                  timestamp: Date.now(),
-                });
-                console.log(`[AudioContext] Pre-cached upcoming stream #${idx}: ${t.title || cleanId}`);
-                if (typeof window !== "undefined" && Platform.OS === "web") {
-                  try {
-                    const preloader = new window.Audio();
-                    preloader.preload = "auto";
-                    preloader.src = data.stream_url;
-                  } catch (_) {}
-                }
+          // Fetch immediately to guarantee stream is cached before background timer throttling kicks in
+          api.getStream(cleanId, 1, t.title, t.artist).then((data) => {
+            if (data && data.stream_url) {
+              globalStreamCache.set(cleanId, {
+                stream_url: data.stream_url,
+                duration: data.duration,
+                timestamp: Date.now(),
+              });
+              if (typeof window !== "undefined" && Platform.OS === "web") {
+                try {
+                  const preloader = new window.Audio();
+                  preloader.preload = "auto";
+                  preloader.src = data.stream_url;
+                } catch (_) {}
               }
-            }).catch(() => {});
-          }, delay);
+            }
+          }).catch(() => {});
         }
       }
     }
@@ -2671,11 +2610,6 @@ const AudioProvider = ({ children }) => {
       toggleShuffle,
       setShuffle,
       setFullPlayerVisible: setIsFullPlayerVisible,
-      sleepSecondsLeft,
-      sleepEndOnTrack,
-      setSleepTimer: setSleepTimerMinutes,
-      setSleepEndOfTrack: setSleepEndOfTrackMode,
-      cancelSleepTimer,
       // Queue management methods
       addToQueue,
       addToPlayNext,
@@ -2713,8 +2647,6 @@ const AudioProvider = ({ children }) => {
       closeDeviceModal,
       errorNotice,
       volume,
-      sleepSecondsLeft,
-      sleepEndOnTrack,
       isQueueOpen,
       queueNotice,
       playbackSession,
@@ -2798,11 +2730,6 @@ const defaultAudioContext = {
   toggleShuffle: () => {},
   setShuffle: () => {},
   setFullPlayerVisible: () => {},
-  sleepSecondsLeft: 0,
-  sleepEndOnTrack: false,
-  setSleepTimer: () => {},
-  setSleepEndOfTrack: () => {},
-  cancelSleepTimer: () => {},
   addToQueue: () => {},
   addToPlayNext: () => {},
   setAsNextTrack: () => {},

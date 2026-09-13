@@ -72,7 +72,7 @@ export default function SplashScreen({ onFinish }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: "#000000",
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
@@ -80,13 +80,16 @@ const styles = StyleSheet.create({
   content: {
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "transparent",
   },
   logoContainer: {
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "transparent",
   },
   staytupLogo: {
     width: 270,
     height: 90,
+    backgroundColor: "transparent",
   },
 });

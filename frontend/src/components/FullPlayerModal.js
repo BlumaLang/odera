@@ -109,11 +109,6 @@ export default function FullPlayerModal() {
     toggleShuffle,
     setFullPlayerVisible,
     playTrack,
-    sleepSecondsLeft,
-    sleepEndOnTrack,
-    setSleepTimer,
-    setSleepEndOfTrack,
-    cancelSleepTimer,
     removeFromQueue,
     clearQueue,
     addToPlayNext,
@@ -161,7 +156,6 @@ export default function FullPlayerModal() {
   const [showLyrics, setShowLyrics] = useState(false);
   const [lyrics, setLyrics] = useState(null);
   const [loadingLyrics, setLoadingLyrics] = useState(false);
-  const [showSleepModal, setShowSleepModal] = useState(false);
   const [progressBarWidth, setProgressBarWidth] = useState(0);
   const [selectedArtistForModal, setSelectedArtistForModal] = useState(null);
   const [showArtistPickerModal, setShowArtistPickerModal] = useState(false);
@@ -317,15 +311,6 @@ export default function FullPlayerModal() {
   }, [showArtistPickerModal]);
 
   useEffect(() => {
-    if (showSleepModal) {
-      return registerBackAction(() => {
-        setShowSleepModal(false);
-        return true;
-      });
-    }
-  }, [showSleepModal]);
-
-  useEffect(() => {
     if (showAddToPlaylist) {
       return registerBackAction(() => {
         setShowAddToPlaylist(false);
@@ -410,14 +395,6 @@ export default function FullPlayerModal() {
       setShowQueue(false);
     }
   }, [isFullPlayerVisible]);
-
-  // Format countdown seconds to mm:ss
-  const formatSleep = (s) => {
-    if (s === null || s <= 0) return "0:00";
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return `${m}:${sec < 10 ? "0" : ""}${sec}`;
-  };
 
   // Dynamic device label & icon based on accurate device name (MacBook, Windows, iPhone, iPad, Android)
   const deviceLabel = isRemoteActive ? remoteDevName : (deviceName || (isDesktop ? "Desktop" : isTablet ? "iPad / Tablet" : "Phone"));
@@ -1042,31 +1019,6 @@ export default function FullPlayerModal() {
 
           <View style={styles.desktopTopRightActions}>
             <TouchableOpacity
-              style={styles.desktopSleepBtn}
-              onPress={() => setShowSleepModal(true)}
-              activeOpacity={0.8}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Ionicons
-                name={sleepSecondsLeft !== null || sleepEndOnTrack ? "stopwatch" : "stopwatch-outline"}
-                size={16}
-                color={sleepSecondsLeft !== null || sleepEndOnTrack ? colors.primary : "#FFFFFF"}
-              />
-              <Text
-                style={[
-                  styles.desktopSleepBtnText,
-                  (sleepSecondsLeft !== null || sleepEndOnTrack) && styles.desktopSleepBtnTextActive,
-                ]}
-              >
-                {sleepSecondsLeft !== null
-                  ? formatSleep(sleepSecondsLeft)
-                  : sleepEndOnTrack
-                  ? "End of track"
-                  : "Sleep Timer"}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
               style={[styles.desktopSleepBtn, showQueue && { borderColor: colors.primary }]}
               onPress={() => setShowQueue(!showQueue)}
               activeOpacity={0.8}
@@ -1448,19 +1400,6 @@ export default function FullPlayerModal() {
               >
                 <Ionicons name="play-skip-forward" size={24} color="#FFFFFF" />
               </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setShowSleepModal(true)}
-                style={styles.desktopControlIconBtn}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                accessibilityLabel="Sleep timer"
-              >
-                <Ionicons
-                  name={sleepSecondsLeft !== null || sleepEndOnTrack ? "stopwatch" : "stopwatch-outline"}
-                  size={21}
-                  color={sleepSecondsLeft !== null || sleepEndOnTrack ? colors.primary : "#888888"}
-                />
-              </TouchableOpacity>
             </View>
 
             {/* Right Section: Minimize */}
@@ -1821,18 +1760,6 @@ export default function FullPlayerModal() {
             >
               <Ionicons name="play-skip-forward" size={28} color="#FFFFFF" />
             </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setShowSleepModal(true)}
-              style={styles.controlIcon}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            >
-              <Ionicons
-                name={sleepSecondsLeft !== null ? "moon" : "moon-outline"}
-                size={22}
-                color={sleepSecondsLeft !== null ? colors.primary : "#777777"}
-              />
-            </TouchableOpacity>
           </View>
 
           {/* Bottom Utilities Row (Device Indicator on left, Queue on right) */}
@@ -1896,187 +1823,6 @@ export default function FullPlayerModal() {
 
           {/* Real-time Airbuds Live Reaction Bursts inside Full Player Modal */}
           <LiveReactionOverlay inModal={true} />
-
-        {/* Dedicated Sleep Timer Modal */}
-        <Modal
-          animationType="slide"
-          transparent={true}
-          visible={showSleepModal}
-          onRequestClose={() => setShowSleepModal(false)}
-        >
-          <View style={styles.sleepModalOverlay}>
-            <TouchableOpacity
-              style={StyleSheet.absoluteFill}
-              activeOpacity={1}
-              onPress={() => setShowSleepModal(false)}
-              accessibilityLabel="Close sleep timer"
-            />
-            <View style={styles.sleepModalContent}>
-              {/* Drag handle */}
-              <View style={styles.sleepDragHandle} />
-
-              {/* Header */}
-              <View style={styles.sleepModalHeader}>
-                <Text style={styles.sleepModalTitle}>Sleep Timer</Text>
-              </View>
-
-              {/* Active countdown or status banner if running */}
-              {(sleepSecondsLeft !== null || sleepEndOnTrack) && (
-                <View style={styles.sleepActiveHero}>
-                  <View style={styles.sleepActiveHeroLeft}>
-                    <View style={styles.sleepActivePulseRing}>
-                      <Ionicons
-                        name={sleepEndOnTrack ? "musical-notes" : "hourglass-outline"}
-                        size={18}
-                        color={colors.primary}
-                      />
-                    </View>
-                    <View>
-                      <View style={styles.sleepActiveBadgeRow}>
-                        <View style={styles.sleepActiveGreenDot} />
-                        <Text style={styles.sleepActiveTag}>ACTIVE TIMER</Text>
-                      </View>
-                      <Text style={styles.sleepActiveCountdown}>
-                        {sleepEndOnTrack
-                          ? "End of song"
-                          : formatSleep(sleepSecondsLeft)}
-                      </Text>
-                      <Text style={styles.sleepActiveDesc}>
-                        {sleepEndOnTrack
-                          ? "Stops when current song ends"
-                          : "Remaining until playback stops"}
-                      </Text>
-                    </View>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.sleepCancelBtn}
-                    onPress={() => {
-                      cancelSleepTimer();
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="stop-circle-outline" size={15} color="#FF5C5C" />
-                    <Text style={styles.sleepCancelText}>Turn Off</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {/* Section heading */}
-              <Text style={styles.sleepSectionHeading}>QUICK PRESETS</Text>
-
-              {/* Preset Options Grid */}
-              <View style={styles.sleepGrid}>
-                {[
-                  { mins: 5, label: "5 min", tag: "Power nap" },
-                  { mins: 10, label: "10 min", tag: "Quick rest" },
-                  { mins: 15, label: "15 min", tag: "Short rest" },
-                  { mins: 30, label: "30 min", tag: "Wind down" },
-                  { mins: 45, label: "45 min", tag: "Deep sleep" },
-                  { mins: 60, label: "1 hr", tag: "Full hour" },
-                ].map((item) => {
-                  const isSelected =
-                    sleepSecondsLeft !== null &&
-                    Math.ceil(sleepSecondsLeft / 60) === item.mins;
-                  return (
-                    <TouchableOpacity
-                      key={item.mins}
-                      style={[
-                        styles.sleepGridCard,
-                        isSelected && styles.sleepGridCardActive,
-                      ]}
-                      onPress={() => {
-                        setSleepTimer(item.mins);
-                        setShowSleepModal(false);
-                      }}
-                      activeOpacity={0.75}
-                    >
-                      <View style={styles.sleepGridCardTop}>
-                        <Text
-                          style={[
-                            styles.sleepGridTime,
-                            isSelected && styles.sleepGridTimeActive,
-                          ]}
-                        >
-                          {item.label}
-                        </Text>
-                        {isSelected && (
-                          <Ionicons
-                            name="checkmark-circle"
-                            size={15}
-                            color={colors.primary}
-                          />
-                        )}
-                      </View>
-                      <Text
-                        style={[
-                          styles.sleepGridTag,
-                          isSelected && styles.sleepGridTagActive,
-                        ]}
-                      >
-                        {item.tag}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {/* End of Track Option */}
-              <TouchableOpacity
-                style={[
-                  styles.sleepEndTrackCard,
-                  sleepEndOnTrack && styles.sleepEndTrackCardActive,
-                ]}
-                onPress={() => {
-                  setSleepEndOfTrack();
-                  setShowSleepModal(false);
-                }}
-                activeOpacity={0.75}
-              >
-                <View style={styles.sleepEndTrackLeft}>
-                  <View
-                    style={[
-                      styles.sleepEndTrackIconWrap,
-                      sleepEndOnTrack && styles.sleepEndTrackIconWrapActive,
-                    ]}
-                  >
-                    <Ionicons
-                      name="musical-notes"
-                      size={18}
-                      color={sleepEndOnTrack ? colors.primary : "#AAAAAA"}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      style={[
-                        styles.sleepEndTrackTitle,
-                        sleepEndOnTrack && styles.sleepEndTrackTitleActive,
-                      ]}
-                    >
-                      End of current track
-                    </Text>
-                    <Text style={styles.sleepEndTrackSub}>
-                      Playback will finish this song, then pause
-                    </Text>
-                  </View>
-                </View>
-                {sleepEndOnTrack ? (
-                  <Ionicons
-                    name="checkmark-circle"
-                    size={20}
-                    color={colors.primary}
-                  />
-                ) : (
-                  <Ionicons
-                    name="chevron-forward"
-                    size={16}
-                    color="#555555"
-                  />
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
-
 
         {/* Track Options & Share Modal */}
         <Modal
@@ -2199,37 +1945,6 @@ export default function FullPlayerModal() {
                   <View style={styles.optionsActionTextWrap}>
                     <Text style={styles.optionsActionTitle}>View Artist</Text>
                     <Text style={styles.optionsActionSub}>{currentTrack?.artist || "Explore artist discography"}</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color="#666666" />
-                </TouchableOpacity>
-
-                {/* Sleep Timer Action */}
-                <TouchableOpacity
-                  style={styles.optionsActionRow}
-                  onPress={() => {
-                    setShowTrackOptionsModal(false);
-                    setShowSleepModal(true);
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.optionsActionIconWrap}>
-                    <Ionicons
-                      name={sleepSecondsLeft !== null || sleepEndOnTrack ? "stopwatch" : "stopwatch-outline"}
-                      size={22}
-                      color={sleepSecondsLeft !== null || sleepEndOnTrack ? colors.primary : "#FFFFFF"}
-                    />
-                  </View>
-                  <View style={styles.optionsActionTextWrap}>
-                    <Text style={[styles.optionsActionTitle, (sleepSecondsLeft !== null || sleepEndOnTrack) && { color: colors.primary }]}>
-                      Sleep Timer
-                    </Text>
-                    <Text style={styles.optionsActionSub}>
-                      {sleepSecondsLeft !== null
-                        ? `Stop playback in ${formatSleep(sleepSecondsLeft)}`
-                        : sleepEndOnTrack
-                        ? "Stop playback at end of track"
-                        : "Turn off audio automatically"}
-                    </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color="#666666" />
                 </TouchableOpacity>
@@ -3025,243 +2740,6 @@ const styles = StyleSheet.create({
     height: 6,
     borderRadius: 3,
     backgroundColor: colors.primary,
-  },
-
-  // Dedicated Sleep Timer Modal Styles (Sleek & Clean Bottom Sheet)
-  sleepModalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.78)",
-    justifyContent: "flex-end",
-    alignItems: "center",
-  },
-  sleepModalContent: {
-    backgroundColor: "#0D0D0D",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.08)",
-    borderBottomWidth: 0,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: Platform.OS === "web" ? 28 : 40,
-    width: "100%",
-    maxWidth: 520,
-    alignSelf: "center",
-  },
-  sleepDragHandle: {
-    width: 38,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "rgba(255, 255, 255, 0.22)",
-    alignSelf: "center",
-    marginBottom: 16,
-  },
-  sleepModalHeader: {
-    marginBottom: 18,
-    paddingHorizontal: 2,
-  },
-  sleepModalTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  sleepMoonBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(167, 139, 250, 0.12)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sleepModalTitle: {
-    fontFamily: fonts.bold,
-    fontSize: 20,
-    color: "#FFFFFF",
-  },
-  sleepModalSubtitle: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: "#8E8E93",
-    marginTop: 2,
-  },
-  sleepModalClose: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sleepActiveHero: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "rgba(29, 185, 84, 0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.3)",
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 18,
-  },
-  sleepActiveHeroLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    flex: 1,
-  },
-  sleepActivePulseRing: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(29, 185, 84, 0.18)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sleepActiveBadgeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    marginBottom: 2,
-  },
-  sleepActiveGreenDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.primary,
-  },
-  sleepActiveTag: {
-    fontFamily: fonts.bold,
-    fontSize: 10,
-    color: colors.primary,
-    letterSpacing: 0.8,
-  },
-  sleepActiveCountdown: {
-    fontFamily: fonts.bold,
-    fontSize: 22,
-    color: "#FFFFFF",
-    letterSpacing: 0.5,
-  },
-  sleepActiveDesc: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: "#AAAAAA",
-    marginTop: 1,
-  },
-  sleepCancelBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: "rgba(255, 77, 77, 0.12)",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "rgba(255, 77, 77, 0.28)",
-  },
-  sleepCancelText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 12,
-    color: "#FF5C5C",
-  },
-  sleepSectionHeading: {
-    fontFamily: fonts.semiBold,
-    fontSize: 11,
-    color: "#666666",
-    letterSpacing: 1,
-    marginBottom: 10,
-    marginLeft: 2,
-  },
-  sleepGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginBottom: 14,
-  },
-  sleepGridCard: {
-    flexBasis: "31%",
-    flexGrow: 1,
-    backgroundColor: "#161616",
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.06)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sleepGridCardActive: {
-    backgroundColor: "rgba(29, 185, 84, 0.12)",
-    borderColor: colors.primary,
-  },
-  sleepGridCardTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-    marginBottom: 3,
-  },
-  sleepGridTime: {
-    fontFamily: fonts.bold,
-    fontSize: 15,
-    color: "#FFFFFF",
-  },
-  sleepGridTimeActive: {
-    color: colors.primary,
-  },
-  sleepGridTag: {
-    fontFamily: fonts.medium,
-    fontSize: 10,
-    color: "#777777",
-  },
-  sleepGridTagActive: {
-    color: "#A0E8B8",
-  },
-  sleepEndTrackCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#161616",
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.06)",
-  },
-  sleepEndTrackCardActive: {
-    backgroundColor: "rgba(29, 185, 84, 0.12)",
-    borderColor: colors.primary,
-  },
-  sleepEndTrackLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    flex: 1,
-  },
-  sleepEndTrackIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: "rgba(255, 255, 255, 0.06)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sleepEndTrackIconWrapActive: {
-    backgroundColor: "rgba(29, 185, 84, 0.18)",
-  },
-  sleepEndTrackTitle: {
-    fontFamily: fonts.semiBold,
-    fontSize: 14,
-    color: "#FFFFFF",
-  },
-  sleepEndTrackTitleActive: {
-    color: colors.primary,
-    fontFamily: fonts.bold,
-  },
-  sleepEndTrackSub: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: "#777777",
-    marginTop: 2,
   },
 
   // Lyrics Card Styles (larger font sizes)

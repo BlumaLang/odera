@@ -1458,6 +1458,7 @@ export default function PlaylistModal({
                         freezeScrollPosition();
                         setAddToPlaylistTrack(t);
                       }}
+                      showRowAddButton={false}
                     />
                   </View>
 

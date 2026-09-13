@@ -394,11 +394,10 @@ export default function ActiveDevicesModal({ visible, onClose }) {
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.72)",
+    backgroundColor: "rgba(0, 0, 0, 0.78)",
     justifyContent: "flex-end",
     ...(Platform.OS === "web"
       ? {
-          backdropFilter: "blur(8px)",
           cursor: "default",
           alignItems: "center",
         }
