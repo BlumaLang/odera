@@ -175,27 +175,42 @@ export default function AlbumModal({ visible, onClose, album, albumId }) {
             ListHeaderComponent={
               <View style={[styles.heroWrap, (isDesktop || isTablet) && styles.desktopHeroWrap]}>
                 {coverUrl ? (
-                  <Image source={{ uri: highResCover }} style={styles.heroArtwork} />
+                  <Image
+                    source={{ uri: highResCover }}
+                    style={[styles.heroArtwork, (isDesktop || isTablet) && styles.desktopHeroArtwork]}
+                  />
                 ) : (
-                  <View style={[styles.heroArtwork, styles.artworkFallback]}>
+                  <View
+                    style={[
+                      styles.heroArtwork,
+                      styles.artworkFallback,
+                      (isDesktop || isTablet) && styles.desktopHeroArtwork,
+                    ]}
+                  >
                     <Ionicons name="disc-outline" size={64} color={colors.primary} />
                   </View>
                 )}
 
-                <View style={styles.heroInfo}>
+                <View style={[styles.heroInfo, (isDesktop || isTablet) && styles.desktopHeroInfo]}>
                   <Text style={styles.albumBadge}>ALBUM</Text>
-                  <Text style={styles.heroTitle} numberOfLines={2}>
+                  <Text
+                    style={[styles.heroTitle, (isDesktop || isTablet) && styles.desktopHeroTitle]}
+                    numberOfLines={2}
+                  >
                     {albumTitle}
                   </Text>
-                  <Text style={styles.heroArtist} numberOfLines={1}>
+                  <Text
+                    style={[styles.heroArtist, (isDesktop || isTablet) && styles.desktopHeroArtist]}
+                    numberOfLines={1}
+                  >
                     {artistName}
                   </Text>
-                  <Text style={styles.heroMeta}>
+                  <Text style={[styles.heroMeta, (isDesktop || isTablet) && styles.desktopHeroMeta]}>
                     {year ? `${year} • ` : ""}{tracks.length} {tracks.length === 1 ? "track" : "tracks"}
                   </Text>
 
                   {/* Action Buttons */}
-                  <View style={styles.actionsRow}>
+                  <View style={[styles.actionsRow, (isDesktop || isTablet) && styles.desktopActionsRow]}>
                     <TouchableOpacity
                       style={styles.playAllBtn}
                       onPress={handlePlayAll}
@@ -255,6 +270,7 @@ export default function AlbumModal({ visible, onClose, album, albumId }) {
                 layout="row"
                 showRank={true}
                 rank={index + 1}
+                showRowAddButton={false}
                 isActive={currentTrack?.videoId === item.videoId}
                 onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
                 onPress={() => playTrack(item, tracks, index)}
@@ -297,9 +313,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#000000",
   },
   desktopNavBar: {
-    maxWidth: 960,
     width: "100%",
-    alignSelf: "center",
+    paddingHorizontal: 32,
+    backgroundColor: "#000000",
   },
   closeBtn: {
     width: 36,
@@ -339,9 +355,9 @@ const styles = StyleSheet.create({
     paddingTop: 16,
   },
   desktopListContent: {
-    maxWidth: 960,
     width: "100%",
-    alignSelf: "center",
+    paddingHorizontal: 32,
+    paddingTop: 20,
   },
   heroWrap: {
     alignItems: "center",
@@ -350,12 +366,14 @@ const styles = StyleSheet.create({
   desktopHeroWrap: {
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: 24,
-    paddingVertical: 12,
+    gap: 32,
+    paddingVertical: 24,
+    marginBottom: 20,
+    width: "100%",
   },
   heroArtwork: {
-    width: 180,
-    height: 180,
+    width: 170,
+    height: 170,
     borderRadius: 12,
     backgroundColor: "rgba(255, 255, 255, 0.05)",
     shadowColor: "#000",
@@ -363,6 +381,17 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.45,
     shadowRadius: 16,
     elevation: 8,
+  },
+  desktopHeroArtwork: {
+    width: 220,
+    height: 220,
+    borderRadius: 10,
+    marginBottom: 0,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.65,
+    shadowRadius: 28,
+    elevation: 16,
   },
   artworkFallback: {
     alignItems: "center",
@@ -372,6 +401,12 @@ const styles = StyleSheet.create({
     flex: 1,
     marginTop: 16,
     alignItems: "center",
+  },
+  desktopHeroInfo: {
+    alignItems: "flex-start",
+    justifyContent: "flex-end",
+    flex: 1,
+    paddingBottom: 4,
   },
   albumBadge: {
     fontFamily: fonts.bold,
@@ -387,10 +422,24 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 4,
   },
+  desktopHeroTitle: {
+    fontSize: 38,
+    lineHeight: 44,
+    textAlign: "left",
+    letterSpacing: -0.5,
+    fontFamily: fonts.bold,
+    marginBottom: 8,
+  },
   heroArtist: {
     fontFamily: fonts.semiBold,
     fontSize: 15,
     color: colors.textMuted,
+    marginBottom: 6,
+  },
+  desktopHeroArtist: {
+    fontSize: 16,
+    color: "#FFFFFF",
+    textAlign: "left",
     marginBottom: 6,
   },
   heroMeta: {
@@ -399,10 +448,20 @@ const styles = StyleSheet.create({
     color: "rgba(255, 255, 255, 0.5)",
     marginBottom: 16,
   },
+  desktopHeroMeta: {
+    textAlign: "left",
+    fontSize: 13,
+    color: "rgba(255, 255, 255, 0.65)",
+    marginBottom: 16,
+  },
   actionsRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+  },
+  desktopActionsRow: {
+    justifyContent: "flex-start",
+    alignSelf: "flex-start",
   },
   playAllBtn: {
     flexDirection: "row",

@@ -1009,8 +1009,8 @@ export function subscribeActiveDevices(uid, callback) {
       const now = Date.now();
       const list = Object.keys(val).map((k) => {
         const item = val[k];
-        // Device is active if marked isOnline OR heartbeat reported within last 90 seconds
-        const isOnline = item.isOnline === true || (item.lastActive && (now - item.lastActive < 90000));
+        // Device is active if marked isOnline OR heartbeat reported within last 5 minutes OR currently playing
+        const isOnline = item.isOnline === true || (item.lastActive && (now - item.lastActive < 300000)) || Boolean(item.isPlaying);
         return {
           ...item,
           id: k,

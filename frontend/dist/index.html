@@ -162,7 +162,8 @@
           '369219127', 'postMessage', 'DOMWindow', 'target origin', 'www-widgetapi',
           'Failed to convert value to \'Response\'', 'FetchEvent for', 'network error response',
           'doubleclick', 'googleads', 'ytimg', 'innertube', 'startTime', 'reportAllChanges',
-          'Cannot read properties of undefined', 'reading \'startTime\'', 'staytup-audio-player'
+          'Cannot read properties of undefined', 'reading \'startTime\'', 'staytup-audio-player',
+          'Cross-Origin-Opener-Policy', 'window.closed', 'window.close'
         ];
         function shouldIgnore(args) {
           try {
@@ -325,10 +326,30 @@
       });
 
       if ('serviceWorker' in navigator) {
+        var refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', function() {
+          if (!refreshing) {
+            refreshing = true;
+            window.location.reload();
+          }
+        });
         window.addEventListener('load', function() {
           navigator.serviceWorker.register('/sw.js').then(function(reg) {
             if (reg) {
               reg.update();
+              if (reg.waiting) {
+                reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+              }
+              reg.addEventListener('updatefound', function() {
+                var newWorker = reg.installing;
+                if (newWorker) {
+                  newWorker.addEventListener('statechange', function() {
+                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                      newWorker.postMessage({ type: 'SKIP_WAITING' });
+                    }
+                  });
+                }
+              });
             }
           }).catch(function() {});
         });
@@ -376,6 +397,6 @@
         }, 1200);
       })();
     </script>
-  <script src="/_expo/static/js/web/index-056663abbca1a9762efdc956eb1f805d.js" defer></script>
+  <script src="/_expo/static/js/web/index-82f6a09064406552b81d2fdc9f640061.js" defer></script>
 </body>
 </html>

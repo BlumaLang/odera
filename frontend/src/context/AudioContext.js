@@ -273,6 +273,38 @@ const AudioProvider = ({ children }) => {
     } catch (_) {}
   }, []);
 
+  // Continuous background audio keepalive to ensure mobile browsers never suspend
+  // audio playback when the app or tab is in the background
+  const silentLoopRef = useRef(null);
+  const startBackgroundAudioSession = useCallback(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    try {
+      if (!silentLoopRef.current) {
+        const silent = new window.Audio();
+        silent.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+        silent.loop = true;
+        silent.volume = 0.001;
+        try {
+          silent.playsInline = true;
+          silent.setAttribute("playsinline", "true");
+          silent.setAttribute("webkit-playsinline", "true");
+        } catch (_) {}
+        silentLoopRef.current = silent;
+      }
+      if (silentLoopRef.current && silentLoopRef.current.paused) {
+        silentLoopRef.current.play().catch(() => {});
+      }
+    } catch (_) {}
+  }, []);
+
+  const stopBackgroundAudioSession = useCallback(() => {
+    try {
+      if (silentLoopRef.current && !silentLoopRef.current.paused) {
+        silentLoopRef.current.pause();
+      }
+    } catch (_) {}
+  }, []);
+
   // Native player reference (expo-av)
   const soundRef = useRef(null);
   // Web player reference (HTML5 Audio)
@@ -413,10 +445,12 @@ const AudioProvider = ({ children }) => {
   useEffect(() => {
     if (isPlaying) {
       requestWakeLock();
+      startBackgroundAudioSession();
     } else {
       releaseWakeLock();
+      stopBackgroundAudioSession();
     }
-  }, [isPlaying, requestWakeLock, releaseWakeLock]);
+  }, [isPlaying, requestWakeLock, releaseWakeLock, startBackgroundAudioSession, stopBackgroundAudioSession]);
 
   // MediaSession API helper: renders high-res 512x512 album banner on OS lock screens & notification panels
   const setupMediaSessionHandlers = useCallback(() => {
@@ -1967,14 +2001,9 @@ const AudioProvider = ({ children }) => {
     // to execute SYNCHRONOUSLY within the 'ended' event — which iOS & Android PWA allow without muting!
     let playableUrl = track.stream_url;
 
-    // 1. Check if track is downloaded for offline listening
-    const offlineUrl = await getOfflineAudioUrl(cleanId);
-    if (offlineUrl) {
-      playableUrl = offlineUrl;
-    }
-
+    // Fast synchronous path: check in-memory globalStreamCache first so background auto-advance has 0ms gap
     const cachedStream = globalStreamCache.get(cleanId);
-    if (cachedStream && cachedStream.stream_url && !playableUrl) {
+    if (cachedStream && cachedStream.stream_url) {
       playableUrl = cachedStream.stream_url;
       if (cachedStream.duration && (!initDurationMs || initDurationMs <= 0)) {
         const ms = cachedStream.duration * 1000;
@@ -1982,6 +2011,14 @@ const AudioProvider = ({ children }) => {
         durationMillisRef.current = ms;
         setDurationMillis(ms);
       }
+    } else {
+      // Only do async offline storage check if not already found in stream cache
+      try {
+        const offlineUrl = await getOfflineAudioUrl(cleanId);
+        if (offlineUrl) {
+          playableUrl = offlineUrl;
+        }
+      } catch (_) {}
     }
 
     // If stream URL is not in cache, fetch it. The current track continues outputting

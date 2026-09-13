@@ -229,6 +229,10 @@ export default function ActiveDevicesModal({ visible, onClose }) {
 
             {(() => {
               const isCurrentPlayingNow = isPlaying && (!playbackSession?.deviceId || playbackSession?.deviceId === currentDeviceId);
+              const isCurrentBackground = typeof document !== "undefined" && document.hidden;
+              const currentStatusText = isCurrentPlayingNow
+                ? (isCurrentBackground ? "Listening (Background)" : "Listening")
+                : (isCurrentBackground ? "Background" : "Online");
               return (
                 <View style={styles.deviceRow}>
                   <View style={styles.deviceIconBox}>
@@ -269,7 +273,7 @@ export default function ActiveDevicesModal({ visible, onClose }) {
                     <View style={styles.liveStatusPill}>
                       <View style={[styles.liveDotPulsing, !isCurrentPlayingNow && { backgroundColor: "rgba(255, 255, 255, 0.35)" }]} />
                       <Text style={styles.liveStatusText}>
-                        {isCurrentPlayingNow ? "Listening" : "Online"}
+                        {currentStatusText}
                       </Text>
                     </View>
                   )}
@@ -299,12 +303,19 @@ export default function ActiveDevicesModal({ visible, onClose }) {
               </View>
             ) : (
               otherDevices.map((dev) => {
-                const isOnline = dev.isOnline === true;
                 const isThisDevPlaying = Boolean(
-                  playbackSession?.isPlaying &&
-                  playbackSession?.deviceId === dev.id
+                  (playbackSession?.isPlaying && playbackSession?.deviceId === dev.id) ||
+                  dev.isPlaying === true
                 );
-                const relTime = isThisDevPlaying ? "Listening" : isOnline ? "Online" : formatRelativeTime(dev.lastActive);
+                const isOnline = dev.isOnline === true || isThisDevPlaying || (dev.lastActive && (nowTime - dev.lastActive < 300000));
+                const isBackgroundActive = isOnline && dev.lastActive && (nowTime - dev.lastActive < 300000) && !isThisDevPlaying;
+                const relTime = isThisDevPlaying
+                  ? "Listening"
+                  : isBackgroundActive
+                  ? "Background"
+                  : isOnline
+                  ? "Online"
+                  : formatRelativeTime(dev.lastActive);
                 const devIcon = dev.icon || (dev.deviceType === "desktop" ? "desktop-outline" : dev.deviceType === "tablet" ? "tablet-portrait-outline" : "phone-portrait-outline");
 
                 return (
