@@ -711,6 +711,15 @@ export async function getSearchHistory(uid) {
  */
 export async function saveLastPlayback(uid, track, queue) {
   if (!uid) return;
+  if (track && typeof window !== "undefined" && window.localStorage) {
+    try {
+      window.localStorage.setItem("@staytup_last_playback", JSON.stringify({
+        track,
+        queue: Array.isArray(queue) ? queue.slice(0, 50) : [],
+        timestamp: Date.now(),
+      }));
+    } catch (_) {}
+  }
   try {
     const playbackRef = ref(db, `users/${uid}/lastPlayback`);
     await set(playbackRef, {
@@ -806,13 +815,83 @@ export async function updatePlaybackSession(uid, sessionData) {
   if (!uid) return;
   try {
     const sessionRef = ref(db, `users/${uid}/playbackSession`);
-    await update(sessionRef, {
+    const presenceRef = ref(db, `users/${uid}/presence`);
+    const now = Date.now();
+    const payload = {
       ...sessionData,
-      updatedAt: Date.now(),
-    });
+      updatedAt: now,
+    };
+    await update(sessionRef, payload);
+
+    // Keep presence fresh
+    update(presenceRef, {
+      isOnline: true,
+      lastActive: now,
+    }).catch(() => {});
+
+    // Configure onDisconnect so if tab/app closes without stopping, isPlaying stops immediately
+    try {
+      onDisconnect(sessionRef).update({
+        isPlaying: false,
+        updatedAt: now,
+      });
+      onDisconnect(presenceRef).update({
+        isOnline: false,
+        lastActive: now,
+      });
+    } catch (_) {}
+
+    // Also reflect playing status and keep device alive in activeDevices
+    if (sessionData.deviceId) {
+      const devRef = ref(db, `users/${uid}/activeDevices/${sessionData.deviceId}`);
+      update(devRef, {
+        isOnline: true,
+        isPlaying: Boolean(sessionData.isPlaying),
+        currentTrackTitle: sessionData.trackTitle || sessionData.track?.title || null,
+        currentTrackId: sessionData.trackId || sessionData.track?.videoId || null,
+        lastActive: now,
+        updatedAt: now,
+      }).catch(() => {});
+
+      try {
+        onDisconnect(devRef).update({
+          isOnline: false,
+          isPlaying: false,
+          lastActive: now,
+        });
+      } catch (_) {}
+    }
   } catch (error) {
     console.warn("Failed to update playback session in RTDB:", error.message);
   }
+}
+
+/**
+ * Explicitly mark a user and their device as offline (called on tab close / logout)
+ */
+export function setUserOffline(uid, deviceId) {
+  if (!uid) return;
+  const now = Date.now();
+  try {
+    const presenceRef = ref(db, `users/${uid}/presence`);
+    const sessionRef = ref(db, `users/${uid}/playbackSession`);
+    update(presenceRef, {
+      isOnline: false,
+      lastActive: now,
+    }).catch(() => {});
+    update(sessionRef, {
+      isPlaying: false,
+      updatedAt: now,
+    }).catch(() => {});
+    if (deviceId) {
+      const devRef = ref(db, `users/${uid}/activeDevices/${deviceId}`);
+      update(devRef, {
+        isOnline: false,
+        isPlaying: false,
+        lastActive: now,
+      }).catch(() => {});
+    }
+  } catch (_) {}
 }
 
 /**
@@ -843,19 +922,38 @@ export function subscribePlaybackSession(uid, callback) {
 export async function registerActiveDevice(uid, deviceData) {
   if (!uid || !deviceData?.id) return;
   try {
+    const now = Date.now();
     const devRef = ref(db, `users/${uid}/activeDevices/${deviceData.id}`);
+    const presenceRef = ref(db, `users/${uid}/presence`);
+    const sessionRef = ref(db, `users/${uid}/playbackSession`);
+
     await set(devRef, {
       ...deviceData,
       isOnline: true,
-      lastActive: Date.now(),
-      updatedAt: Date.now(),
+      lastActive: now,
+      updatedAt: now,
     });
 
-    // Configure onDisconnect to gracefully mark as offline when closed/lost connection
+    await update(presenceRef, {
+      isOnline: true,
+      lastActive: now,
+      deviceId: deviceData.id,
+    });
+
+    // Configure onDisconnect on all presence targets
     try {
       onDisconnect(devRef).update({
         isOnline: false,
-        lastActive: Date.now(),
+        isPlaying: false,
+        lastActive: now,
+      });
+      onDisconnect(presenceRef).update({
+        isOnline: false,
+        lastActive: now,
+      });
+      onDisconnect(sessionRef).update({
+        isPlaying: false,
+        updatedAt: now,
       });
     } catch (_) {}
   } catch (error) {
@@ -869,12 +967,28 @@ export async function registerActiveDevice(uid, deviceData) {
 export async function updateActiveDeviceHeartbeat(uid, deviceId, extra = {}) {
   if (!uid || !deviceId) return;
   try {
+    const now = Date.now();
     const devRef = ref(db, `users/${uid}/activeDevices/${deviceId}`);
+    const presenceRef = ref(db, `users/${uid}/presence`);
+
     await update(devRef, {
       ...extra,
       isOnline: true,
-      lastActive: Date.now(),
+      lastActive: now,
     });
+
+    await update(presenceRef, {
+      isOnline: true,
+      lastActive: now,
+    });
+
+    if (extra.isPlaying) {
+      const sessionRef = ref(db, `users/${uid}/playbackSession`);
+      update(sessionRef, {
+        isPlaying: true,
+        updatedAt: now,
+      }).catch(() => {});
+    }
   } catch (_) {}
 }
 
@@ -892,18 +1006,29 @@ export function subscribeActiveDevices(uid, callback) {
         callback([]);
         return;
       }
-      const list = Object.keys(val).map((k) => ({
-        ...val[k],
-        id: k,
-      }));
+      const now = Date.now();
+      const list = Object.keys(val).map((k) => {
+        const item = val[k];
+        // Device is active if marked isOnline OR heartbeat reported within last 90 seconds
+        const isOnline = item.isOnline === true || (item.lastActive && (now - item.lastActive < 90000));
+        return {
+          ...item,
+          id: k,
+          isOnline: Boolean(isOnline),
+        };
+      });
+
+      // Filter out stale entries older than 30 days
+      const activeList = list.filter((d) => !d.lastActive || (now - d.lastActive < 30 * 24 * 60 * 60 * 1000));
+
       // Sort: online first, then by lastActive descending
-      list.sort((a, b) => {
+      activeList.sort((a, b) => {
         if (Boolean(a.isOnline) !== Boolean(b.isOnline)) {
           return a.isOnline ? -1 : 1;
         }
         return (b.lastActive || 0) - (a.lastActive || 0);
       });
-      callback(list);
+      callback(activeList);
     },
     (error) => {
       console.warn("RTDB active devices subscription error:", error.message);
@@ -2290,25 +2415,79 @@ export async function searchUsersRTDB(query, currentUid) {
 }
 
 /**
- * Subscribe to a friend's live playback status
+ * Subscribe to a friend's live online presence & playback status
  */
 export function subscribeFriendActivity(friendUid, callback) {
   if (!friendUid || !callback) return () => {};
 
   const playbackRef = ref(db, `users/${friendUid}/lastPlayback`);
   const sessionRef = ref(db, `users/${friendUid}/playbackSession`);
+  const presenceRef = ref(db, `users/${friendUid}/presence`);
+  const devicesRef = ref(db, `users/${friendUid}/activeDevices`);
 
   let currentPlayback = null;
   let currentSession = null;
+  let currentPresence = null;
+  let currentDevices = null;
 
   const emit = () => {
-    const isPlaying = Boolean(currentSession?.isPlaying);
-    const sessionAge = currentSession?.updatedAt ? Date.now() - currentSession.updatedAt : Infinity;
-    const isLive = isPlaying && sessionAge < 1000 * 60 * 30; // Within 30 minutes
+    const now = Date.now();
+
+    // 1. Strictly verify whether the user is online right now
+    let isOnline = false;
+
+    // A. Direct presence node (active within last 45s)
+    if (currentPresence) {
+      const pOnline = currentPresence.isOnline === true;
+      const pFresh = currentPresence.lastActive ? (now - currentPresence.lastActive < 45000) : false;
+      if (pOnline && pFresh) {
+        isOnline = true;
+      }
+    }
+
+    // B. Check active devices node (any active device within 45s)
+    if (!isOnline && currentDevices && typeof currentDevices === "object") {
+      const devList = Object.values(currentDevices);
+      const hasFreshOnlineDev = devList.some(
+        (d) => d && d.isOnline === true && d.lastActive && (now - d.lastActive < 45000)
+      );
+      if (hasFreshOnlineDev) {
+        isOnline = true;
+      }
+    }
+
+    // 2. Check if the user is actively playing music (User MUST be online!)
+    let isPlaying = false;
+    let activeTrack = null;
+
+    if (isOnline) {
+      const sPlaying = Boolean(currentSession?.isPlaying);
+      const sTrack = currentSession?.track;
+      const sFresh = currentSession?.updatedAt ? (now - currentSession.updatedAt < 45000) : false;
+
+      if (sPlaying && sTrack && sFresh) {
+        isPlaying = true;
+        activeTrack = sTrack;
+      } else if (currentDevices && typeof currentDevices === "object") {
+        const playingDev = Object.values(currentDevices).find(
+          (d) => d && d.isOnline === true && d.isPlaying === true && d.lastActive && (now - d.lastActive < 45000)
+        );
+        if (playingDev && (currentSession?.track || playingDev.currentTrackTitle)) {
+          isPlaying = true;
+          activeTrack = currentSession?.track || {
+            title: playingDev.currentTrackTitle,
+            videoId: playingDev.currentTrackId,
+          };
+        }
+      }
+    }
+
     callback({
-      track: currentPlayback?.track || currentSession?.track || null,
-      isPlaying: isLive,
-      updatedAt: currentPlayback?.updatedAt || currentSession?.updatedAt || null,
+      isOnline: Boolean(isOnline),
+      isPlaying: Boolean(isPlaying),
+      track: isPlaying ? activeTrack : (currentPlayback?.track || currentSession?.track || null),
+      lastActive: currentPresence?.lastActive || currentSession?.updatedAt || null,
+      updatedAt: currentSession?.updatedAt || currentPresence?.lastActive || null,
     });
   };
 
@@ -2322,10 +2501,26 @@ export function subscribeFriendActivity(friendUid, callback) {
     emit();
   });
 
+  const presListener = onValue(presenceRef, (snap) => {
+    currentPresence = snap.val();
+    emit();
+  });
+
+  const devListener = onValue(devicesRef, (snap) => {
+    currentDevices = snap.val();
+    emit();
+  });
+
+  // Ticker to auto-expire offline users every 15s even if no RTDB event fires
+  const ticker = setInterval(emit, 15000);
+
   return () => {
+    clearInterval(ticker);
     try {
       off(playbackRef, "value", pbListener);
       off(sessionRef, "value", sessListener);
+      off(presenceRef, "value", presListener);
+      off(devicesRef, "value", devListener);
     } catch (_) {}
   };
 }
@@ -3558,365 +3753,6 @@ export function subscribeFollowedArtists(uid, callback) {
     }
   });
   return () => off(artistsRef, "value", listener);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 🎧 LISTENING PARTIES (SYNCHRONIZED SOCIAL PLAYBACK WITHOUT CHAT)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Generate a unique, url-friendly party ID
- */
-export function generatePartyId() {
-  return "party_" + Math.random().toString(36).substring(2, 9) + "_" + Date.now().toString(36);
-}
-
-/**
- * Create a new listening party room
- */
-export async function createListeningParty({
-  name,
-  hostUid,
-  hostName,
-  hostPhoto,
-  hostColor,
-  isPrivate = false,
-  passcode = "",
-  initialTrack = null,
-}) {
-  if (!hostUid) throw new Error("Host UID is required to create a party");
-  const partyId = generatePartyId();
-  const partyRef = ref(db, `listening_parties/${partyId}`);
-
-  const partyData = {
-    id: partyId,
-    name: name || `${hostName || "Host"}'s Listening Room`,
-    hostUid,
-    hostName: hostName || "Host",
-    hostPhoto: hostPhoto || "",
-    hostColor: hostColor || "",
-    isPrivate: !!isPrivate,
-    passcode: passcode || "",
-    createdAt: Date.now(),
-    currentTrack: initialTrack || null,
-    playbackState: {
-      isPlaying: !!initialTrack,
-      positionMillis: 0,
-      timestamp: Date.now(),
-      updatedBy: hostUid,
-    },
-    members: {
-      [hostUid]: {
-        uid: hostUid,
-        name: hostName || "Host",
-        avatar: hostPhoto || "",
-        avatarColor: hostColor || "",
-        isHost: true,
-        joinedAt: Date.now(),
-        isOnline: true,
-      },
-    },
-    queue: {},
-    skipVotes: {},
-    lastReaction: null,
-  };
-
-  await set(partyRef, partyData);
-
-  // Set disconnect cleanup: If host disconnects/leaves, immediately delete the entire party room
-  try {
-    onDisconnect(partyRef).remove();
-  } catch (_) {}
-
-  return partyId;
-}
-
-/**
- * Join an existing listening party
- */
-export async function joinListeningParty(partyId, user) {
-  if (!partyId || !user?.uid) return false;
-  const isHost = Boolean(user.isHost);
-  const memberRef = ref(db, `listening_parties/${partyId}/members/${user.uid}`);
-  const memberData = {
-    uid: user.uid,
-    name: user.name || user.displayName || user.username || "Listener",
-    avatar: user.avatar || user.photoURL || user.avatarUrl || "",
-    avatarColor: user.avatarColor || "",
-    isHost: isHost,
-    joinedAt: Date.now(),
-    isOnline: true,
-  };
-
-  await set(memberRef, memberData);
-  try {
-    if (isHost) {
-      const partyRef = ref(db, `listening_parties/${partyId}`);
-      onDisconnect(partyRef).remove();
-    } else {
-      onDisconnect(memberRef).remove();
-    }
-  } catch (_) {}
-  return true;
-}
-
-/**
- * Leave a listening party
- */
-export async function leaveListeningParty(partyId, uid, isHost = false) {
-  if (!partyId || !uid) return;
-  try {
-    if (isHost) {
-      await deleteListeningParty(partyId);
-      return;
-    }
-    const memberRef = ref(db, `listening_parties/${partyId}/members/${uid}`);
-    await remove(memberRef);
-  } catch (err) {
-    console.warn("leaveListeningParty error:", err.message);
-  }
-}
-
-/**
- * Delete / end a listening party (Host action)
- */
-export async function deleteListeningParty(partyId) {
-  if (!partyId) return;
-  try {
-    const partyRef = ref(db, `listening_parties/${partyId}`);
-    await remove(partyRef);
-  } catch (err) {
-    console.warn("deleteListeningParty error:", err.message);
-  }
-}
-
-/**
- * Host updates playback state (play/pause/seek)
- */
-export async function updatePartyPlayback(partyId, { isPlaying, positionMillis, track, hostUid }) {
-  if (!partyId) return;
-  const updates = {
-    "playbackState/isPlaying": isPlaying,
-    "playbackState/positionMillis": Math.max(0, positionMillis || 0),
-    "playbackState/timestamp": Date.now(),
-    "playbackState/updatedBy": hostUid || "",
-  };
-  if (track) {
-    updates["currentTrack"] = track;
-    updates["skipVotes"] = null; // reset skip votes when track changes
-  }
-  try {
-    await update(ref(db, `listening_parties/${partyId}`), updates);
-  } catch (err) {
-    console.warn("updatePartyPlayback error:", err.message);
-  }
-}
-
-/**
- * Subscribe to a listening party in real-time
- */
-export function subscribeListeningParty(partyId, callback) {
-  if (!partyId || !callback) return () => {};
-  const partyRef = ref(db, `listening_parties/${partyId}`);
-  const listener = onValue(partyRef, (snapshot) => {
-    try {
-      const data = snapshot.val();
-      callback(data || null);
-    } catch (err) {
-      console.warn("subscribeListeningParty error:", err.message);
-      callback(null);
-    }
-  });
-  return () => off(partyRef, "value", listener);
-}
-
-/**
- * Subscribe to all public listening parties
- */
-export function subscribePublicParties(callback) {
-  if (!callback) return () => {};
-  const partiesRef = ref(db, "listening_parties");
-  const listener = onValue(partiesRef, (snapshot) => {
-    try {
-      const val = snapshot.val();
-      if (!val) {
-        callback([]);
-        return;
-      }
-      const now = Date.now();
-      const list = Object.keys(val)
-        .map((k) => ({ ...val[k], id: k }))
-        .filter((p) => {
-          if (p.isPrivate) return false;
-          // Filter out empty or dead rooms older than 12 hours
-          const members = p.members || {};
-          const hasOnline = Object.values(members).some((m) => m?.isOnline);
-          if (!hasOnline && now - (p.createdAt || 0) > 12 * 3600 * 1000) return false;
-          return true;
-        });
-      // Sort newest or most populated first
-      list.sort((a, b) => {
-        const aCount = Object.keys(a.members || {}).length;
-        const bCount = Object.keys(b.members || {}).length;
-        return bCount !== aCount ? bCount - aCount : (b.createdAt || 0) - (a.createdAt || 0);
-      });
-      callback(list);
-    } catch (err) {
-      console.warn("subscribePublicParties error:", err.message);
-      callback([]);
-    }
-  });
-  return () => off(partiesRef, "value", listener);
-}
-
-/**
- * Add a suggested track to the party queue
- */
-export async function addSongToPartyQueue(partyId, track, user) {
-  if (!partyId || !track) return;
-  const queueRef = ref(db, `listening_parties/${partyId}/queue`);
-  const newQueueRef = push(queueRef);
-  const queueItem = {
-    id: newQueueRef.key,
-    track,
-    suggestedBy: user?.uid || "",
-    suggestedByName: user?.displayName || user?.username || "Guest",
-    suggestedByAvatar: user?.photoURL || user?.avatar || "",
-    suggestedAt: Date.now(),
-    votes: { [user?.uid || "creator"]: true },
-    voteCount: 1,
-  };
-  await set(newQueueRef, queueItem);
-}
-
-/**
- * Upvote/toggle vote for a song in the queue
- */
-export async function votePartyQueueSong(partyId, queueItemId, uid) {
-  if (!partyId || !queueItemId || !uid) return;
-  const voteRef = ref(db, `listening_parties/${partyId}/queue/${queueItemId}`);
-  try {
-    await runTransaction(voteRef, (item) => {
-      if (!item) return item;
-      const votes = item.votes || {};
-      if (votes[uid]) {
-        delete votes[uid];
-      } else {
-        votes[uid] = true;
-      }
-      item.votes = votes;
-      item.voteCount = Object.keys(votes).length;
-      return item;
-    });
-  } catch (err) {
-    console.warn("votePartyQueueSong error:", err.message);
-  }
-}
-
-/**
- * Play a specific song from the party queue immediately (Host action)
- */
-export async function playPartyQueueSong(partyId, queueItemId) {
-  if (!partyId || !queueItemId) return;
-  const partyRef = ref(db, `listening_parties/${partyId}`);
-  try {
-    await runTransaction(partyRef, (party) => {
-      if (!party || !party.queue || !party.queue[queueItemId]) return party;
-      const targetItem = party.queue[queueItemId];
-      party.currentTrack = targetItem.track;
-      delete party.queue[queueItemId];
-      party.skipVotes = {};
-      party.playbackState = {
-        isPlaying: true,
-        positionMillis: 0,
-        timestamp: Date.now(),
-        updatedBy: "host_play_queue",
-      };
-      return party;
-    });
-  } catch (err) {
-    console.warn("playPartyQueueSong error:", err.message);
-  }
-}
-
-/**
- * Remove a song from the party queue
- */
-export async function removePartyQueueSong(partyId, queueItemId) {
-  if (!partyId || !queueItemId) return;
-  try {
-    const itemRef = ref(db, `listening_parties/${partyId}/queue/${queueItemId}`);
-    await remove(itemRef);
-  } catch (err) {
-    console.warn("removePartyQueueSong error:", err.message);
-  }
-}
-
-/**
- * Vote to skip the current track
- */
-export async function voteToSkipParty(partyId, uid) {
-  if (!partyId || !uid) return;
-  const partyRef = ref(db, `listening_parties/${partyId}`);
-  try {
-    await runTransaction(partyRef, (party) => {
-      if (!party) return party;
-      const skipVotes = party.skipVotes || {};
-      if (skipVotes[uid]) {
-        delete skipVotes[uid];
-      } else {
-        skipVotes[uid] = true;
-      }
-      party.skipVotes = skipVotes;
-
-      // Check if threshold reached
-      const memberCount = Object.keys(party.members || {}).length || 1;
-      const voteCount = Object.keys(skipVotes).length;
-      const threshold = Math.max(1, Math.ceil(memberCount / 2));
-
-      if (voteCount >= threshold) {
-        // Auto advance queue
-        const queueObj = party.queue || {};
-        const queueList = Object.keys(queueObj).map((k) => queueObj[k]);
-        queueList.sort((a, b) => (b.voteCount || 0) - (a.voteCount || 0) || (a.suggestedAt || 0) - (b.suggestedAt || 0));
-
-        if (queueList.length > 0) {
-          const nextSong = queueList[0];
-          party.currentTrack = nextSong.track;
-          delete party.queue[nextSong.id];
-        }
-        party.skipVotes = {};
-        party.playbackState = {
-          isPlaying: true,
-          positionMillis: 0,
-          timestamp: Date.now(),
-          updatedBy: "skip_vote_consensus",
-        };
-      }
-      return party;
-    });
-  } catch (err) {
-    console.warn("voteToSkipParty error:", err.message);
-  }
-}
-
-/**
- * Trigger floating emoji reaction burst in party (no chat)
- */
-export async function triggerPartyReaction(partyId, { emoji, uid, username }) {
-  if (!partyId || !emoji) return;
-  const reactionRef = ref(db, `listening_parties/${partyId}/lastReaction`);
-  try {
-    await set(reactionRef, {
-      id: Math.random().toString(36).substring(2, 9),
-      emoji,
-      uid: uid || "",
-      username: username || "Listener",
-      timestamp: Date.now(),
-    });
-  } catch (err) {
-    console.warn("triggerPartyReaction error:", err.message);
-  }
 }
 
 /**

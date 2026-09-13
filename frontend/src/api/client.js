@@ -18,16 +18,20 @@ const configuredApiBase =
 function resolveInitialApiBase() {
   if (configuredApiBase) return configuredApiBase;
   if (typeof window !== "undefined") {
-    const { pathname, hostname, protocol, origin } = window.location;
-    // 1. If currently served from /staytup subfolder (XAMPP Apache or reverse proxy)
+    const { pathname, hostname, protocol, origin, port } = window.location;
+    // 1. If running under dev server (e.g. Expo port 8081 or 19006)
+    if (port === "8081" || port === "19006") {
+      return `${protocol}//${hostname}/staytup/api/index.php`;
+    }
+    // 2. If currently served from /staytup subfolder (XAMPP Apache or reverse proxy)
     if (pathname.startsWith("/staytup") || pathname.includes("/staytup/")) {
       return `${origin}/staytup/api/index.php`;
     }
-    // 2. If running locally (localhost or 127.0.0.1)
-    if (hostname === "localhost" || hostname === "127.0.0.1") {
+    // 3. If running locally (localhost or 127.0.0.1 or local LAN IP)
+    if (hostname === "localhost" || hostname === "127.0.0.1" || /^192\.168\./.test(hostname) || /^10\./.test(hostname)) {
       return `${protocol}//${hostname}/staytup/api/index.php`;
     }
-    // 3. Default relative for root production deployments
+    // 4. Default relative for root production deployments
     return "/api/index.php";
   }
   return "http://localhost/staytup/api/index.php";
@@ -554,7 +558,36 @@ export const api = {
   getAlbumDetails: async (albumId) => {
     if (!albumId) return null;
     try {
-      const data = await backendFetch(`album?id=${encodeURIComponent(albumId)}`);
+      const cleanId = String(albumId).replace(/^saavn_/, "");
+      const data = await backendFetch(`album?id=${encodeURIComponent(cleanId)}`);
+      if (data) {
+        if (data.tracks && Array.isArray(data.tracks)) {
+          data.tracks = data.tracks.map(decodeTrackEntities);
+        }
+        if (data.album && Array.isArray(data.album.tracks)) {
+          data.album.tracks = data.album.tracks.map(decodeTrackEntities);
+        }
+      }
+      return data || null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  getPlaylistDetails: async (playlistId, userId) => {
+    if (!playlistId) return null;
+    try {
+      const cleanId = String(playlistId).replace(/^saavn_/, "");
+      const userParam = userId ? `&user_id=${encodeURIComponent(userId)}` : "";
+      const data = await backendFetch(`playlist?id=${encodeURIComponent(cleanId)}${userParam}`);
+      if (data) {
+        if (data.tracks && Array.isArray(data.tracks)) {
+          data.tracks = data.tracks.map(decodeTrackEntities);
+        }
+        if (data.playlist && Array.isArray(data.playlist.tracks)) {
+          data.playlist.tracks = data.playlist.tracks.map(decodeTrackEntities);
+        }
+      }
       return data || null;
     } catch (_) {
       return null;
@@ -966,7 +999,6 @@ export const api = {
   getUserProfile: () => Promise.resolve({}),
   getUserPlaylists: () => Promise.resolve([]),
   createPlaylist: () => Promise.resolve({}),
-  getPlaylistDetails: () => Promise.resolve({}),
   updatePlaylist: () => Promise.resolve({}),
   addTrackToPlaylist: () => Promise.resolve({}),
   removeTrackFromPlaylist: () => Promise.resolve({}),

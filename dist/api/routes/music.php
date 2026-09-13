@@ -29,6 +29,8 @@ class MusicRoutes {
                 return self::track($params['id'] ?? null);
             case 'album':
                 return self::album($params['id'] ?? null);
+            case 'playlist':
+                return self::playlist($params['id'] ?? null);
             default:
                 sendError('Unknown music action', 404);
         }
@@ -149,8 +151,27 @@ class MusicRoutes {
         }
         if (!$id) sendError('Album ID is required');
 
-        $album = JioSaavnService::getAlbumDetails($id);
+        $cleanId = preg_replace('/^saavn_/', '', $id);
+        $album = JioSaavnService::getAlbumDetails($cleanId);
         if (!$album) sendError('Album not found', 404);
-        sendJson($album);
+        
+        $response = $album;
+        $response['album'] = $album;
+        sendJson($response);
+    }
+
+    private static function playlist($id) {
+        if (!$id) {
+            $id = getQueryParam('id');
+        }
+        if (!$id) sendError('Playlist ID is required');
+
+        $cleanId = preg_replace('/^saavn_/', '', $id);
+        $playlist = JioSaavnService::getPlaylistDetails($cleanId);
+        if (!$playlist) sendError('Playlist not found', 404);
+        
+        $response = $playlist;
+        $response['playlist'] = $playlist;
+        sendJson($response);
     }
 }

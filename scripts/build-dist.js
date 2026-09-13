@@ -76,10 +76,18 @@ console.log('✅ Bundle module integrity verified.');
 
 // 6. Synchronize public/ to dist/ and frontend/dist/
 console.log('🔄 Synchronizing public/ -> dist/...');
-execSync(`rsync -av --delete "${PUBLIC_DIR}/" "${DIST_DIR}/"`, { stdio: 'inherit' });
+try {
+  execSync(`rsync -av --delete "${PUBLIC_DIR}/" "${DIST_DIR}/"`, { stdio: 'ignore' });
+} catch (_) {
+  fs.cpSync(PUBLIC_DIR, DIST_DIR, { recursive: true });
+}
 
 console.log('🔄 Synchronizing public/ -> frontend/dist/...');
-execSync(`rsync -av --delete "${PUBLIC_DIR}/" "${FRONTEND_DIST_DIR}/"`, { stdio: 'inherit' });
+try {
+  execSync(`rsync -av --delete "${PUBLIC_DIR}/" "${FRONTEND_DIST_DIR}/"`, { stdio: 'ignore' });
+} catch (_) {
+  fs.cpSync(PUBLIC_DIR, FRONTEND_DIST_DIR, { recursive: true });
+}
 
 // 7. Verify all files in dist/ and frontend/dist/
 const checkDirs = [

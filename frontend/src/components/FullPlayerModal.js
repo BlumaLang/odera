@@ -27,7 +27,6 @@ import { useResponsive } from "../context/ResponsiveContext";
 import { registerBackAction } from "../services/navigation";
 import { getHighResArtwork } from "../utils/imageUtils";
 import LiveReactionOverlay from "./LiveReactionOverlay";
-import ActiveDevicesModal from "./ActiveDevicesModal";
 
 const { width, height } = Dimensions.get("window");
 // Larger artwork size for better visual impact
@@ -92,8 +91,8 @@ function formatTime(millis) {
 
 export default function FullPlayerModal() {
   const {
-    currentTrack,
-    isPlaying,
+    currentTrack: localCurrentTrack,
+    isPlaying: isLocalPlaying,
     isLoading,
     positionMillis,
     durationMillis,
@@ -122,7 +121,16 @@ export default function FullPlayerModal() {
     moveQueueItem,
     isQueueOpen,
     setIsQueueOpen,
+    openDeviceModal,
+    isRemotePlaying,
+    remotePlaybackSession,
+    transferPlaybackToThisDevice,
   } = useAudio();
+
+  const isRemoteActive = Boolean(isRemotePlaying && remotePlaybackSession?.track && (!isLocalPlaying || !localCurrentTrack));
+  const currentTrack = isRemoteActive ? remotePlaybackSession.track : localCurrentTrack;
+  const isPlaying = isRemoteActive ? true : isLocalPlaying;
+  const remoteDevName = remotePlaybackSession?.deviceName || "Another Device";
 
   const { isDesktop, isTablet, deviceName, deviceIcon: accurateDeviceIcon } = useResponsive();
 
@@ -162,39 +170,6 @@ export default function FullPlayerModal() {
   const artistPanY = useRef(new Animated.Value(0)).current;
 
 
-  // Connect Modal State & Swipe Dismiss
-  const [showConnectModal, setShowConnectModal] = useState(false);
-  const [showConnectHelp, setShowConnectHelp] = useState(false);
-  const connectPanY = useRef(new Animated.Value(0)).current;
-  const connectPanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return gestureState.dy > 6 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
-      },
-      onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dy > 0) connectPanY.setValue(gestureState.dy);
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy > 70 || gestureState.vy > 0.5) {
-          Animated.timing(connectPanY, {
-            toValue: 450,
-            duration: 180,
-            useNativeDriver: Platform.OS !== "web",
-          }).start(() => {
-            setShowConnectModal(false);
-            connectPanY.setValue(0);
-          });
-        } else {
-          Animated.spring(connectPanY, {
-            toValue: 0,
-            friction: 8,
-            useNativeDriver: Platform.OS !== "web",
-          }).start();
-        }
-      },
-    })
-  ).current;
 
   // Track Options / Share Modal State & Swipe Dismiss
   const [showTrackOptionsModal, setShowTrackOptionsModal] = useState(false);
@@ -377,14 +352,6 @@ export default function FullPlayerModal() {
     }
   }, [showLyrics]);
 
-  useEffect(() => {
-    if (showConnectModal) {
-      return registerBackAction(() => {
-        setShowConnectModal(false);
-        return true;
-      });
-    }
-  }, [showConnectModal]);
 
   useEffect(() => {
     if (showTrackOptionsModal) {
@@ -453,12 +420,12 @@ export default function FullPlayerModal() {
   };
 
   // Dynamic device label & icon based on accurate device name (MacBook, Windows, iPhone, iPad, Android)
-  const deviceLabel = deviceName || (isDesktop ? "Desktop" : isTablet ? "iPad / Tablet" : "Phone");
-  const deviceIcon = accurateDeviceIcon || (isDesktop
+  const deviceLabel = isRemoteActive ? remoteDevName : (deviceName || (isDesktop ? "Desktop" : isTablet ? "iPad / Tablet" : "Phone"));
+  const deviceIcon = isRemoteActive ? "volume-high" : (accurateDeviceIcon || (isDesktop
     ? "desktop-outline"
     : isTablet
     ? "tablet-portrait-outline"
-    : "phone-portrait-outline");
+    : "phone-portrait-outline"));
 
   // Fetch lyrics whenever currentTrack changes
   useEffect(() => {
@@ -758,17 +725,34 @@ export default function FullPlayerModal() {
   const rawDuration = Number(durationMillis);
   const fallbackDuration = getFallbackDurationMs();
   const effectiveDuration =
-    fallbackDuration > 0
+    isRemoteActive && remotePlaybackSession?.durationMillis
+      ? remotePlaybackSession.durationMillis
+      : fallbackDuration > 0
       ? fallbackDuration
       : Number.isFinite(rawDuration) && rawDuration > 0 && rawDuration < 86400000
       ? rawDuration
       : 0;
 
+  const remotePosition = isRemoteActive && remotePlaybackSession?.positionMillis
+    ? Math.min(
+        effectiveDuration || Infinity,
+        remotePlaybackSession.positionMillis + (Date.now() - (remotePlaybackSession?.updatedAt || Date.now()))
+      )
+    : 0;
+
+  const isSliderActive = isScrubbing || isScrubberHovered;
+  const currentDisplayTime = isScrubbing
+    ? Math.floor((scrubPercent / 100) * (effectiveDuration || 1))
+    : isRemoteActive
+    ? remotePosition
+    : (positionMillis || 0);
+
   const progressRatio =
     effectiveDuration > 0
-      ? Math.min(1, Math.max(0, (positionMillis || 0) / effectiveDuration))
+      ? Math.min(1, Math.max(0, currentDisplayTime / effectiveDuration))
       : 0;
   const progressPercent = progressRatio * 100;
+  const currentDisplayPercent = isScrubbing ? scrubPercent : progressPercent;
 
   // Keep durationRef in sync so panResponder closure always reads the latest value
   durationRef.current = effectiveDuration || durationMillis || 0;
@@ -788,12 +772,6 @@ export default function FullPlayerModal() {
     if (lines[0]) overlayLines.push(lines[0]);
     if (lines[1]) overlayLines.push(lines[1]);
   }
-
-  const isSliderActive = isScrubbing || isScrubberHovered;
-  const currentDisplayPercent = isScrubbing ? scrubPercent : progressPercent;
-  const currentDisplayTime = isScrubbing
-    ? Math.floor((scrubPercent / 100) * (effectiveDuration || 1))
-    : (positionMillis || 0);
 
   const handleToggleFavorite = async () => {
     if (!currentTrack) return;
@@ -1406,7 +1384,10 @@ export default function FullPlayerModal() {
             {/* Left Section: Device & Status */}
             <TouchableOpacity
               style={styles.desktopDeckLeft}
-              onPress={() => setShowConnectModal(true)}
+              onPress={() => {
+                if (openDeviceModal) openDeviceModal();
+                else if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("staytup-open-devices"));
+              }}
               activeOpacity={0.75}
               accessibilityLabel="Audio device output"
               accessibilityRole="button"
@@ -1438,7 +1419,13 @@ export default function FullPlayerModal() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={togglePlayPause}
+                onPress={() => {
+                  if (isRemoteActive && transferPlaybackToThisDevice) {
+                    transferPlaybackToThisDevice();
+                  } else {
+                    togglePlayPause();
+                  }
+                }}
                 style={styles.desktopMainPlayBtn}
                 activeOpacity={0.88}
               >
@@ -1805,7 +1792,13 @@ export default function FullPlayerModal() {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={togglePlayPause}
+              onPress={() => {
+                if (isRemoteActive && transferPlaybackToThisDevice) {
+                  transferPlaybackToThisDevice();
+                } else {
+                  togglePlayPause();
+                }
+              }}
               style={styles.mainPlayButton}
               activeOpacity={0.88}
             >
@@ -1833,14 +1826,12 @@ export default function FullPlayerModal() {
               onPress={() => setShowSleepModal(true)}
               style={styles.controlIcon}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              accessibilityLabel="Sleep timer"
             >
               <Ionicons
-                name={sleepSecondsLeft !== null || sleepEndOnTrack ? "stopwatch" : "stopwatch-outline"}
-                size={24}
-                color={sleepSecondsLeft !== null || sleepEndOnTrack ? colors.primary : "#8E8E93"}
+                name={sleepSecondsLeft !== null ? "moon" : "moon-outline"}
+                size={22}
+                color={sleepSecondsLeft !== null ? colors.primary : "#777777"}
               />
-              {(sleepSecondsLeft !== null || sleepEndOnTrack) && <View style={styles.activeRepeatDot} />}
             </TouchableOpacity>
           </View>
 
@@ -1849,13 +1840,16 @@ export default function FullPlayerModal() {
             {/* Dynamic Device Indicator - clicking opens Spotify-style Connect modal */}
             <TouchableOpacity
               style={styles.deviceIndicator}
-              onPress={() => setShowConnectModal(true)}
+              onPress={() => {
+                if (openDeviceModal) openDeviceModal();
+                else if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("staytup-open-devices"));
+              }}
               activeOpacity={0.75}
               accessibilityLabel="Audio device output"
             >
-              <Ionicons name={accurateDeviceIcon || "phone-portrait-outline"} size={16} color={colors.primary} />
-              <Text style={styles.deviceLabel} numberOfLines={1}>
-                {deviceName ? (deviceName.toLowerCase().includes("this") ? deviceName : `This ${deviceName}`) : "This Device"}
+              <Ionicons name={isRemoteActive ? "volume-high" : (accurateDeviceIcon || "phone-portrait-outline")} size={16} color={isRemoteActive ? "#1DB954" : colors.primary} />
+              <Text style={[styles.deviceLabel, isRemoteActive && { color: "#1DB954" }]} numberOfLines={1}>
+                {isRemoteActive ? `Listening on ${remoteDevName}` : (deviceName ? (deviceName.toLowerCase().includes("this") ? deviceName : `This ${deviceName}`) : "This Device")}
               </Text>
             </TouchableOpacity>
 
@@ -2083,11 +2077,6 @@ export default function FullPlayerModal() {
           </View>
         </Modal>
 
-        {/* Active Devices & Sessions Modal */}
-        <ActiveDevicesModal
-          visible={showConnectModal}
-          onClose={() => setShowConnectModal(false)}
-        />
 
         {/* Track Options & Share Modal */}
         <Modal
@@ -2134,26 +2123,6 @@ export default function FullPlayerModal() {
 
               {/* Action List */}
               <ScrollView style={styles.optionsListScroll} bounces={false} showsVerticalScrollIndicator={false}>
-                {/* Start Listening Party Action */}
-                <TouchableOpacity
-                  style={styles.optionsActionRow}
-                  onPress={() => {
-                    setShowTrackOptionsModal(false);
-                    if (typeof window !== "undefined") {
-                      window.dispatchEvent(new CustomEvent("staytup-create-party"));
-                    }
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.optionsActionIconWrap, { backgroundColor: "rgba(29, 185, 84, 0.15)" }]}>
-                    <Ionicons name="headset" size={22} color="#1DB954" />
-                  </View>
-                  <View style={styles.optionsActionTextWrap}>
-                    <Text style={[styles.optionsActionTitle, { color: "#1DB954" }]}>Start Listening Party</Text>
-                    <Text style={styles.optionsActionSub}>Sync this song live with friends • Zero chat</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color="#666666" />
-                </TouchableOpacity>
 
                 {/* Share Song Action */}
                 <TouchableOpacity
@@ -2270,7 +2239,8 @@ export default function FullPlayerModal() {
                   style={styles.optionsActionRow}
                   onPress={() => {
                     setShowTrackOptionsModal(false);
-                    setShowConnectModal(true);
+                    if (openDeviceModal) openDeviceModal();
+                    else if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("staytup-open-devices"));
                   }}
                   activeOpacity={0.7}
                 >

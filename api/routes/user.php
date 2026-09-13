@@ -226,12 +226,26 @@ class UserRoutes {
         if (!$id) sendError('Playlist ID is required');
         
         $userId = getQueryParam('user_id');
-        if (!$userId) sendError('user_id is required');
+        $playlist = null;
+        if ($userId) {
+            $playlist = Storage::getPlaylist($userId, $id);
+        }
         
-        $playlist = Storage::getPlaylist($userId, $id);
+        // Fallback to JioSaavn if not in user storage
+        if (!$playlist) {
+            require_once __DIR__ . '/../services/jiosaavn.php';
+            $cleanId = preg_replace('/^saavn_/', '', $id);
+            $saavnPl = JioSaavnService::getPlaylistDetails($cleanId);
+            if ($saavnPl) {
+                $response = $saavnPl;
+                $response['playlist'] = $saavnPl;
+                sendJson($response);
+            }
+        }
+        
         if (!$playlist) sendError('Playlist not found', 404);
         
-        sendJson($playlist);
+        sendJson(['playlist' => $playlist]);
     }
     
     private static function updatePlaylist($id, $method) {

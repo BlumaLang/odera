@@ -171,6 +171,18 @@ try {
             }
             break;
         
+        // ==================== ALBUM ====================
+        case 'album':
+            require_once __DIR__ . '/routes/music.php';
+            MusicRoutes::handle('album', $method, ['id' => $subresource]);
+            break;
+
+        // ==================== PLAYLIST ====================
+        case 'playlist':
+            require_once __DIR__ . '/routes/music.php';
+            MusicRoutes::handle('playlist', $method, ['id' => $subresource]);
+            break;
+        
         // ==================== ARTISTS ====================
         case 'artists':
             require_once __DIR__ . '/routes/artist.php';

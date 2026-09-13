@@ -59,10 +59,17 @@ export default function DesktopPlayerBar() {
     setFullPlayerVisible,
     openQueue,
     openDeviceModal,
+    isRemotePlaying,
+    remotePlaybackSession,
+    transferPlaybackToThisDevice,
   } = useAudio();
   const { isSongLiked, toggleLikeSong } = useUser();
 
-  const isFavorite = isSongLiked(currentTrack?.videoId || currentTrack?.video_id);
+  const isRemoteActive = Boolean(isRemotePlaying && remotePlaybackSession?.track && (!isPlaying || !currentTrack));
+  const activeTrack = isRemoteActive ? remotePlaybackSession.track : currentTrack;
+  const remoteDevName = remotePlaybackSession?.deviceName || "Another Device";
+
+  const isFavorite = isSongLiked(activeTrack?.videoId || activeTrack?.video_id);
   const [showLikeConfetti, setShowLikeConfetti] = useState(false);
   const [prevVolume, setPrevVolume] = useState(0.85);
   const [isArtworkHovered, setIsArtworkHovered] = useState(false);
@@ -80,15 +87,15 @@ export default function DesktopPlayerBar() {
 
   useEffect(() => {
     setShowLikeConfetti(false);
-  }, [currentTrack?.videoId, currentTrack?.video_id]);
+  }, [activeTrack?.videoId, activeTrack?.video_id]);
 
-  const artworkUri = currentTrack
-    ? (getHighResArtwork(currentTrack.artwork_url || currentTrack.thumbnail) ||
+  const artworkUri = activeTrack
+    ? (getHighResArtwork(activeTrack.artwork_url || activeTrack.thumbnail) ||
        "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200")
     : null;
 
   const handleToggleFavorite = async () => {
-    if (!currentTrack) return;
+    if (!activeTrack) return;
     try {
       Animated.sequence([
         Animated.spring(likeScaleAnim, {
@@ -111,14 +118,14 @@ export default function DesktopPlayerBar() {
       }
 
       await toggleLikeSong({
-        videoId: currentTrack.videoId || currentTrack.video_id,
-        title: currentTrack.title,
-        artist: currentTrack.artist,
-        album: currentTrack.album || "",
+        videoId: activeTrack.videoId || activeTrack.video_id,
+        title: activeTrack.title,
+        artist: activeTrack.artist,
+        album: activeTrack.album || "",
         artwork_url: artworkUri || "",
         thumbnail: artworkUri || "",
-        duration: currentTrack.duration || "",
-        duration_seconds: currentTrack.duration_seconds || 0,
+        duration: activeTrack.duration || "",
+        duration_seconds: activeTrack.duration_seconds || 0,
       });
     } catch (err) {
       console.warn("Favorite error:", err);
@@ -126,13 +133,13 @@ export default function DesktopPlayerBar() {
   };
 
   const getFallbackDurationMs = () => {
-    if (!currentTrack) return 0;
-    if (currentTrack?.duration_seconds && Number.isFinite(Number(currentTrack.duration_seconds))) {
-      const s = Number(currentTrack.duration_seconds);
+    if (!activeTrack) return 0;
+    if (activeTrack?.duration_seconds && Number.isFinite(Number(activeTrack.duration_seconds))) {
+      const s = Number(activeTrack.duration_seconds);
       return s > 10000 ? s : s * 1000;
     }
-    if (typeof currentTrack?.duration === "string" && currentTrack.duration.includes(":")) {
-      const parts = currentTrack.duration.split(":").map(Number);
+    if (typeof activeTrack?.duration === "string" && activeTrack.duration.includes(":")) {
+      const parts = activeTrack.duration.split(":").map(Number);
       if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
         return (parts[0] * 60 + parts[1]) * 1000;
       }
@@ -146,7 +153,9 @@ export default function DesktopPlayerBar() {
   const rawDuration = Number(durationMillis);
   const fallbackDuration = getFallbackDurationMs();
   const effectiveDuration =
-    fallbackDuration > 0
+    isRemoteActive && remotePlaybackSession?.durationMillis
+      ? remotePlaybackSession.durationMillis
+      : fallbackDuration > 0
       ? fallbackDuration
       : Number.isFinite(rawDuration) && rawDuration > 0 && rawDuration < 86400000
       ? rawDuration
@@ -253,7 +262,17 @@ export default function DesktopPlayerBar() {
   const isScrubberActive = isScrubberHovered || isScrubbing;
   const volumePercent = Math.min(100, Math.max(0, (volume || 0) * 100));
 
-  const currentDisplayPosition = isScrubbing ? scrubPositionMillis : positionMillis;
+  const remotePosition = isRemoteActive && remotePlaybackSession?.positionMillis
+    ? Math.min(
+        effectiveDuration || Infinity,
+        remotePlaybackSession.positionMillis + (Date.now() - (remotePlaybackSession?.updatedAt || Date.now()))
+      )
+    : 0;
+  const currentDisplayPosition = isScrubbing
+    ? scrubPositionMillis
+    : isRemoteActive
+    ? remotePosition
+    : positionMillis;
   const progress = effectiveDuration > 0 ? Math.min(1, Math.max(0, (currentDisplayPosition || 0) / effectiveDuration)) : 0;
   const progressPercent = Math.min(100, Math.max(0, progress * 100));
 
@@ -266,7 +285,7 @@ export default function DesktopPlayerBar() {
     }
   };
 
-  if (!currentTrack) {
+  if (!activeTrack) {
     return (
       <View style={styles.playerBarContainer}>
         <View style={styles.idleRow}>
@@ -308,10 +327,10 @@ export default function DesktopPlayerBar() {
           accessibilityRole="button"
         >
           <Text style={styles.trackTitle} numberOfLines={1} ellipsizeMode="tail">
-            {cleanTitle(currentTrack.title)}
+            {cleanTitle(activeTrack.title)}
           </Text>
           <Text style={styles.trackArtist} numberOfLines={1} ellipsizeMode="tail">
-            {currentTrack.artist}
+            {activeTrack.artist}
           </Text>
         </TouchableOpacity>
         <View style={styles.likeButtonWrapper}>
@@ -360,7 +379,15 @@ export default function DesktopPlayerBar() {
 
           <TouchableOpacity
             style={styles.playPauseBtn}
-            onPress={togglePlayPause}
+            onPress={() => {
+              if (isRemoteActive) {
+                if (transferPlaybackToThisDevice) {
+                  transferPlaybackToThisDevice();
+                }
+              } else {
+                togglePlayPause();
+              }
+            }}
             activeOpacity={0.85}
           >
             {isLoading ? (
@@ -440,20 +467,28 @@ export default function DesktopPlayerBar() {
       </View>
 
       {/* 3. RIGHT SECTION: Device, Queue, Expand */}
-      <View style={[styles.rightSection, isTablet && styles.rightSectionTablet]}>
-        {/* Queue Button */}
-        <TouchableOpacity
-          style={styles.expandBtn}
-          onPress={openQueue}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityLabel="Open Queue"
-          accessibilityRole="button"
-        >
-          <Ionicons name="list" size={19} color={colors.textSecondary} />
-        </TouchableOpacity>
+      <View style={[styles.rightSection, isTablet && styles.rightSectionTablet, isRemoteActive && styles.rightSectionRemote]}>
+        {/* Play on this device button if remote session is active */}
+        {isRemoteActive && (
+          <TouchableOpacity
+            style={styles.playHereBtn}
+            onPress={async () => {
+              if (transferPlaybackToThisDevice) {
+                await transferPlaybackToThisDevice();
+              }
+            }}
+            activeOpacity={0.8}
+            accessibilityLabel="Play on this device"
+            accessibilityRole="button"
+          >
+            <Ionicons name="play" size={13} color="#000000" style={{ marginRight: 5 }} />
+            <Text style={styles.playHereBtnText}>Play on this device</Text>
+          </TouchableOpacity>
+        )}
+
 
         <TouchableOpacity
-          style={styles.streamBadge}
+          style={[styles.streamBadge, isRemoteActive && styles.streamBadgeRemote]}
           onPress={() => {
             try {
               if (typeof window !== "undefined") {
@@ -467,13 +502,13 @@ export default function DesktopPlayerBar() {
           accessibilityRole="button"
         >
           <Ionicons
-            name={deviceIcon || (isDesktop ? "desktop-outline" : isTablet ? "tablet-portrait-outline" : "phone-portrait-outline")}
+            name={isRemoteActive ? "volume-high" : (deviceIcon || (isDesktop ? "desktop-outline" : isTablet ? "tablet-portrait-outline" : "phone-portrait-outline"))}
             size={14}
-            color={colors.primary}
+            color={isRemoteActive ? "#1DB954" : colors.primary}
             style={{ marginRight: 6 }}
           />
-          <Text style={styles.streamText}>
-            {deviceName || (isDesktop ? "Desktop" : isTablet ? "iPad / Tablet" : "Phone")}
+          <Text style={[styles.streamText, isRemoteActive && styles.streamTextRemote]}>
+            {isRemoteActive ? `Listening on ${remoteDevName}` : (deviceName || (isDesktop ? "Desktop" : isTablet ? "iPad / Tablet" : "Phone"))}
           </Text>
         </TouchableOpacity>
 
@@ -666,6 +701,10 @@ const styles = StyleSheet.create({
     width: 170,
     gap: 12,
   },
+  rightSectionRemote: {
+    width: "auto",
+    maxWidth: 440,
+  },
   streamBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -678,6 +717,10 @@ const styles = StyleSheet.create({
     borderColor: "rgba(29, 185, 84, 0.22)",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
+  streamBadgeRemote: {
+    backgroundColor: "rgba(29, 185, 84, 0.15)",
+    borderColor: "rgba(29, 185, 84, 0.45)",
+  },
   streamDot: {
     width: 6,
     height: 6,
@@ -688,6 +731,23 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: 10,
     color: colors.primary,
+  },
+  streamTextRemote: {
+    color: "#1DB954",
+    fontFamily: fonts.semiBold,
+  },
+  playHereBtn: {
+    backgroundColor: colors.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  playHereBtnText: {
+    color: "#000000",
+    fontSize: 11,
+    fontFamily: fonts.bold,
   },
   volumeRow: {
     flexDirection: "row",

@@ -70,9 +70,6 @@ export default function ShareSheetModal({
     case "profile":
       sharePath = `/user/${encodeURIComponent(data.username || id)}`;
       break;
-    case "room":
-      sharePath = `/room/${encodeURIComponent(id)}`;
-      break;
     default:
       sharePath = `/?track=${encodeURIComponent(id)}`;
   }

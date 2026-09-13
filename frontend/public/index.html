@@ -101,6 +101,11 @@
         background-color: #1DB954;
         color: #000000;
       }
+      /* Prevent Safari iOS WebKit from rendering white background for loading/missing images */
+      img {
+        background-color: #141414 !important;
+        color: transparent !important;
+      }
 
       /* ── Native HTML Splash Screen ── */
       #staytup-splash {

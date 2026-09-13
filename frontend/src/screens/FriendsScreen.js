@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+﻿import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -19,13 +19,12 @@ import { useResponsive } from "../context/ResponsiveContext";
 import { useUser, formatPersonName, formatUsername, getDeterministicAvatarColor } from "../context/UserContext";
 import { useAudioPlayback } from "../context/AudioContext";
 import {
+  auth,
   subscribeFriendActivity,
   sendLiveReaction,
   getUserData,
   getUserStreamCount,
   getLikedSongs,
-  subscribePublicParties,
-  deleteListeningParty,
   addTracksToCollabPlaylist as addTracksToCollab,
 } from "../services/firebase";
 import { triggerLocalReactionBurst } from "../components/LiveReactionOverlay";
@@ -254,7 +253,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
   const [friendToDelete, setFriendToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Friends / Requests / Collab / Blend / Parties Tab State: 'friends' | 'parties' | 'blend' | 'requests' | 'collab'
+  // Friends / Requests / Collab / Blend Tab State: 'friends' | 'blend' | 'requests' | 'collab'
   const [activeTab, setActiveTab] = useState(() => initialTab || "friends");
 
   useEffect(() => {
@@ -286,42 +285,6 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
 
   // Dismissed suggested users in this session
   const [dismissedUids, setDismissedUids] = useState(new Set());
-
-  // Listening Parties Realtime Subscription
-  const [publicParties, setPublicParties] = useState([]);
-  const [partyToDelete, setPartyToDelete] = useState(null);
-  const [isDeletingParty, setIsDeletingParty] = useState(false);
-
-  useEffect(() => {
-    const unsub = subscribePublicParties((list) => setPublicParties(list || []));
-    return () => unsub();
-  }, []);
-
-  const handleOpenParty = (partyId) => {
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("staytup-open-party", { detail: { partyId } }));
-    }
-  };
-
-  const handleCreateParty = () => {
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("staytup-create-party"));
-    }
-  };
-
-  const handleConfirmDeletePartyRoom = async () => {
-    if (!partyToDelete) return;
-    try {
-      setIsDeletingParty(true);
-      const pid = partyToDelete.id || partyToDelete;
-      await deleteListeningParty(pid);
-      setPartyToDelete(null);
-    } catch (err) {
-      console.warn("Failed to delete listening party:", err);
-    } finally {
-      setIsDeletingParty(false);
-    }
-  };
 
   // Discoverable users & global search results
   const [discoverUsers, setDiscoverUsers] = useState([]);
@@ -741,15 +704,19 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
     searchResults,
   ]);
 
-  // Sort friends: live listening first, then alphabetical
+  // Sort friends: live listening first, then online idle, then offline, then alphabetical
   const sortedFriends = useMemo(() => {
     return [...friendsList].sort((a, b) => {
       const actA = friendsActivity[a.uid];
       const actB = friendsActivity[b.uid];
-      const liveA = Boolean(actA?.isPlaying && actA?.track);
-      const liveB = Boolean(actB?.isPlaying && actB?.track);
+      const liveA = Boolean(actA?.isOnline && actA?.isPlaying && actA?.track);
+      const liveB = Boolean(actB?.isOnline && actB?.isPlaying && actB?.track);
       if (liveA && !liveB) return -1;
       if (!liveA && liveB) return 1;
+      const onlineA = Boolean(actA?.isOnline);
+      const onlineB = Boolean(actB?.isOnline);
+      if (onlineA && !onlineB) return -1;
+      if (!onlineA && onlineB) return 1;
       return (a.username || "").localeCompare(b.username || "");
     });
   }, [friendsList, friendsActivity]);
@@ -972,7 +939,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
         if (createCollabPlaylist) {
           created = await createCollabPlaylist({
             name: blendName,
-            description: `${matchPct}% Music Match • Auto-curated daily shared blend`,
+            description: `${matchPct}% Music Match â€¢ Auto-curated daily shared blend`,
             tracks: formattedTracks,
             cover_url: formattedTracks[0]?.artwork_url || formattedTracks[0]?.thumbnail || "",
             collaborators: {
@@ -1038,7 +1005,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
     const myName = userProfile?.username || "I";
     const friendName = selectedBlendFriend.username || "my friend";
     const matchPct = blendResult.matchPercentage || 85;
-    const shareText = `⚡ ${myName} & ${friendName} have a ${matchPct}% Music Match on Staytup! Check out our shared Blend radar & playlist.`;
+    const shareText = `âš¡ ${myName} & ${friendName} have a ${matchPct}% Music Match on Staytup! Check out our shared Blend radar & playlist.`;
     const shareUrl = typeof window !== "undefined" && window.location ? window.location.origin : "https://staytup.odireca.com";
 
     if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.share) {
@@ -1090,17 +1057,6 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
 
             {/* Top Right Header Controls */}
             <View style={styles.headerRightGroup}>
-              <TouchableOpacity
-                style={styles.partyHeaderBtn}
-                onPress={handleCreateParty}
-                activeOpacity={0.75}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityLabel="Start listening party"
-              >
-                <Ionicons name="headset" size={17} color="#1DB954" />
-                <View style={styles.partyHeaderLiveDot} />
-              </TouchableOpacity>
-
               <TouchableOpacity
                 style={styles.headerCircleBtn}
                 onPress={() => {
@@ -1220,31 +1176,6 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.tabButton, activeTab === "parties" && styles.activeTabButton]}
-              onPress={() => setActiveTab("parties")}
-              activeOpacity={0.8}
-            >
-              <View style={styles.tabPillLabelRow}>
-                <Ionicons
-                  name="headset"
-                  size={14}
-                  color={activeTab === "parties" ? "#000000" : "#1DB954"}
-                  style={{ marginRight: 4 }}
-                />
-                <Text style={[styles.tabText, activeTab === "parties" && styles.activeTabText]}>
-                  Parties
-                </Text>
-                {publicParties?.length > 0 && (
-                  <View style={[styles.tabPillBadge, activeTab === "parties" && styles.tabPillBadgeActive]}>
-                    <Text style={[styles.tabPillBadgeText, activeTab === "parties" && styles.tabPillBadgeTextActive]}>
-                      {publicParties.length}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
               style={[styles.tabButton, activeTab === "blend" && styles.activeTabButton]}
               onPress={() => setActiveTab("blend")}
               activeOpacity={0.8}
@@ -1336,7 +1267,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
             </View>
           )}
 
-          {/* ═══════════ SEARCH VIEW ═══════════ */}
+          {/* â•â•â•â•â•â•â•â•â•â•â• SEARCH VIEW â•â•â•â•â•â•â•â•â•â•â• */}
           {isSearchActive ? (
             <View style={styles.sectionBlock}>
               <View style={styles.sectionHeaderRow}>
@@ -1353,7 +1284,8 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                 <View style={styles.unifiedUserList}>
                   {combinedSearchResults.map((u) => {
                     const activity = friendsActivity[u.uid];
-                    const isLive = u.isFriend && Boolean(activity?.isPlaying && activity?.track);
+                    const isOnline = Boolean(activity?.isOnline);
+                    const isLive = u.isFriend && Boolean(isOnline && activity?.isPlaying && activity?.track);
 
                     return (
                       <TouchableOpacity
@@ -1372,7 +1304,11 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                             <View
                               style={[
                                 styles.statusDot,
-                                isLive ? styles.statusDotLive : styles.statusDotOffline,
+                                isLive
+                                  ? styles.statusDotLive
+                                  : isOnline
+                                  ? styles.statusDotOnline
+                                  : styles.statusDotOffline,
                               ]}
                             />
                           )}
@@ -1386,19 +1322,24 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                             <View style={styles.liveTrackRow}>
                               <MaterialCommunityIcons name="waveform" size={14} color="#1DB954" style={{ marginRight: 4 }} />
                               <Text style={styles.liveTrackText} numberOfLines={1}>
-                                {activity.track.title}{activity.track.artist ? ` • ${activity.track.artist}` : ""}
+                                {activity.track.title}{activity.track.artist ? ` â€¢ ${activity.track.artist}` : ""}
                               </Text>
                             </View>
-                          ) : (activity?.track || u.lastPlayback?.track || u.lastPlayback || u.lastPlayed) ? (
+                          ) : u.isFriend && isOnline ? (
+                            <View style={styles.onlineBadgePill}>
+                              <View style={styles.onlineBadgeDot} />
+                              <Text style={styles.onlineBadgeText}>Online</Text>
+                            </View>
+                          ) : u.isFriend && !isOnline ? (
                             (() => {
                               const s = activity?.track || u.lastPlayback?.track || u.lastPlayback || u.lastPlayed;
                               const sTitle = s?.title || s?.name || "";
                               const sArtist = s?.artist || s?.subtitle || "";
+                              const lastPlayedSong = sTitle ? `${sTitle}${sArtist ? ` â€¢ ${sArtist}` : ""}` : "";
                               return (
-                                <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
-                                  <Ionicons name="musical-note" size={12} color="#1DB954" style={{ marginRight: 4 }} />
-                                  <Text style={styles.userHandleSubText} numberOfLines={1}>
-                                    {sTitle}{sArtist ? ` • ${sArtist}` : ""}
+                                <View style={styles.offlineStatusRow}>
+                                  <Text style={styles.offlineStatusText} numberOfLines={1}>
+                                    Offline{lastPlayedSong ? ` â€¢ Last played: ${lastPlayedSong}` : ""}
                                   </Text>
                                 </View>
                               );
@@ -1411,10 +1352,9 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                               </Text>
                             </View>
                           ) : (
-                            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
-                              <Ionicons name="musical-notes-outline" size={12} color="#888888" style={{ marginRight: 4 }} />
-                              <Text style={[styles.userHandleSubText, { color: colors.textSecondary }]} numberOfLines={1}>
-                                No songs played recently
+                            <View style={styles.offlineStatusRow}>
+                              <Text style={styles.offlineStatusText} numberOfLines={1}>
+                                Offline
                               </Text>
                             </View>
                           )}
@@ -1480,79 +1420,20 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
               ) : searchQuery.trim().length > 0 ? null : null}
             </View>
           ) : (
-            /* ═══════════ TABBED VIEW: Friends | Requests ═══════════ */
+            /* â•â•â•â•â•â•â•â•â•â•â• TABBED VIEW: Friends | Requests â•â•â•â•â•â•â•â•â•â•â• */
             <>
               {tabLoading ? (
                 <FriendsSkeleton type={activeTab} />
               ) : activeTab === "friends" ? (
-                /* ── FRIENDS TAB ── */
+                /* â”€â”€ FRIENDS TAB â”€â”€ */
                 <View style={styles.sectionBlock}>
-
-                  {/* Active Public Rooms Horizontal Carousel */}
-                  {publicParties.length > 0 && (
-                    <View style={styles.partyCarouselWrap}>
-                      <Text style={styles.partySectionMiniHeading}>Active Parties</Text>
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.partyCarouselList}>
-                        {publicParties.map((p) => {
-                          const mCount = Object.keys(p.members || {}).length || 1;
-                          const currentTrk = p.currentTrack;
-                          const isPartyHost =
-                            p.hostUid === currentUser?.uid ||
-                            p.hostUid === auth.currentUser?.uid;
-                          return (
-                            <TouchableOpacity
-                              key={p.id}
-                              style={styles.partyRoomCard}
-                              onPress={() => handleOpenParty(p.id)}
-                              activeOpacity={0.8}
-                            >
-                              <View style={styles.partyRoomHeader}>
-                                <View style={styles.partyRoomHeaderLeft}>
-                                  <View style={styles.partyRoomLiveDot} />
-                                  <Text style={styles.partyRoomListenersCount}>{mCount} listening</Text>
-                                </View>
-                                {isPartyHost && (
-                                  <TouchableOpacity
-                                    style={styles.partyRoomCardDeleteBtn}
-                                    onPress={(e) => {
-                                      e.stopPropagation();
-                                      setPartyToDelete(p);
-                                    }}
-                                    activeOpacity={0.8}
-                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                    accessibilityLabel="Delete party room"
-                                  >
-                                    <Ionicons name="close" size={14} color="#FF4D4D" />
-                                  </TouchableOpacity>
-                                )}
-                              </View>
-                              <Text style={styles.partyRoomName} numberOfLines={1}>{p.name}</Text>
-                              <Text style={styles.partyRoomHost} numberOfLines={1}>Host: {p.hostName}</Text>
-                              {currentTrk ? (
-                                <View style={styles.partyRoomTrackRow}>
-                                  <Image source={{ uri: currentTrk.image || currentTrk.thumbnail }} style={styles.partyRoomTrackImg} />
-                                  <Text style={styles.partyRoomTrackTitle} numberOfLines={1}>{currentTrk.title}</Text>
-                                </View>
-                              ) : null}
-                              <TouchableOpacity
-                                style={styles.partyRoomJoinBtn}
-                                onPress={() => handleOpenParty(p.id)}
-                                activeOpacity={0.8}
-                              >
-                                <Text style={styles.partyRoomJoinText}>Join Room</Text>
-                              </TouchableOpacity>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </ScrollView>
-                    </View>
-                  )}
 
                   {sortedFriends.length > 0 ? (
                     <View style={styles.unifiedUserList}>
                       {sortedFriends.map((friend) => {
                         const activity = friendsActivity[friend.uid];
-                        const isLive = Boolean(activity?.isPlaying && activity?.track);
+                        const isOnline = Boolean(activity?.isOnline);
+                        const isLive = Boolean(isOnline && activity?.isPlaying && activity?.track);
                         const isCurrentPlayingThis =
                           currentTrack &&
                           activity?.track &&
@@ -1568,11 +1449,15 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                             >
                               {/* Avatar & Online Dot */}
                               <View style={styles.avatarWrapper}>
-                                <UserAvatar user={friend} size={46} fontSize={16} />
+                                <UserAvatar user={friend} size={50} fontSize={18} />
                                 <View
                                   style={[
                                     styles.statusDot,
-                                    isLive ? styles.statusDotLive : styles.statusDotOffline,
+                                    isLive
+                                      ? styles.statusDotLive
+                                      : isOnline
+                                      ? styles.statusDotOnline
+                                      : styles.statusDotOffline,
                                   ]}
                                 />
                               </View>
@@ -1587,37 +1472,38 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                                   <View style={styles.liveTrackRow}>
                                     <MaterialCommunityIcons
                                       name="waveform"
-                                      size={14}
+                                      size={16}
                                       color="#1DB954"
-                                      style={{ marginRight: 4 }}
+                                      style={{ marginRight: 5 }}
                                     />
                                     <Text style={styles.liveTrackTitle} numberOfLines={1}>
                                       {activity.track.title}
                                     </Text>
                                     {activity.track.artist ? (
                                       <Text style={styles.liveTrackArtist} numberOfLines={1}>
-                                        {"  "}• {activity.track.artist}
+                                        {"  "}â€¢ {activity.track.artist}
                                       </Text>
                                     ) : null}
                                   </View>
-                                ) : (activity?.track || friend.lastPlayback?.track || friend.lastPlayback || friend.lastPlayed) ? (
+                                ) : isOnline ? (
+                                  <View style={styles.onlineBadgePill}>
+                                    <View style={styles.onlineBadgeDot} />
+                                    <Text style={styles.onlineBadgeText}>Online</Text>
+                                  </View>
+                                ) : (
                                   (() => {
                                     const s = activity?.track || friend.lastPlayback?.track || friend.lastPlayback || friend.lastPlayed;
                                     const sTitle = s?.title || s?.name || "";
                                     const sArtist = s?.artist || s?.subtitle || "";
+                                    const lastPlayedSong = sTitle ? `${sTitle}${sArtist ? ` â€¢ ${sArtist}` : ""}` : "";
                                     return (
-                                      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
-                                        <Ionicons name="musical-note" size={12} color="#888888" style={{ marginRight: 4 }} />
-                                        <Text style={styles.userHandleSubText} numberOfLines={1}>
-                                          {sTitle}{sArtist ? ` • ${sArtist}` : ""}
+                                      <View style={styles.offlineStatusRow}>
+                                        <Text style={styles.offlineStatusText} numberOfLines={1}>
+                                          Offline{lastPlayedSong ? ` â€¢ Last played: ${lastPlayedSong}` : ""}
                                         </Text>
                                       </View>
                                     );
                                   })()
-                                ) : (
-                                  <Text style={styles.userHandleSubText} numberOfLines={1}>
-                                    Staytup Listener
-                                  </Text>
                                 )}
                               </View>
 
@@ -1637,7 +1523,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                                   >
                                     <Ionicons
                                       name={isCurrentPlayingThis ? "volume-high" : "play"}
-                                      size={12}
+                                      size={14}
                                       color="#000000"
                                     />
                                     <Text style={styles.listenAlongText}>
@@ -1655,7 +1541,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                                   accessibilityLabel="Remove friend"
                                 >
-                                  <Ionicons name="close" size={18} color="#888888" />
+                                  <Ionicons name="close" size={20} color="#888888" />
                                 </TouchableOpacity>
                               </View>
                             </TouchableOpacity>
@@ -1663,9 +1549,8 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                             {/* Airbuds Live Reaction Quick Emoji Bar */}
                             {isLive && activity?.track && (
                               <View style={styles.reactionBarContainer}>
-                                <Text style={styles.reactionBarLabel}>REACT</Text>
                                 <View style={styles.reactionEmojiRow}>
-                                  {["🔥", "😭", "💀", "💔"].map((emoji) => (
+                                  {["ðŸ”¥", "ðŸ˜­", "ðŸ’€", "ðŸ’”"].map((emoji) => (
                                     <TouchableOpacity
                                       key={emoji}
                                       style={[
@@ -1701,114 +1586,8 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                     </View>
                   )}
                 </View>
-              ) : activeTab === "parties" ? (
-                /* ── LISTENING PARTIES TAB ── */
-                <View style={styles.sectionBlock}>
-                  {/* Clean Sub-header with + Start Party button (no bulky hero card) */}
-                  <View style={styles.partiesSubHeaderRow}>
-                    <View>
-                      <Text style={styles.partiesSubHeaderTitle}>Listening Parties</Text>
-                      <Text style={styles.partiesSubHeaderSub}>
-                        {publicParties.length} active {publicParties.length === 1 ? "room" : "rooms"}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.partiesCreatePillBtn}
-                      onPress={handleCreateParty}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name="add" size={16} color="#000000" />
-                      <Text style={styles.partiesCreatePillBtnText}>Start Party</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {publicParties.length === 0 ? (
-                    <View style={styles.emptyCenterState}>
-                      <Ionicons name="headset-outline" size={48} color="#444444" style={styles.emptyCenterIcon} />
-                      <Text style={styles.emptyCenterTitle}>No active parties right now</Text>
-                      <Text style={styles.emptyCenterSub}>
-                        Be the first to start a synchronized listening party and invite your friends!
-                      </Text>
-                      <TouchableOpacity
-                        style={styles.partiesEmptyCreateBtn}
-                        onPress={handleCreateParty}
-                        activeOpacity={0.85}
-                      >
-                        <Ionicons name="radio" size={15} color="#000000" style={{ marginRight: 6 }} />
-                        <Text style={styles.partiesEmptyCreateBtnText}>Start a Party</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={styles.partiesGrid}>
-                      {publicParties.map((p) => {
-                        const mCount = Object.keys(p.members || {}).length || 1;
-                        const currentTrk = p.currentTrack;
-                        const myUid = currentUser?.uid || userProfile?.uid;
-                        const isPartyHost = p.hostUid === myUid || p.hostId === myUid;
-
-                        return (
-                          <TouchableOpacity
-                            key={p.id}
-                            style={styles.partyFullCard}
-                            onPress={() => handleOpenParty(p.id)}
-                            activeOpacity={0.8}
-                          >
-                            <View style={styles.partyFullCardLeft}>
-                              {currentTrk ? (
-                                <Image
-                                  source={{ uri: currentTrk.image || currentTrk.thumbnail || currentTrk.artwork_url }}
-                                  style={styles.partyFullCardImg}
-                                />
-                              ) : (
-                                <View style={[styles.partyFullCardImg, { backgroundColor: "#1e1e24", alignItems: "center", justifyContent: "center" }]}>
-                                  <Ionicons name="musical-notes" size={24} color="#1DB954" />
-                                </View>
-                              )}
-                              <View style={styles.partyFullCardMeta}>
-                                <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }}>
-                                  <View style={styles.partyRoomLiveDot} />
-                                  <Text style={styles.partyRoomListenersCount}>{mCount} listening</Text>
-                                </View>
-                                <Text style={styles.partyFullCardName} numberOfLines={1}>
-                                  {p.name || `${p.hostName || "Host"}'s Party`}
-                                </Text>
-                                <Text style={styles.partyFullCardHost} numberOfLines={1}>
-                                  Host: {p.hostName || "Friend"}{currentTrk ? ` • ${currentTrk.title}` : ""}
-                                </Text>
-                              </View>
-                            </View>
-
-                            <View style={styles.partyCardActionsRow}>
-                              {isPartyHost && (
-                                <TouchableOpacity
-                                  style={styles.partyHostDeleteBtn}
-                                  onPress={(e) => {
-                                    e.stopPropagation();
-                                    setPartyToDelete(p);
-                                  }}
-                                  activeOpacity={0.8}
-                                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                  accessibilityLabel="Delete party room"
-                                >
-                                  <Ionicons name="close" size={18} color="#FF4D4D" />
-                                </TouchableOpacity>
-                              )}
-                              <TouchableOpacity
-                                style={styles.partyRoomJoinBtn}
-                                onPress={() => handleOpenParty(p.id)}
-                                activeOpacity={0.8}
-                              >
-                                <Text style={styles.partyRoomJoinText}>Join</Text>
-                              </TouchableOpacity>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  )}
-                </View>
               ) : activeTab === "blend" ? (
-                /* ── BLEND RADAR TAB (Friend Music Compatibility) ── */
+                /* â”€â”€ BLEND RADAR TAB (Friend Music Compatibility) â”€â”€ */
                 <View style={styles.sectionBlock}>
                   {friendsList.length > 0 ? (
                     <View style={styles.blendFriendsList}>
@@ -1872,7 +1651,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                                 <View style={styles.blendCardActiveRow}>
                                   <View style={styles.blendCardActiveDot} />
                                   <Text style={styles.blendCardActiveText} numberOfLines={1}>
-                                    {existingBlend.track_count || existingBlend.tracks?.length || 0} songs • Active blend
+                                    {existingBlend.track_count || existingBlend.tracks?.length || 0} songs â€¢ Active blend
                                   </Text>
                                 </View>
                               ) : (
@@ -1920,7 +1699,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                   )}
                 </View>
               ) : activeTab === "requests" ? (
-                /* ── REQUESTS TAB (Incoming Requests & Collab Invites) ── */
+                /* â”€â”€ REQUESTS TAB (Incoming Requests & Collab Invites) â”€â”€ */
                 <View style={styles.sectionBlock}>
                   {joinSuccessMsg ? (
                     <View style={[styles.blendFeedbackBanner, { marginBottom: 16, backgroundColor: "rgba(29, 185, 84, 0.15)", borderColor: "rgba(29, 185, 84, 0.3)" }]}>
@@ -1954,7 +1733,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                                   </Text>
                                 </View>
                                 <Text style={styles.userHandleSubText} numberOfLines={1}>
-                                  Invited by @{inv.senderName || "Friend"}{inv.matchPercentage ? ` • ${inv.matchPercentage}% Match` : ""}
+                                  Invited by @{inv.senderName || "Friend"}{inv.matchPercentage ? ` â€¢ ${inv.matchPercentage}% Match` : ""}
                                 </Text>
                               </View>
                               <View style={styles.requestActionsRow}>
@@ -2064,7 +1843,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                   ) : null}
                 </View>
               ) : (
-                /* ── COLLAB PLAYLISTS TAB ── */
+                /* â”€â”€ COLLAB PLAYLISTS TAB â”€â”€ */
                 <View style={styles.sectionBlock}>
                   {Array.isArray(collabPlaylists) && collabPlaylists.length > 0 ? (
                     <View style={styles.collabCardsList}>
@@ -2149,7 +1928,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                                   )}
                                 </View>
                                 <Text style={styles.collabCardMeta} numberOfLines={1}>
-                                  {collabs.length} {collabs.length === 1 ? "friend" : "friends"} • {trackCount} {trackCount === 1 ? "song" : "songs"}
+                                  {collabs.length} {collabs.length === 1 ? "friend" : "friends"} â€¢ {trackCount} {trackCount === 1 ? "song" : "songs"}
                                 </Text>
                               </View>
                             </View>
@@ -2198,7 +1977,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
       </ScrollView>
       </View>
 
-      {/* ═══════════ FRIEND PROFILE MODAL (COMPACT BOTTOM SHEET) ═══════════ */}
+      {/* â•â•â•â•â•â•â•â•â•â•â• FRIEND PROFILE MODAL (COMPACT BOTTOM SHEET) â•â•â•â•â•â•â•â•â•â•â• */}
       <Modal
         visible={!!selectedUserProfile}
         transparent={true}
@@ -2221,39 +2000,59 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
             </View>
 
             {/* Compact Header: Avatar + Name + Online + Menu */}
-            <View style={styles.pmHeaderRow}>
-              <View style={styles.pmAvatarWrap}>
-                <UserAvatar user={selectedUserProfile} size={56} fontSize={20} />
-                {isUserFriend(selectedUserProfile) && friendsActivity[selectedUserProfile?.uid]?.isPlaying && (
-                  <View style={styles.pmOnlineDot} />
-                )}
-              </View>
-              <View style={styles.pmHeaderInfo}>
-                <Text style={styles.pmName} numberOfLines={1}>
-                  {formatPersonName(selectedUserProfile?.displayName || selectedUserProfile?.name || selectedUserProfile?.username || "")}
-                </Text>
-                <Text style={styles.pmStatus} numberOfLines={1}>
-                  {isUserFriend(selectedUserProfile) && friendsActivity[selectedUserProfile?.uid]?.isPlaying
-                    ? "Listening now"
-                    : isUserFriend(selectedUserProfile)
-                    ? "Friend"
-                    : isUserIncoming(selectedUserProfile)
-                    ? "Wants to be your friend"
-                    : isUserOutgoing(selectedUserProfile)
-                    ? "Request sent"
-                    : "Listener"}
-                </Text>
-              </View>
-              {/* ••• Menu */}
-              <TouchableOpacity
-                style={styles.pmMenuBtn}
-                onPress={() => setShowProfileMenu(!showProfileMenu)}
-                activeOpacity={0.7}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="ellipsis-horizontal" size={18} color="#FFFFFF" />
-              </TouchableOpacity>
-            </View>
+            {(() => {
+              const act = friendsActivity[selectedUserProfile?.uid];
+              const isFriend = isUserFriend(selectedUserProfile);
+              const isOnline = Boolean(act?.isOnline);
+              const isLive = Boolean(isOnline && act?.isPlaying && act?.track);
+
+              return (
+                <View style={styles.pmHeaderRow}>
+                  <View style={styles.pmAvatarWrap}>
+                    <UserAvatar user={selectedUserProfile} size={56} fontSize={20} />
+                    {isFriend && (
+                      <View
+                        style={[
+                          styles.pmOnlineDot,
+                          isLive
+                            ? styles.statusDotLive
+                            : isOnline
+                            ? styles.statusDotOnline
+                            : styles.statusDotOffline,
+                        ]}
+                      />
+                    )}
+                  </View>
+                  <View style={styles.pmHeaderInfo}>
+                    <Text style={styles.pmName} numberOfLines={1}>
+                      {formatPersonName(selectedUserProfile?.displayName || selectedUserProfile?.name || selectedUserProfile?.username || "")}
+                    </Text>
+                    <Text style={styles.pmStatus} numberOfLines={1}>
+                      {isFriend
+                        ? isLive
+                          ? "Listening now"
+                          : isOnline
+                          ? "Online"
+                          : "Offline"
+                        : isUserIncoming(selectedUserProfile)
+                        ? "Wants to be your friend"
+                        : isUserOutgoing(selectedUserProfile)
+                        ? "Request sent"
+                        : "Listener"}
+                    </Text>
+                  </View>
+                  {/* â€¢â€¢â€¢ Menu */}
+                  <TouchableOpacity
+                    style={styles.pmMenuBtn}
+                    onPress={() => setShowProfileMenu(!showProfileMenu)}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="ellipsis-horizontal" size={18} color="#FFFFFF" />
+                  </TouchableOpacity>
+                </View>
+              );
+            })()}
 
             {/* Dropdown Menu */}
             {showProfileMenu && isUserFriend(selectedUserProfile) && (
@@ -2293,8 +2092,9 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
 
             {/* Current Listening Card */}
             {friendsActivity[selectedUserProfile?.uid]?.track ? (() => {
-              const friendTrack = friendsActivity[selectedUserProfile?.uid]?.track;
-              const isFriendPlaying = Boolean(friendsActivity[selectedUserProfile?.uid]?.isPlaying);
+              const act = friendsActivity[selectedUserProfile?.uid];
+              const friendTrack = act?.track;
+              const isFriendPlaying = Boolean(act?.isOnline && act?.isPlaying);
               const isThisPlaying =
                 currentTrack &&
                 friendTrack &&
@@ -2311,7 +2111,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
               return (
                 <View style={styles.pmNowPlaying}>
                   <View style={styles.pmNowPlayingHeader}>
-                    <Text style={styles.pmNowPlayingLabel}>NOW PLAYING</Text>
+                    <Text style={styles.pmNowPlayingLabel}>{isFriendPlaying ? "NOW PLAYING" : "LAST PLAYED"}</Text>
                     {isFriendPlaying && (
                       <View style={styles.pmLivePill}>
                         <View style={styles.pmLiveDot} />
@@ -2371,9 +2171,8 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
                   {/* Airbuds Live Reaction Quick Emoji Bar in Profile Modal */}
                   {isFriendPlaying && (
                     <View style={styles.pmReactionBar}>
-                      <Text style={styles.pmReactionLabel}>REACT TO VIBE</Text>
                       <View style={styles.reactionEmojiRow}>
-                        {["🔥", "😭", "💀", "💔"].map((emoji) => (
+                        {["ðŸ”¥", "ðŸ˜­", "ðŸ’€", "ðŸ’”"].map((emoji) => (
                           <TouchableOpacity
                             key={emoji}
                             style={[
@@ -2490,7 +2289,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
         </View>
       </Modal>
 
-      {/* ═══════════ DELETE FRIEND CONFIRMATION MODAL ═══════════ */}
+      {/* â•â•â•â•â•â•â•â•â•â•â• DELETE FRIEND CONFIRMATION MODAL â•â•â•â•â•â•â•â•â•â•â• */}
       <Modal
         visible={!!friendToDelete}
         transparent={true}
@@ -2549,66 +2348,6 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
             </View>
           </View>
         </View>
-      </Modal>
-
-      {/* ═══════════ END & DELETE LISTENING PARTY CONFIRMATION MODAL ═══════════ */}
-      <Modal
-        visible={Boolean(partyToDelete)}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => !isDeletingParty && setPartyToDelete(null)}
-      >
-        <TouchableOpacity
-          style={styles.partyDeleteModalOverlay}
-          activeOpacity={1}
-          onPress={() => !isDeletingParty && setPartyToDelete(null)}
-        >
-          <View
-            style={styles.partyDeleteModalCard}
-            onStartShouldSetResponder={() => true}
-          >
-            <View style={styles.partyDeleteDragHandle} />
-            <View style={styles.partyDeleteIconCircle}>
-              <Ionicons name="close-circle-outline" size={32} color="#FF4D4D" />
-            </View>
-
-            <Text style={styles.partyDeleteModalTitle}>
-              End Listening Party?
-            </Text>
-
-            <Text style={styles.partyDeleteModalSub}>
-              Are you sure you want to end and delete{" "}
-              <Text style={{ color: "#FFFFFF", fontFamily: fonts.bold }}>
-                "{partyToDelete?.name || "Listening Party"}"
-              </Text>
-              ? All active listeners will be disconnected from this room.
-            </Text>
-
-            <View style={styles.partyDeleteModalButtons}>
-              <TouchableOpacity
-                style={styles.partyDeleteCancelBtn}
-                onPress={() => setPartyToDelete(null)}
-                disabled={isDeletingParty}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.partyDeleteCancelText}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.partyDeleteConfirmBtn}
-                onPress={handleConfirmDeletePartyRoom}
-                disabled={isDeletingParty}
-                activeOpacity={0.8}
-              >
-                {isDeletingParty ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.partyDeleteConfirmText}>End Party</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </TouchableOpacity>
       </Modal>
 
       {/* Collaborative Playlist Details Modal */}
@@ -2671,7 +2410,7 @@ export default function FriendsScreen({ onNavigate, initialTab }) {
         }}
       />
 
-      {/* ═══════════ BLEND RADAR MODAL ═══════════ */}
+      {/* â•â•â•â•â•â•â•â•â•â•â• BLEND RADAR MODAL â•â•â•â•â•â•â•â•â•â•â• */}
       <Modal
         visible={showBlendModal}
         transparent={true}
@@ -3325,46 +3064,46 @@ const styles = StyleSheet.create({
 
   // User List & Rows
   unifiedUserList: {
-    gap: 2,
     width: "100%",
   },
   friendCardWrapper: {
     width: "100%",
-    paddingVertical: 2,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255, 255, 255, 0.04)",
+    backgroundColor: "transparent",
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    marginBottom: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(255, 255, 255, 0.07)",
   },
   reactionBarContainer: {
     flexDirection: "row",
     alignItems: "center",
-    paddingLeft: 56,
-    paddingBottom: 8,
-    marginTop: -2,
-    gap: 6,
+    paddingLeft: 62,
+    paddingTop: 8,
+    paddingBottom: 4,
+    marginTop: 2,
+    gap: 8,
     flexWrap: "wrap",
   },
   reactionBarLabel: {
-    fontFamily: fonts.semiBold,
-    fontSize: 10,
-    color: "#777777",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginRight: 2,
+    display: "none",
   },
   reactionEmojiRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 8,
   },
   reactionEmojiBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: "rgba(255, 255, 255, 0.08)",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.06)",
+    borderColor: "rgba(255, 255, 255, 0.07)",
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   reactionEmojiBtnActive: {
     backgroundColor: "rgba(29, 185, 84, 0.25)",
@@ -3372,7 +3111,7 @@ const styles = StyleSheet.create({
     transform: [{ scale: 1.15 }],
   },
   reactionEmojiText: {
-    fontSize: 15,
+    fontSize: 20,
   },
   reactionSentBadge: {
     backgroundColor: "rgba(29, 185, 84, 0.16)",
@@ -3395,16 +3134,12 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   pmReactionLabel: {
-    fontFamily: fonts.bold,
-    fontSize: 10,
-    color: "#888888",
-    letterSpacing: 1.2,
-    marginBottom: 8,
+    display: "none",
   },
   userRowItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 10,
+    paddingVertical: 2,
     paddingHorizontal: 0,
     backgroundColor: "transparent",
     borderWidth: 0,
@@ -3418,17 +3153,60 @@ const styles = StyleSheet.create({
     position: "absolute",
     bottom: -1,
     right: -1,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2.5,
     borderColor: "#000000",
   },
   statusDotLive: {
     backgroundColor: "#1DB954",
   },
+  statusDotOnline: {
+    backgroundColor: "#22c55e",
+  },
   statusDotOffline: {
     backgroundColor: "#555555",
+  },
+  onlineBadgePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(34, 197, 94, 0.12)",
+    borderColor: "rgba(34, 197, 94, 0.35)",
+    borderWidth: 1,
+    paddingHorizontal: 7,
+    paddingVertical: 1.5,
+    borderRadius: 10,
+    marginTop: 3,
+  },
+  onlineBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#22c55e",
+    marginRight: 4,
+  },
+  onlineBadgeText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 11,
+    color: "#22c55e",
+    letterSpacing: 0.2,
+  },
+  onlineStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 2,
+  },
+  offlineStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 2,
+  },
+  offlineStatusText: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: "#777777",
   },
 
   userInfoWrap: {
@@ -3532,6 +3310,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "transparent",
+    opacity: 0.45,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   listenAlongBtn: {
     flexDirection: "row",
@@ -3604,7 +3384,7 @@ const styles = StyleSheet.create({
     maxWidth: 320,
   },
 
-  // ═══════════ FRIEND PROFILE MODAL STYLES (COMPACT) ═══════════
+  // â•â•â•â•â•â•â•â•â•â•â• FRIEND PROFILE MODAL STYLES (COMPACT) â•â•â•â•â•â•â•â•â•â•â•
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.75)",
@@ -3914,7 +3694,7 @@ const styles = StyleSheet.create({
     color: "#888888",
   },
 
-  // ═══════════ DELETE FRIEND CONFIRMATION MODAL ═══════════
+  // â•â•â•â•â•â•â•â•â•â•â• DELETE FRIEND CONFIRMATION MODAL â•â•â•â•â•â•â•â•â•â•â•
   deleteModalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.75)",
@@ -3994,7 +3774,7 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
 
-  // ─── Collab Playlists Tab Styles ───
+  // â”€â”€â”€ Collab Playlists Tab Styles â”€â”€â”€
   collabHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -4190,7 +3970,7 @@ const styles = StyleSheet.create({
     color: "#000000",
   },
 
-  // ─── Blend Radar Styles ───
+  // â”€â”€â”€ Blend Radar Styles â”€â”€â”€
   blendIntroBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -4324,7 +4104,7 @@ const styles = StyleSheet.create({
     color: "#000000",
   },
 
-  // ─── Blend Modal Styles ───
+  // â”€â”€â”€ Blend Modal Styles â”€â”€â”€
   blendModalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.75)",
@@ -4793,413 +4573,5 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 6,
     marginTop: 6,
-  },
-
-  // Listening Party Styles
-  partyBannerCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "rgba(29, 185, 84, 0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.22)",
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 16,
-  },
-  partyBannerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-    marginRight: 12,
-  },
-  partyBannerIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(29, 185, 84, 0.16)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
-  partyBannerTitle: {
-    fontFamily: fonts.bold || "System",
-    fontSize: 14.5,
-    color: "#FFFFFF",
-  },
-  partyLiveBadge: {
-    backgroundColor: "#1DB954",
-    borderRadius: 6,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-  },
-  partyLiveBadgeText: {
-    fontFamily: fonts.bold || "System",
-    fontSize: 8.5,
-    color: "#000000",
-  },
-  partyBannerSub: {
-    fontFamily: fonts.regular || "System",
-    fontSize: 11.5,
-    color: "#888888",
-    marginTop: 2,
-  },
-  partyBannerActionBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#1DB954",
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-    borderRadius: 18,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  partyBannerActionText: {
-    fontFamily: fonts.bold || "System",
-    fontSize: 12,
-    color: "#000000",
-  },
-
-  partyCarouselWrap: {
-    marginBottom: 20,
-  },
-  partySectionMiniHeading: {
-    fontFamily: fonts.semiBold || "System",
-    fontSize: 13,
-    color: "#FFFFFF",
-    marginBottom: 10,
-  },
-  partyCarouselList: {
-    gap: 12,
-  },
-  partyRoomCard: {
-    width: 170,
-    backgroundColor: "rgba(255, 255, 255, 0.04)",
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.07)",
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  partyRoomHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    marginBottom: 6,
-  },
-  partyRoomLiveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#1DB954",
-  },
-  partyRoomListenersCount: {
-    fontFamily: fonts.medium || "System",
-    fontSize: 10.5,
-    color: "#1DB954",
-  },
-  partyRoomName: {
-    fontFamily: fonts.bold || "System",
-    fontSize: 13,
-    color: "#FFFFFF",
-  },
-  partyRoomHost: {
-    fontFamily: fonts.regular || "System",
-    fontSize: 11,
-    color: "#777777",
-    marginTop: 1,
-    marginBottom: 8,
-  },
-  partyRoomTrackRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
-    borderRadius: 8,
-    padding: 5,
-    marginBottom: 8,
-  },
-  partyRoomTrackImg: {
-    width: 24,
-    height: 24,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  partyRoomTrackTitle: {
-    fontFamily: fonts.medium || "System",
-    fontSize: 10.5,
-    color: "#FFFFFF",
-    flex: 1,
-  },
-  partyRoomJoinBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#1DB954",
-    paddingHorizontal: 16,
-    height: 32,
-    borderRadius: 16,
-    minWidth: 64,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  partyRoomJoinText: {
-    fontFamily: fonts.bold || "System",
-    fontSize: 12.5,
-    color: "#000000",
-    letterSpacing: 0.2,
-  },
-
-  // Top Header Party Button
-  partyHeaderBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.35)",
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  partyHeaderLiveDot: {
-    position: "absolute",
-    top: 3,
-    right: 3,
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: "#1DB954",
-    borderWidth: 1.5,
-    borderColor: "#000000",
-  },
-
-  // Full Parties tab styles
-  partiesSubHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 16,
-  },
-  partiesSubHeaderTitle: {
-    fontFamily: fonts.bold || "System",
-    fontSize: 18,
-    color: "#FFFFFF",
-  },
-  partiesSubHeaderSub: {
-    fontFamily: fonts.regular || "System",
-    fontSize: 12,
-    color: "#888888",
-    marginTop: 2,
-  },
-  partiesCreatePillBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#1DB954",
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    gap: 4,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  partiesCreatePillBtnText: {
-    fontFamily: fonts.bold || "System",
-    fontSize: 12.5,
-    color: "#000000",
-  },
-  partiesEmptyCreateBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#1DB954",
-    borderRadius: 20,
-    paddingHorizontal: 18,
-    paddingVertical: 9,
-    marginTop: 14,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  partiesEmptyCreateBtnText: {
-    fontFamily: fonts.bold || "System",
-    fontSize: 13,
-    color: "#000000",
-  },
-  partiesGrid: {
-    gap: 10,
-  },
-  partyFullCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "rgba(255, 255, 255, 0.04)",
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.08)",
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  partyFullCardLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-    marginRight: 12,
-  },
-  partyFullCardImg: {
-    width: 48,
-    height: 48,
-    borderRadius: 10,
-    marginRight: 12,
-    backgroundColor: "#1e1e24",
-  },
-  partyFullCardMeta: {
-    flex: 1,
-  },
-  partyFullCardName: {
-    fontFamily: fonts.bold || "System",
-    fontSize: 14,
-    color: "#FFFFFF",
-    marginTop: 2,
-  },
-  partyFullCardHost: {
-    fontFamily: fonts.regular || "System",
-    fontSize: 11.5,
-    color: "#A7A7A7",
-    marginTop: 1,
-  },
-  partyCardActionsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  partyHostDeleteBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(255, 77, 77, 0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 77, 77, 0.28)",
-    alignItems: "center",
-    justifyContent: "center",
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-
-  // ═══════════ DELETE LISTENING PARTY CONFIRMATION MODAL ═══════════
-  partyDeleteModalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.78)",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    paddingHorizontal: 0,
-    ...(Platform.OS === "web" ? { backdropFilter: "blur(6px)", cursor: "default" } : {}),
-  },
-  partyDeleteModalCard: {
-    width: "100%",
-    maxWidth: 480,
-    backgroundColor: "#16161A",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    borderBottomLeftRadius: 0,
-    borderBottomRightRadius: 0,
-    paddingHorizontal: 22,
-    paddingTop: 12,
-    paddingBottom: Platform.OS === "web" ? 32 : 44,
-    alignItems: "center",
-    borderWidth: 1,
-    borderBottomWidth: 0,
-    borderColor: "rgba(255, 255, 255, 0.12)",
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.5,
-    shadowRadius: 24,
-    elevation: 16,
-  },
-  partyDeleteDragHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "rgba(255, 255, 255, 0.25)",
-    alignSelf: "center",
-    marginBottom: 16,
-  },
-  partyDeleteIconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "rgba(255, 77, 77, 0.12)",
-    borderWidth: 1.5,
-    borderColor: "rgba(255, 77, 77, 0.28)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
-  },
-  partyDeleteModalTitle: {
-    fontFamily: fonts.bold || "System",
-    fontSize: 18,
-    color: "#FFFFFF",
-    textAlign: "center",
-    marginBottom: 10,
-    letterSpacing: -0.3,
-  },
-  partyDeleteModalSub: {
-    fontFamily: fonts.regular || "System",
-    fontSize: 13.5,
-    color: colors.textSecondary || "#A7A7A7",
-    textAlign: "center",
-    lineHeight: 20,
-    marginBottom: 24,
-  },
-  partyDeleteModalButtons: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    width: "100%",
-  },
-  partyDeleteCancelBtn: {
-    flex: 1,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.1)",
-    alignItems: "center",
-    justifyContent: "center",
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  partyDeleteCancelText: {
-    fontFamily: fonts.semiBold || "System",
-    fontSize: 14,
-    color: "#FFFFFF",
-  },
-  partyDeleteConfirmBtn: {
-    flex: 1,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "#FF453A",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#FF453A",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  partyDeleteConfirmText: {
-    fontFamily: fonts.bold || "System",
-    fontSize: 14,
-    color: "#FFFFFF",
-  },
-  partyRoomCardDeleteBtn: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: "rgba(255, 77, 77, 0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 77, 77, 0.25)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginLeft: "auto",
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  partyRoomHeaderLeft: {
-    flexDirection: "row",
-    alignItems: "center",
   },
 });

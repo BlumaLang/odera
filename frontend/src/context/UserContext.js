@@ -1,5 +1,5 @@
 // UserContext - Manages user profile, onboarding state, and preferences persistence via Firebase
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { api, DEFAULT_USER_ID } from "../api/client";
 import {
   auth,
@@ -108,13 +108,48 @@ export function formatUsername(raw) {
 // Default avatar is now a local memoji (Pastel Background set)
 export const DEFAULT_AVATAR = "memoji_0";
 
+function getInitialUserSession() {
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      const rawFb = window.localStorage.getItem("@staytup_firebase_user");
+      if (rawFb) {
+        const u = JSON.parse(rawFb);
+        if (u && u.uid) return u;
+      }
+      const rawPin = window.localStorage.getItem("@staytup_pin_user");
+      if (rawPin) {
+        const u = JSON.parse(rawPin);
+        if (u && u.uid) return u;
+      }
+      const rawQr = window.localStorage.getItem("@staytup_qr_user");
+      if (rawQr) {
+        const u = JSON.parse(rawQr);
+        if (u && u.uid) return u;
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
 export const UserProvider = ({ children }) => {
+  const initialSession = useMemo(() => getInitialUserSession(), []);
   const isFreshLoginRef = useRef(
     typeof window !== "undefined" &&
       (window.sessionStorage?.getItem("@staytup_oauth_fresh_login") === "true" ||
         window.localStorage?.getItem("@staytup_oauth_fresh_login") === "true")
   );
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    if (initialSession && initialSession.uid) {
+      return {
+        uid: initialSession.uid,
+        displayName: initialSession.displayName || initialSession.username || "Staytup Listener",
+        email: initialSession.email || null,
+        photoURL: initialSession.photoURL || null,
+        isAnonymous: false,
+      };
+    }
+    return null;
+  });
   const [isOnboardingCompleted, setIsOnboardingCompleted] = useState(() => {
     if (typeof window !== "undefined") {
       if (window.sessionStorage?.getItem("@staytup_retuning") === "true") {
@@ -127,8 +162,9 @@ export const UserProvider = ({ children }) => {
     }
     return true;
   });
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [loginProvider, setLoginProvider] = useState(null);
+  const [isLoggedIn, setIsLoggedIn] = useState(() => Boolean(initialSession?.uid));
+  const [loginProvider, setLoginProvider] = useState(() => initialSession?.providerId || (initialSession?.pin ? "pin" : initialSession?.qr ? "qr" : null));
+  const [isLoadingUser, setIsLoadingUser] = useState(() => !Boolean(initialSession?.uid));
   const [userProfile, setUserProfile] = useState({
     username: "Animikh",
     avatar: DEFAULT_AVATAR,
@@ -144,7 +180,6 @@ export const UserProvider = ({ children }) => {
   const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
   const [collabPlaylists, setCollabPlaylists] = useState([]);
   const [collabInvites, setCollabInvites] = useState([]);
-  const [isLoadingUser, setIsLoadingUser] = useState(true);
   const [isPremium, setIsPremium] = useState(false);
   const [premiumPlan, setPremiumPlan] = useState("Free");
   const [isProfileOpen, setIsProfileOpen] = useState(false);

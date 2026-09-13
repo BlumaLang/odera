@@ -1,8 +1,10 @@
 <IfModule mod_headers.c>
-    # Security headers (CORS handled by PHP backend)
-    Header always set Cross-Origin-Opener-Policy "same-origin-allow-popups"
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE, PATCH"
+    Header always set Access-Control-Allow-Headers "Authorization, Content-Type, Range, X-User-Id, Accept, Origin, User-Agent"
+    Header always set Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges"
+    Header always set Cross-Origin-Opener-Policy "unsafe-none"
     Header always set X-Content-Type-Options "nosniff"
-    Header always set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>
 
 # Explicitly grant public access to Web App Manifest and PWA assets
@@ -20,24 +22,12 @@
     RewriteEngine On
     RewriteBase /
 
-    # If existing file or directory, serve directly
+    # If stream.php or existing file/dir, serve directly
     RewriteCond %{REQUEST_FILENAME} -f [OR]
     RewriteCond %{REQUEST_FILENAME} -d
     RewriteRule ^ - [L]
 
-    # Route /api/* to the PHP API router
-    RewriteRule ^api/(.*)$ api/index.php [QSA,L]
-
-    # Route /api to the PHP API router
-    RewriteRule ^api$ api/index.php [L]
-
-    # If file exists in public/, serve from public/
-    RewriteCond %{DOCUMENT_ROOT}/public/$1 -f
-    RewriteRule ^(.*)$ public/$1 [L]
-
-    # Serve SPA frontend from public/index.html or index.html
-    RewriteCond %{DOCUMENT_ROOT}/public/index.html -f
-    RewriteRule ^ public/index.html [L]
+    # Otherwise forward to index.html for SPA
     RewriteRule ^ index.html [L]
 </IfModule>
 

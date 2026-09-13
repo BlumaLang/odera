@@ -5,7 +5,14 @@ import { colors, fonts } from "../theme/colors";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useAudioPlayback } from "../context/AudioContext";
 import { useUser } from "../context/UserContext";
-import { getHighResArtwork, decodeHtml } from "../utils/imageUtils";
+import {
+  getHighResArtwork,
+  decodeHtml,
+  extractImageUrl,
+  getCachedTrackArtwork,
+  setCachedTrackArtwork,
+} from "../utils/imageUtils";
+import { api } from "../api/client";
 
 function formatCardDuration(track) {
   if (
@@ -56,7 +63,8 @@ function SongCard({
   } = useAudioPlayback();
   const { isTrackInAnyPlaylist } = useUser?.() || {};
   const isInPlaylist = isTrackInAnyPlaylist ? isTrackInAnyPlaylist(track) : false;
-  const trackId = track?.videoId || track?.video_id;
+  const trackId = track?.videoId || track?.video_id || track?.id;
+  const cleanSongId = trackId ? String(trackId).replace(/^saavn_/, "").trim() : "";
   const isCurrent = Boolean(
     isActive ||
     (currentTrack?.videoId && trackId && currentTrack.videoId === trackId)
@@ -77,15 +85,15 @@ function SongCard({
     typeof id === "string" && id.length === 11 && /^[a-zA-Z0-9_-]{11}$/.test(id);
 
   const rawArtwork =
-    track?.artwork_url ||
-    track?.cover_url ||
-    track?.coverUrl ||
-    track?.preview_artwork ||
-    track?.image ||
-    track?.thumbnail ||
-    track?.coverImage ||
-    track?.cover_image ||
-    track?.artwork;
+    extractImageUrl(track?.artwork_url) ||
+    extractImageUrl(track?.cover_url) ||
+    extractImageUrl(track?.coverUrl) ||
+    extractImageUrl(track?.preview_artwork) ||
+    extractImageUrl(track?.image) ||
+    extractImageUrl(track?.thumbnail) ||
+    extractImageUrl(track?.coverImage) ||
+    extractImageUrl(track?.cover_image) ||
+    extractImageUrl(track?.artwork);
 
   const trackVid = isValidYtId(trackId)
     ? trackId
@@ -107,27 +115,45 @@ function SongCard({
     if (!item) return list;
 
     const addIfValid = (url) => {
-      if (url && typeof url === "string" && url.startsWith("http") && !list.includes(url)) {
-        list.push(url);
+      const extracted = extractImageUrl(url);
+      if (extracted && typeof extracted === "string" && extracted.startsWith("http")) {
+        const httpsUrl = extracted.replace(/^http:\/\//i, "https://");
+        if (!list.includes(httpsUrl)) {
+          list.push(httpsUrl);
+        }
       }
     };
 
-    // 1. Direct artwork
-    const directArt =
-      item.artwork_url ||
-      item.cover_url ||
-      item.coverUrl ||
-      item.preview_artwork ||
-      item.image ||
-      item.thumbnail ||
-      item.coverImage ||
-      item.cover_image ||
-      item.artwork;
+    // 0. Check in-memory shared cache from AudioContext / prior lookups
+    const cId = String(item.videoId || item.video_id || item.id || "").replace(/^saavn_/, "").trim();
+    if (cId) {
+      const cached = getCachedTrackArtwork(cId);
+      if (cached) addIfValid(cached);
+    }
 
-    if (directArt && typeof directArt === "string" && directArt.startsWith("http")) {
+    // 1. Direct artwork with multi-resolution fallbacks
+    const directArt =
+      extractImageUrl(item.artwork_url) ||
+      extractImageUrl(item.cover_url) ||
+      extractImageUrl(item.coverUrl) ||
+      extractImageUrl(item.preview_artwork) ||
+      extractImageUrl(item.image) ||
+      extractImageUrl(item.thumbnail) ||
+      extractImageUrl(item.coverImage) ||
+      extractImageUrl(item.cover_image) ||
+      extractImageUrl(item.artwork);
+
+    if (directArt) {
       const highRes = getHighResArtwork(directArt);
       if (highRes) addIfValid(highRes);
       addIfValid(directArt);
+
+      // Add alternate JioSaavn resolutions as fallbacks in case 500x500 is missing (404)
+      if (directArt.includes("saavncdn.com")) {
+        addIfValid(directArt.replace(/(?:50x50|500x500|250x250)/g, "150x150"));
+        addIfValid(directArt.replace(/(?:50x50|500x500|150x150)/g, "250x250"));
+        addIfValid(directArt.replace(/(?:150x150|500x500|250x250)/g, "50x50"));
+      }
     }
 
     // 2. Direct YT video thumbnail
@@ -141,6 +167,7 @@ function SongCard({
     if (vid) {
       addIfValid(`https://i.ytimg.com/vi/${vid}/hqdefault.jpg`);
       addIfValid(`https://i.ytimg.com/vi/${vid}/mqdefault.jpg`);
+      addIfValid(`https://i.ytimg.com/vi/${vid}/default.jpg`);
     }
 
     // 3. If item is a playlist or has child tracks, scan child tracks for first valid artwork
@@ -150,16 +177,16 @@ function SongCard({
       for (const t of arr) {
         if (!t) continue;
         const cArt =
-          t.artwork_url ||
-          t.cover_url ||
-          t.coverUrl ||
-          t.preview_artwork ||
-          t.image ||
-          t.thumbnail ||
-          t.coverImage ||
-          t.cover_image ||
-          t.artwork;
-        if (cArt && typeof cArt === "string" && cArt.startsWith("http")) {
+          extractImageUrl(t.artwork_url) ||
+          extractImageUrl(t.cover_url) ||
+          extractImageUrl(t.coverUrl) ||
+          extractImageUrl(t.preview_artwork) ||
+          extractImageUrl(t.image) ||
+          extractImageUrl(t.thumbnail) ||
+          extractImageUrl(t.coverImage) ||
+          extractImageUrl(t.cover_image) ||
+          extractImageUrl(t.artwork);
+        if (cArt) {
           const highRes = getHighResArtwork(cArt);
           if (highRes) addIfValid(highRes);
           addIfValid(cArt);
@@ -174,6 +201,7 @@ function SongCard({
         if (cVid) {
           addIfValid(`https://i.ytimg.com/vi/${cVid}/hqdefault.jpg`);
           addIfValid(`https://i.ytimg.com/vi/${cVid}/mqdefault.jpg`);
+          addIfValid(`https://i.ytimg.com/vi/${cVid}/default.jpg`);
         }
         if (list.length >= 8) break;
       }
@@ -188,15 +216,33 @@ function SongCard({
     const candidates = getCandidateCovers(track);
     if (candidates.length > 0) {
       setCurrentArtwork(candidates[0]);
-    } else if (rawArtwork && typeof rawArtwork === "string" && rawArtwork.startsWith("http")) {
+    } else if (rawArtwork) {
       setCurrentArtwork(getHighResArtwork(rawArtwork) || rawArtwork);
     } else if (trackVid) {
       setCurrentArtwork(`https://i.ytimg.com/vi/${trackVid}/hqdefault.jpg`);
+    } else if (cleanSongId) {
+      // Missing artwork: resolve via backend/cache just like player does
+      const cached = getCachedTrackArtwork(cleanSongId);
+      if (cached) {
+        setCurrentArtwork(cached);
+      } else {
+        api.getTrackImage(cleanSongId, track?.title, track?.artist)
+          .then((resolvedImg) => {
+            if (resolvedImg) {
+              setCachedTrackArtwork(cleanSongId, resolvedImg);
+              setCurrentArtwork(resolvedImg);
+              setImageError(false);
+            } else {
+              setImageError(true);
+            }
+          })
+          .catch(() => setImageError(true));
+      }
     } else {
       setCurrentArtwork("");
       setImageError(true);
     }
-  }, [track, rawArtwork, trackVid, getCandidateCovers]);
+  }, [track, rawArtwork, trackVid, cleanSongId, getCandidateCovers]);
 
   const handleImageError = () => {
     if (currentArtwork) failedUrlsRef.current.add(currentArtwork);
@@ -222,6 +268,24 @@ function SongCard({
         return;
       }
     }
+
+    // If candidates exhausted and we have cleanSongId, attempt api.getTrackImage fallback
+    if (cleanSongId && !failedUrlsRef.current.has(`lookup_${cleanSongId}`)) {
+      failedUrlsRef.current.add(`lookup_${cleanSongId}`);
+      api.getTrackImage(cleanSongId, track?.title, track?.artist)
+        .then((resolvedImg) => {
+          if (resolvedImg && !failedUrlsRef.current.has(resolvedImg)) {
+            setCachedTrackArtwork(cleanSongId, resolvedImg);
+            setCurrentArtwork(resolvedImg);
+            setImageError(false);
+          } else {
+            setImageError(true);
+          }
+        })
+        .catch(() => setImageError(true));
+      return;
+    }
+
     setImageError(true);
   };
 
@@ -245,7 +309,12 @@ function SongCard({
           {/* Header with track preview */}
           <View style={styles.menuHeaderRow}>
             {currentArtwork && !imageError ? (
-              <Image source={{ uri: currentArtwork }} style={styles.menuArtwork} />
+              <Image
+                key={currentArtwork || "menu-art"}
+                source={{ uri: currentArtwork }}
+                style={styles.menuArtwork}
+                resizeMode="cover"
+              />
             ) : (
               <View style={[styles.menuArtwork, styles.menuArtworkFallback]}>
                 <Ionicons name="musical-notes" size={22} color={colors.primary} />
@@ -412,8 +481,10 @@ function SongCard({
         <View style={styles.artworkWrapper}>
           {currentArtwork && !imageError ? (
             <Image
+              key={currentArtwork || "row-art"}
               source={{ uri: currentArtwork }}
               style={styles.rowArtwork}
+              resizeMode="cover"
               onError={handleImageError}
             />
           ) : (
@@ -541,8 +612,10 @@ function SongCard({
       <View style={styles.cardArtworkContainer}>
         {currentArtwork && !imageError ? (
           <Image
+            key={currentArtwork || "card-art"}
             source={{ uri: currentArtwork }}
             style={styles.cardArtwork}
+            resizeMode="cover"
             onError={handleImageError}
           />
         ) : (
@@ -667,6 +740,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 6,
     backgroundColor: colors.surfaceCard,
+    overflow: "hidden",
   },
   activeOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -751,6 +825,7 @@ const styles = StyleSheet.create({
   cardArtwork: {
     width: "100%",
     height: "100%",
+    backgroundColor: colors.surfaceCard,
   },
   artworkFallback: {
     alignItems: "center",
@@ -878,6 +953,8 @@ const styles = StyleSheet.create({
     height: 50,
     borderRadius: 8,
     marginRight: 12,
+    backgroundColor: colors.surfaceCard,
+    overflow: "hidden",
   },
   menuArtworkFallback: {
     backgroundColor: "rgba(255, 255, 255, 0.08)",

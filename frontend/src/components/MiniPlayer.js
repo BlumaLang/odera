@@ -26,7 +26,10 @@ export default function MiniPlayer() {
     togglePlayPause,
     playNext,
     setFullPlayerVisible,
-    activePartyId,
+    isRemotePlaying,
+    remotePlaybackSession,
+    transferPlaybackToThisDevice,
+    openDeviceModal,
   } = useAudio();
   const { isSongLiked, toggleLikeSong } = useUser();
 
@@ -38,9 +41,6 @@ export default function MiniPlayer() {
     setShowLikeConfetti(false);
   }, [currentTrack?.videoId, currentTrack?.video_id]);
 
-  // Don't display or start miniplayer when inside a listening party room
-  if (!currentTrack || activePartyId) return null;
-
   const cleanTitle = (title) => {
     if (!title) return "";
     return title
@@ -49,6 +49,92 @@ export default function MiniPlayer() {
       .replace(/\s{2,}/g, " ")
       .trim();
   };
+
+  // Don't display or start miniplayer when no track is playing
+  if (!currentTrack && !isRemotePlaying) return null;
+
+  // Remote Playback Active on Another Device (Spotify Connect Mode)
+  if (isRemotePlaying && remotePlaybackSession?.track) {
+    const remoteTrack = remotePlaybackSession.track;
+    const remoteDevName = remotePlaybackSession.deviceName || "Another Device";
+    const remoteArtwork = getHighResArtwork(remoteTrack.artwork_url || remoteTrack.thumbnail);
+
+    return (
+      <View style={styles.outerContainer}>
+        {/* Top Spotify Connect Bar */}
+        <TouchableOpacity
+          style={styles.connectTopBanner}
+          onPress={() => setFullPlayerVisible(true)}
+          activeOpacity={0.85}
+        >
+          <View style={styles.connectTopBannerLeft}>
+            <Ionicons name="volume-high" size={14} color="#000000" style={{ marginRight: 6 }} />
+            <Text style={styles.connectTopBannerText} numberOfLines={1}>
+              Listening on <Text style={{ fontFamily: fonts.bold }}>{remoteDevName}</Text>
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={13} color="#000000" />
+        </TouchableOpacity>
+
+        {/* Remote Song Row */}
+        <TouchableOpacity
+          style={[styles.container, styles.remoteContainer]}
+          onPress={() => setFullPlayerVisible(true)}
+          activeOpacity={0.92}
+        >
+          <View style={styles.contentRow}>
+            {/* Artwork */}
+            <TouchableOpacity
+              style={styles.artworkContainer}
+              onPress={() => setFullPlayerVisible(true)}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Open Full Player"
+            >
+              {remoteArtwork ? (
+                <Image source={{ uri: remoteArtwork }} style={styles.artwork} resizeMode="cover" />
+              ) : (
+                <View style={[styles.artwork, styles.artworkFallback]}>
+                  <Ionicons name="musical-note" size={18} color={colors.primary} />
+                </View>
+              )}
+            </TouchableOpacity>
+
+            {/* Song Info */}
+            <TouchableOpacity
+              style={styles.infoContainer}
+              onPress={() => setFullPlayerVisible(true)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
+                {cleanTitle(remoteTrack.title)}
+              </Text>
+              <Text style={styles.artist} numberOfLines={1} ellipsizeMode="tail">
+                {remoteTrack.artist}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Play on this device Button */}
+            <TouchableOpacity
+              style={styles.playHereMiniBtn}
+              onPress={async (e) => {
+                e?.stopPropagation?.();
+                if (transferPlaybackToThisDevice) {
+                  await transferPlaybackToThisDevice();
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="play" size={14} color="#000000" style={{ marginRight: 5 }} />
+              <Text style={styles.playHereMiniBtnText}>Play on this device</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (!currentTrack) return null;
 
   const rawArtwork = currentTrack.artwork_url || currentTrack.thumbnail;
   const artwork = getHighResArtwork(rawArtwork);
@@ -293,5 +379,41 @@ const styles = StyleSheet.create({
   progressBarFill: {
     height: "100%",
     backgroundColor: colors.primary,
+  },
+  connectTopBanner: {
+    backgroundColor: colors.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  connectTopBannerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    marginRight: 8,
+  },
+  connectTopBannerText: {
+    fontSize: 11,
+    fontFamily: fonts.medium,
+    color: "#000000",
+  },
+  remoteContainer: {
+    borderTopWidth: 0,
+  },
+  playHereMiniBtn: {
+    backgroundColor: colors.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginLeft: "auto",
+  },
+  playHereMiniBtnText: {
+    color: "#000000",
+    fontSize: 11,
+    fontFamily: fonts.bold,
   },
 });

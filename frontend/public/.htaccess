@@ -3,7 +3,7 @@
     Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE, PATCH"
     Header always set Access-Control-Allow-Headers "Authorization, Content-Type, Range, X-User-Id, Accept, Origin, User-Agent"
     Header always set Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges"
-    Header always set Cross-Origin-Opener-Policy "same-origin-allow-popups"
+    Header always set Cross-Origin-Opener-Policy "unsafe-none"
     Header always set X-Content-Type-Options "nosniff"
 </IfModule>
 

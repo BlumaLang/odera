@@ -113,12 +113,31 @@ class JioSaavnService {
         }
         $album = self::normalizeAlbum($data);
         $songs = [];
-        foreach ($data['songs'] ?? [] as $song) {
-            $songs[] = self::normalizeSong($song);
+        $rawSongs = $data['list'] ?? $data['songs'] ?? [];
+        foreach ($rawSongs as $song) {
+            $songs[] = self::normalizeTrack($song);
         }
         $album['tracks'] = $songs;
         $album['track_count'] = count($songs);
         return $album;
+    }
+
+    public static function getPlaylistDetails($playlistId) {
+        $data = self::callApi('playlist.getDetails', [
+            'listid' => $playlistId,
+        ]);
+        if (empty($data) || (empty($data['id']) && empty($data['listid']))) {
+            return null;
+        }
+        $playlist = self::normalizePlaylist($data);
+        $songs = [];
+        $rawSongs = $data['list'] ?? $data['songs'] ?? [];
+        foreach ($rawSongs as $song) {
+            $songs[] = self::normalizeTrack($song);
+        }
+        $playlist['tracks'] = $songs;
+        $playlist['track_count'] = count($songs);
+        return $playlist;
     }
 
     public static function searchPlaylists($query, $page = 1, $limit = 20) {
@@ -741,6 +760,7 @@ class JioSaavnService {
                     ['/500x500/', '/500x500/', '/500x500/', '_500x500.', '_500x500.', '_500x500.', '-500x500.', '-500x500.', '-500x500.'],
                     $url
                 );
+                $url = preg_replace('/^http:\/\//i', 'https://', $url);
             }
             return $url;
         }
@@ -753,6 +773,7 @@ class JioSaavnService {
                 ['/500x500/', '/500x500/', '/500x500/', '_500x500.', '_500x500.', '_500x500.', '-500x500.', '-500x500.', '-500x500.'],
                 $url
             );
+            $url = preg_replace('/^http:\/\//i', 'https://', $url);
             return $url;
         }
         
@@ -790,6 +811,7 @@ class JioSaavnService {
                 ['/500x500/', '/500x500/', '/500x500/', '_500x500.', '_500x500.', '_500x500.', '-500x500.', '-500x500.', '-500x500.'],
                 $bestLink
             );
+            $bestLink = preg_replace('/^http:\/\//i', 'https://', $bestLink);
         }
         
         return $bestLink ?: '';

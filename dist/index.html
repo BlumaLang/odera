@@ -101,6 +101,11 @@
         background-color: #1DB954;
         color: #000000;
       }
+      /* Prevent Safari iOS WebKit from rendering white background for loading/missing images */
+      img {
+        background-color: #141414 !important;
+        color: transparent !important;
+      }
 
       /* ── Native HTML Splash Screen ── */
       #staytup-splash {
@@ -155,7 +160,8 @@
           '369219127', 'postMessage', 'DOMWindow', 'target origin', 'www-widgetapi',
           'Failed to convert value to \'Response\'', 'FetchEvent for', 'network error response',
           'doubleclick', 'googleads', 'ytimg', 'innertube', 'startTime', 'reportAllChanges',
-          'Cannot read properties of undefined', 'reading \'startTime\'', 'staytup-audio-player'
+          'Cannot read properties of undefined', 'reading \'startTime\'', 'staytup-audio-player',
+          'Cross-Origin-Opener-Policy', 'window.closed', 'window.close'
         ];
         function shouldIgnore(args) {
           try {
@@ -389,6 +395,6 @@
         }, 1200);
       })();
     </script>
-  <script src="/_expo/static/js/web/index-033a8c2103f786f802bdfd3495c82f15.js" defer></script>
+  <script src="/_expo/static/js/web/index-7fbc62264b1f5574cf0afffa7d79f1c0.js" defer></script>
 </body>
 </html>

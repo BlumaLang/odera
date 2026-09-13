@@ -20,6 +20,7 @@ import {
   getOrCreateDeviceId,
   subscribeActiveDevices,
   removeActiveDevice,
+  auth,
 } from "../services/firebase";
 
 function formatRelativeTime(timestamp) {
@@ -39,7 +40,16 @@ function formatRelativeTime(timestamp) {
 
 export default function ActiveDevicesModal({ visible, onClose }) {
   const { userProfile } = useUser() || {};
-  const { currentTrack, isPlaying } = useAudio() || {};
+  const {
+    currentTrack,
+    isPlaying,
+    playbackSession,
+    isRemotePlaying,
+    remotePlaybackSession,
+    transferPlaybackToThisDevice,
+    isDeviceModalOpen,
+    closeDeviceModal,
+  } = useAudio() || {};
   const responsive = (typeof useResponsive === "function" ? useResponsive() : null) || {};
   const isDesktop = responsive.isDesktop ?? (typeof window !== "undefined" ? window.innerWidth >= 1024 : false);
   const isTablet = responsive.isTablet ?? (typeof window !== "undefined" ? (window.innerWidth >= 768 && window.innerWidth < 1024) : false);
@@ -48,10 +58,16 @@ export default function ActiveDevicesModal({ visible, onClose }) {
   const deviceType = responsive.deviceType || (isDesktop ? "desktop" : isTablet ? "tablet" : "phone");
 
   const [internalVisible, setInternalVisible] = useState(false);
-  const isShown = visible !== undefined ? visible : internalVisible;
+  const isShown = Boolean(visible || isDeviceModalOpen || internalVisible);
   const handleClose = () => {
-    if (onClose) onClose();
     setInternalVisible(false);
+    if (onClose) onClose();
+    if (closeDeviceModal) closeDeviceModal();
+    try {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("staytup-close-devices"));
+      }
+    } catch (_) {}
   };
 
   useEffect(() => {
@@ -82,15 +98,17 @@ export default function ActiveDevicesModal({ visible, onClose }) {
     return () => clearInterval(interval);
   }, [isShown]);
 
+  const activeUid = userProfile?.uid || auth?.currentUser?.uid;
+
   // Subscribe to live active devices for this user
   useEffect(() => {
-    if (!isShown || !userProfile?.uid) {
+    if (!isShown || !activeUid) {
       setLoading(false);
       return;
     }
 
     setLoading(true);
-    const unsubscribe = subscribeActiveDevices(userProfile.uid, (list) => {
+    const unsubscribe = subscribeActiveDevices(activeUid, (list) => {
       setDevices(list || []);
       setLoading(false);
     });
@@ -100,7 +118,7 @@ export default function ActiveDevicesModal({ visible, onClose }) {
         unsubscribe();
       } catch (_) {}
     };
-  }, [visible, userProfile?.uid]);
+  }, [isShown, activeUid]);
 
   // Keyboard Escape listener (web)
   useEffect(() => {
@@ -159,8 +177,6 @@ export default function ActiveDevicesModal({ visible, onClose }) {
   const myBrowser = currentDeviceFromList?.browser || "Web Browser";
   const myIcon = currentDeviceFromList?.icon || deviceIcon || "desktop-outline";
 
-  const totalOnline = devices.filter((d) => d.isOnline).length || 1;
-
   const handleLogoutDevice = async (deviceId) => {
     if (!userProfile?.uid || !deviceId) return;
     try {
@@ -198,21 +214,7 @@ export default function ActiveDevicesModal({ visible, onClose }) {
 
           {/* Header Row */}
           <View style={styles.headerRow}>
-            <View style={styles.headerLeft}>
-              <Text style={styles.headerTitle}>Active Devices</Text>
-              <Text style={styles.headerSubtitle}>
-                {totalOnline} device{totalOnline === 1 ? "" : "s"} online on your account
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={handleClose}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityLabel="Close active devices"
-            >
-              <Ionicons name="close" size={20} color="#AAAAAA" />
-            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Active Devices</Text>
           </View>
 
           <ScrollView
@@ -220,55 +222,63 @@ export default function ActiveDevicesModal({ visible, onClose }) {
             contentContainerStyle={styles.scrollContentContainer}
             showsVerticalScrollIndicator={false}
           >
-            {/* Section 1: Current Device Card */}
+            {/* Section 1: Current Device Row */}
             <View style={styles.sectionHeaderWrap}>
               <Text style={styles.sectionLabel}>CURRENT DEVICE</Text>
             </View>
 
-            <View style={styles.currentDeviceCard}>
-              <View style={styles.deviceIconCircleCurrent}>
-                <Ionicons name={myIcon} size={22} color={colors.primary} />
-              </View>
-
-              <View style={styles.deviceInfoCol}>
-                <View style={styles.deviceNameRow}>
-                  <Text style={styles.deviceNameText} numberOfLines={1}>
-                    {myName}
-                  </Text>
-                  <View style={styles.currentBadge}>
-                    <Text style={styles.currentBadgeText}>Current device</Text>
+            {(() => {
+              const isCurrentPlayingNow = isPlaying && (!playbackSession?.deviceId || playbackSession?.deviceId === currentDeviceId);
+              return (
+                <View style={styles.deviceRow}>
+                  <View style={styles.deviceIconBox}>
+                    <Ionicons name={myIcon} size={22} color="#FFFFFF" />
                   </View>
-                </View>
 
-                <View style={styles.deviceMetaRow}>
-                  <Text style={styles.deviceMetaText} numberOfLines={1}>
-                    {myPlatform} &middot; {myBrowser}
-                  </Text>
-                </View>
+                  <View style={styles.deviceInfoCol}>
+                    <View style={styles.deviceNameRow}>
+                      <Text style={styles.deviceNameText} numberOfLines={1}>
+                        {myName}
+                      </Text>
+                      <View style={styles.currentBadge}>
+                        <Text style={styles.currentBadgeText}>This device</Text>
+                      </View>
+                    </View>
 
-                {currentTrack && (
-                  <View style={styles.playingTrackRow}>
-                    <Ionicons
-                      name={isPlaying ? "volume-high" : "pause"}
-                      size={12}
-                      color={colors.primary}
-                      style={{ marginRight: 5 }}
-                    />
-                    <Text style={styles.playingTrackText} numberOfLines={1}>
-                      {currentTrack.title}
-                    </Text>
+                    <View style={styles.deviceMetaRow}>
+                      <Text style={styles.deviceMetaText} numberOfLines={1}>
+                        {myPlatform} &middot; {myBrowser}
+                      </Text>
+                    </View>
                   </View>
-                )}
-              </View>
 
-              <View style={styles.liveStatusPill}>
-                <View style={styles.liveDotPulsing} />
-                <Text style={styles.liveStatusText}>Active now</Text>
-              </View>
-            </View>
+                  {isRemotePlaying ? (
+                    <TouchableOpacity
+                      style={styles.playHereButton}
+                      onPress={async () => {
+                        if (transferPlaybackToThisDevice) {
+                          await transferPlaybackToThisDevice();
+                        }
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="play" size={13} color="#000000" style={{ marginRight: 4 }} />
+                      <Text style={styles.playHereButtonText}>Play here</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.liveStatusPill}>
+                      <View style={[styles.liveDotPulsing, !isCurrentPlayingNow && { backgroundColor: "rgba(255, 255, 255, 0.35)" }]} />
+                      <Text style={styles.liveStatusText}>
+                        {isCurrentPlayingNow ? "Listening" : "Online"}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })()}
 
             {/* Section 2: Other Registered Devices */}
-            <View style={[styles.sectionHeaderWrap, { marginTop: 18 }]}>
+            <View style={[styles.sectionHeaderWrap, { marginTop: 20 }]}>
               <Text style={styles.sectionLabel}>
                 OTHER SESSIONS ({otherDevices.length})
               </Text>
@@ -276,13 +286,13 @@ export default function ActiveDevicesModal({ visible, onClose }) {
 
             {loading ? (
               <View style={styles.loadingBox}>
-                <ActivityIndicator size="small" color={colors.primary} />
-                <Text style={styles.loadingText}>Updating device status...</Text>
+                <ActivityIndicator size="small" color="rgba(255, 255, 255, 0.6)" />
+                <Text style={styles.loadingText}>Updating devices...</Text>
               </View>
             ) : otherDevices.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <Ionicons name="shield-checkmark-outline" size={28} color="rgba(255, 255, 255, 0.3)" style={{ marginBottom: 6 }} />
-                <Text style={styles.emptyTitle}>No other active devices</Text>
+              <View style={styles.emptyBox}>
+                <Ionicons name="shield-checkmark-outline" size={24} color="rgba(255, 255, 255, 0.25)" style={{ marginBottom: 6 }} />
+                <Text style={styles.emptyTitle}>No other devices active</Text>
                 <Text style={styles.emptySub}>
                   Log in on your laptop, iPad, or phone with this account to listen seamlessly across devices.
                 </Text>
@@ -290,16 +300,23 @@ export default function ActiveDevicesModal({ visible, onClose }) {
             ) : (
               otherDevices.map((dev) => {
                 const isOnline = dev.isOnline === true;
-                const relTime = isOnline ? "Active now" : formatRelativeTime(dev.lastActive);
+                const isThisDevPlaying = Boolean(
+                  playbackSession?.isPlaying &&
+                  playbackSession?.deviceId === dev.id
+                );
+                const relTime = isThisDevPlaying ? "Listening" : isOnline ? "Online" : formatRelativeTime(dev.lastActive);
                 const devIcon = dev.icon || (dev.deviceType === "desktop" ? "desktop-outline" : dev.deviceType === "tablet" ? "tablet-portrait-outline" : "phone-portrait-outline");
 
                 return (
-                  <View key={dev.id} style={styles.deviceCard}>
-                    <View style={[styles.deviceIconCircle, isOnline && styles.deviceIconCircleOnline]}>
+                  <View
+                    key={dev.id}
+                    style={styles.deviceRow}
+                  >
+                    <View style={styles.deviceIconBox}>
                       <Ionicons
                         name={devIcon}
                         size={20}
-                        color={isOnline ? colors.primary : "rgba(255, 255, 255, 0.55)"}
+                        color={isOnline || isThisDevPlaying ? "#FFFFFF" : "rgba(255, 255, 255, 0.45)"}
                       />
                     </View>
 
@@ -308,6 +325,11 @@ export default function ActiveDevicesModal({ visible, onClose }) {
                         <Text style={styles.deviceNameText} numberOfLines={1}>
                           {dev.name || "Staytup Device"}
                         </Text>
+                        {isThisDevPlaying && (
+                          <View style={styles.playingBadge}>
+                            <Text style={styles.playingBadgeText}>Listening</Text>
+                          </View>
+                        )}
                       </View>
 
                       <View style={styles.deviceMetaRow}>
@@ -318,16 +340,31 @@ export default function ActiveDevicesModal({ visible, onClose }) {
                     </View>
 
                     <View style={styles.deviceActionCol}>
-                      <View style={styles.statusIndicatorRow}>
-                        <View style={[styles.statusDot, isOnline ? styles.statusDotOnline : styles.statusDotOffline]} />
-                        <Text style={[styles.statusText, isOnline && styles.statusTextOnline]}>
-                          {relTime}
-                        </Text>
-                      </View>
+                      {isThisDevPlaying ? (
+                        <TouchableOpacity
+                          style={styles.playHereButtonSmall}
+                          onPress={async () => {
+                            if (transferPlaybackToThisDevice) {
+                              await transferPlaybackToThisDevice();
+                            }
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="play" size={11} color="#000000" style={{ marginRight: 3 }} />
+                          <Text style={styles.playHereButtonTextSmall}>Play here</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <View style={styles.statusIndicatorRow}>
+                          <View style={[styles.statusDot, isOnline ? styles.statusDotOnline : styles.statusDotOffline]} />
+                          <Text style={[styles.statusText, isOnline && styles.statusTextOnline]}>
+                            {relTime}
+                          </Text>
+                        </View>
+                      )}
 
                       {/* Log out / Disconnect device session button */}
                       <TouchableOpacity
-                        style={styles.disconnectBtn}
+                        style={[styles.disconnectBtn, isThisDevPlaying && { marginTop: 4 }]}
                         onPress={() => handleLogoutDevice(dev.id)}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         accessibilityLabel="Disconnect session"
@@ -370,31 +407,25 @@ const styles = StyleSheet.create({
   modalContainer: {
     width: "100%",
     maxHeight: "85%",
-    backgroundColor: "#121215",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
+    backgroundColor: "#111114",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: Platform.OS === "ios" ? 36 : 24,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.08)",
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: -6 },
-    shadowOpacity: 0.6,
-    shadowRadius: 24,
-    elevation: 20,
   },
   modalContainerDesktop: {
-    width: 480,
-    maxWidth: "92%",
-    borderRadius: 20,
+    width: 520,
+    maxWidth: "96%",
+    borderRadius: 16,
     alignSelf: "center",
     marginBottom: "auto",
     marginTop: "auto",
-    paddingBottom: 24,
+    paddingBottom: 20,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.12)",
-    shadowOffset: { width: 0, height: 12 },
+    borderColor: "rgba(255, 255, 255, 0.08)",
   },
   dragHandleContainer: {
     alignItems: "center",
@@ -403,59 +434,31 @@ const styles = StyleSheet.create({
   },
   dragHandle: {
     width: 38,
-    height: 4.5,
-    borderRadius: 3,
-    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
   },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255, 255, 255, 0.06)",
-    marginBottom: 12,
-  },
-  headerLeft: {
-    flex: 1,
-  },
-  headerIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(29, 185, 84, 0.12)",
-    alignItems: "center",
-    justifyContent: "center",
+    paddingVertical: 12,
+    marginBottom: 8,
   },
   headerTitle: {
     fontFamily: fonts.bold,
-    fontSize: 18,
+    fontSize: 17,
     color: "#FFFFFF",
     letterSpacing: -0.2,
-  },
-  headerSubtitle: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: "rgba(255, 255, 255, 0.5)",
-    marginTop: 1,
-  },
-  closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    alignItems: "center",
-    justifyContent: "center",
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   scrollContent: {
     maxHeight: 460,
   },
   scrollContentContainer: {
-    paddingVertical: 6,
+    paddingVertical: 4,
   },
   sectionHeaderWrap: {
-    marginBottom: 8,
+    marginBottom: 6,
+    paddingHorizontal: 4,
   },
   sectionLabel: {
     fontFamily: fonts.bold,
@@ -464,24 +467,18 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     textTransform: "uppercase",
   },
-  currentDeviceCard: {
+  deviceRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#1A1A20",
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.28)",
-    shadowColor: "rgba(29, 185, 84, 0.2)",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderRadius: 8,
   },
-  deviceIconCircleCurrent: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(29, 185, 84, 0.14)",
+  deviceIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
     alignItems: "center",
     justifyContent: "center",
     marginRight: 12,
@@ -495,27 +492,35 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexWrap: "wrap",
     gap: 6,
-    marginBottom: 3,
+    marginBottom: 2,
   },
   deviceNameText: {
-    fontFamily: fonts.bold,
-    fontSize: 15,
+    fontFamily: fonts.semiBold,
+    fontSize: 14.5,
     color: "#FFFFFF",
     letterSpacing: -0.2,
   },
   currentBadge: {
-    backgroundColor: "rgba(29, 185, 84, 0.18)",
-    paddingHorizontal: 7,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.35)",
+    borderRadius: 4,
   },
   currentBadgeText: {
-    fontFamily: fonts.bold,
+    fontFamily: fonts.medium,
     fontSize: 10,
-    color: colors.primary,
-    letterSpacing: 0.2,
+    color: "rgba(255, 255, 255, 0.7)",
+  },
+  playingBadge: {
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  playingBadgeText: {
+    fontFamily: fonts.medium,
+    fontSize: 10,
+    color: "rgba(255, 255, 255, 0.7)",
   },
   deviceMetaRow: {
     flexDirection: "row",
@@ -524,60 +529,55 @@ const styles = StyleSheet.create({
   deviceMetaText: {
     fontFamily: fonts.regular,
     fontSize: 12,
-    color: "rgba(255, 255, 255, 0.55)",
-  },
-  playingTrackRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 5,
-  },
-  playingTrackText: {
-    fontFamily: fonts.medium,
-    fontSize: 11.5,
-    color: colors.primary,
-    flex: 1,
+    color: "rgba(255, 255, 255, 0.45)",
   },
   liveStatusPill: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(29, 185, 84, 0.12)",
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
     gap: 6,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
   },
   liveDotPulsing: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: colors.primary,
+    backgroundColor: "rgba(255, 255, 255, 0.6)",
   },
   liveStatusText: {
     fontFamily: fonts.medium,
     fontSize: 11,
-    color: colors.primary,
+    color: "rgba(255, 255, 255, 0.65)",
   },
-  deviceCard: {
+  playHereButton: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#16161B",
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.06)",
+    backgroundColor: colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  deviceIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255, 255, 255, 0.05)",
+  playHereButtonText: {
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: "#000000",
+  },
+  playHereButtonSmall: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 14,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
-  deviceIconCircleOnline: {
-    backgroundColor: "rgba(29, 185, 84, 0.1)",
+  playHereButtonTextSmall: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    color: "#000000",
   },
   deviceActionCol: {
     alignItems: "flex-end",
@@ -586,7 +586,7 @@ const styles = StyleSheet.create({
   statusIndicatorRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 5,
   },
   statusDot: {
     width: 6,
@@ -594,55 +594,51 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   statusDotOnline: {
-    backgroundColor: colors.primary,
+    backgroundColor: "rgba(255, 255, 255, 0.6)",
   },
   statusDotOffline: {
-    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
   },
   statusText: {
     fontFamily: fonts.regular,
     fontSize: 11,
-    color: "rgba(255, 255, 255, 0.45)",
+    color: "rgba(255, 255, 255, 0.4)",
   },
   statusTextOnline: {
-    color: colors.primary,
+    color: "rgba(255, 255, 255, 0.7)",
     fontFamily: fonts.medium,
   },
   disconnectBtn: {
     paddingVertical: 2,
     paddingHorizontal: 6,
     borderRadius: 4,
-    backgroundColor: "rgba(255, 255, 255, 0.06)",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
   },
   disconnectBtnText: {
-    fontFamily: fonts.medium,
-    fontSize: 10,
-    color: "rgba(255, 255, 255, 0.45)",
+    fontFamily: fonts.regular,
+    fontSize: 10.5,
+    color: "rgba(255, 255, 255, 0.35)",
   },
-  emptyCard: {
-    backgroundColor: "#16161B",
-    borderRadius: 14,
-    padding: 20,
+  emptyBox: {
+    paddingVertical: 24,
+    paddingHorizontal: 16,
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.05)",
   },
   emptyTitle: {
     fontFamily: fonts.semiBold,
-    fontSize: 14,
-    color: "rgba(255, 255, 255, 0.8)",
+    fontSize: 13.5,
+    color: "rgba(255, 255, 255, 0.7)",
     marginBottom: 4,
   },
   emptySub: {
     fontFamily: fonts.regular,
     fontSize: 11.5,
-    color: "rgba(255, 255, 255, 0.45)",
+    color: "rgba(255, 255, 255, 0.4)",
     textAlign: "center",
     lineHeight: 16,
   },
   loadingBox: {
-    paddingVertical: 24,
+    paddingVertical: 20,
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
@@ -650,19 +646,20 @@ const styles = StyleSheet.create({
   loadingText: {
     fontFamily: fonts.medium,
     fontSize: 12,
-    color: "rgba(255, 255, 255, 0.45)",
+    color: "rgba(255, 255, 255, 0.4)",
   },
   footerNoteWrap: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 14,
+    marginTop: 16,
     paddingHorizontal: 4,
+    paddingTop: 4,
   },
   footerNoteText: {
     flex: 1,
     fontFamily: fonts.regular,
     fontSize: 11,
-    color: "rgba(255, 255, 255, 0.35)",
+    color: "rgba(255, 255, 255, 0.3)",
     lineHeight: 15,
   },
 });

@@ -2247,9 +2247,7 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   desktopLibraryInner: {
-    maxWidth: 960,
     width: "100%",
-    alignSelf: "center",
     paddingHorizontal: 16,
   },
   header: {
@@ -2262,9 +2260,8 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   desktopHeaderInner: {
-    maxWidth: 960,
     width: "100%",
-    alignSelf: "center",
+    paddingHorizontal: 16,
   },
   profileRow: {
     height: 38,

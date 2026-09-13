@@ -78,7 +78,7 @@ We collect only the minimal data strictly required to deliver a seamless, person
 • Account Information: When you sign in via Google OAuth or Firebase Authentication, we receive your basic authentication profile (unique Firebase UID, display name, registered email address, and profile picture avatar).
 • User-Created Content: Playlists you create, tracks marked as Liked/Favorites, custom playlist folders, and custom playlist covers.
 • Listening & Interaction History: Song play counts, recently played tracks, and search queries, used exclusively to power personal recommendations, listening statistics, and library management.
-• Social & Presence Data: When using collaborative features (such as Listening Party or live listening status), your active playback state (track title, artist, playback timestamp) and emoji reaction bursts are broadcast in real time to connected peers.
+• Social & Presence Data: When using collaborative features (such as Blend or live listening status), your active playback state (track title, artist, playback timestamp) and emoji reaction bursts are broadcast in real time to connected peers.
 • Technical & Device Telemetry: Anonymous client platform identifiers (e.g. browser type, operating system family, hardware classification) used solely for responsive UI rendering and active session device management.
 
 3. HOW WE USE YOUR INFORMATION
@@ -86,7 +86,6 @@ Your information is processed exclusively for the following operational and educ
 • Authenticating your identity and safeguarding your account against unauthorized access;
 • Synchronizing your playlists, liked tracks, and library across multiple devices;
 • Calculating personal listening statistics (e.g., hours listened, favorite artists);
-• Facilitating real-time synchronized listening in Party rooms;
 • Maintaining application stability, debugging technical issues, and preventing service abuse.
 
 4. DATA STORAGE, SECURITY & ENCRYPTION

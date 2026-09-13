@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo, Component } from "react";
 import { Platform } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Audio } from "expo-av";
 import { api } from "../api/client";
 import {
@@ -25,7 +26,9 @@ import {
   getTrendingFeedRTDB,
   registerActiveDevice,
   updateActiveDeviceHeartbeat,
+  setUserOffline,
 } from "../services/firebase";
+import { setCachedTrackArtwork, getCachedTrackArtwork, getHighResArtwork, extractImageUrl } from "../utils/imageUtils";
 import { getAccurateDeviceInfo } from "./ResponsiveContext";
 import { getOfflineAudioUrl, isTrackDownloaded } from "../services/offlineStorage";
 
@@ -95,17 +98,128 @@ export function cleanTrackTitle(title) {
 // Resolving the next URL early reduces the normal gap between queued tracks.
 const globalStreamCache = new Map();
 
+export const STORAGE_LAST_PLAYBACK_KEY = "@staytup_last_playback";
+
+export function getInitialLastPlayback() {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      // 1. Check dedicated last playback key
+      const v = window.localStorage.getItem(STORAGE_LAST_PLAYBACK_KEY);
+      if (v) {
+        const parsed = JSON.parse(v);
+        if (parsed && parsed.track && (parsed.track.videoId || parsed.track.video_id || parsed.track.id)) {
+          parsed.track.stream_url = null;
+          parsed.isPlaying = false;
+          return parsed;
+        }
+      }
+
+      // 2. Check active user recents or guest recents for instant track restoration
+      const uidCandidates = ["guest"];
+      try {
+        const fb = window.localStorage.getItem("@staytup_firebase_user");
+        if (fb) {
+          const u = JSON.parse(fb);
+          if (u?.uid) uidCandidates.unshift(u.uid);
+        }
+        const pin = window.localStorage.getItem("@staytup_pin_user");
+        if (pin) {
+          const u = JSON.parse(pin);
+          if (u?.uid) uidCandidates.unshift(u.uid);
+        }
+      } catch (_) {}
+
+      for (const uid of uidCandidates) {
+        const recentsRaw = window.localStorage.getItem(`odera_recents_${uid}`);
+        if (recentsRaw) {
+          const recents = JSON.parse(recentsRaw);
+          if (Array.isArray(recents) && recents.length > 0) {
+            const first = recents[0];
+            if (first && (first.videoId || first.video_id || first.id)) {
+              first.stream_url = null;
+              return {
+                track: first,
+                queue: recents.slice(0, 30),
+                positionMillis: 0,
+                timestamp: Date.now(),
+                isPlaying: false,
+              };
+            }
+          }
+        }
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+export function saveLocalPlayback(track, queue, positionMillis = 0) {
+  try {
+    if (!track) return;
+    const cleanId = track.videoId || track.video_id || track.id;
+    if (!cleanId) return;
+
+    const payload = {
+      track: {
+        id: track.id || `saavn_${cleanId}`,
+        videoId: cleanId,
+        video_id: cleanId,
+        title: track.title || "",
+        artist: track.artist || "",
+        artwork_url: track.artwork_url || track.thumbnail || "",
+        thumbnail: track.thumbnail || track.artwork_url || "",
+        duration: track.duration || "",
+        duration_seconds: track.duration_seconds || track.duration || 0,
+        source: track.source || "saavn",
+      },
+      queue: Array.isArray(queue) ? queue.slice(0, 50) : [],
+      positionMillis: typeof positionMillis === "number" ? positionMillis : 0,
+      timestamp: Date.now(),
+    };
+
+    const json = JSON.stringify(payload);
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.setItem(STORAGE_LAST_PLAYBACK_KEY, json);
+    }
+    AsyncStorage.setItem(STORAGE_LAST_PLAYBACK_KEY, json).catch(() => {});
+  } catch (_) {}
+}
+
 const AudioProvider = ({ children }) => {
   const myDeviceId = getOrCreateDeviceId();
   const myDeviceInfo = useMemo(() => getAccurateDeviceInfo(), []);
   const myDeviceName = myDeviceInfo.name;
-  const [currentTrack, setCurrentTrack] = useState(null);
+
+  const initialPlayback = useMemo(() => getInitialLastPlayback(), []);
+  const initialDuration = useMemo(() => {
+    if (initialPlayback?.track) {
+      const t = initialPlayback.track;
+      let d = 0;
+      if (t.duration_seconds && Number.isFinite(Number(t.duration_seconds)) && Number(t.duration_seconds) > 0) {
+        const s = Number(t.duration_seconds);
+        d = s > 10000 ? s : s * 1000;
+      } else if (typeof t.duration === "number" && t.duration > 0) {
+        d = t.duration * 1000;
+      }
+      return d > 0 ? d : 1;
+    }
+    return 1;
+  }, [initialPlayback]);
+
+  const [currentTrack, setCurrentTrack] = useState(() => initialPlayback?.track || null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [positionMillis, setPositionMillis] = useState(0);
-  const [durationMillis, setDurationMillis] = useState(1);
-  const [queue, setQueue] = useState([]);
-  const [queueIndex, setQueueIndex] = useState(-1);
+  const [positionMillis, setPositionMillis] = useState(() => (initialPlayback?.positionMillis > 0 ? initialPlayback.positionMillis : 0));
+  const [durationMillis, setDurationMillis] = useState(() => initialDuration);
+  const [queue, setQueue] = useState(() => (Array.isArray(initialPlayback?.queue) ? initialPlayback.queue : []));
+  const [queueIndex, setQueueIndex] = useState(() => {
+    if (initialPlayback?.track && Array.isArray(initialPlayback?.queue)) {
+      const id = initialPlayback.track.videoId || initialPlayback.track.video_id || initialPlayback.track.id;
+      const idx = initialPlayback.queue.findIndex((t) => (t.videoId || t.video_id || t.id) === id);
+      return idx >= 0 ? idx : 0;
+    }
+    return -1;
+  });
   const [isRepeat, setIsRepeat] = useState(false);
   const [isShuffle, setIsShuffle] = useState(false);
   const [isFullPlayerVisible, setIsFullPlayerVisible] = useState(false);
@@ -115,24 +229,33 @@ const AudioProvider = ({ children }) => {
   const [queueNotice, setQueueNotice] = useState(null);
   const queueNoticeTimerRef = useRef(null);
 
+  // Live Realtime Playback Session (Cross-device Spotify Connect state)
+  const [playbackSession, setPlaybackSession] = useState(null);
+  const lastSessionSyncRef = useRef(0);
+
   const openDeviceModal = useCallback(() => setIsDeviceModalOpen(true), []);
   const closeDeviceModal = useCallback(() => setIsDeviceModalOpen(false), []);
+
+  // Window listeners for global open/close devices modal events
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleOpen = () => setIsDeviceModalOpen(true);
+    const handleClose = () => setIsDeviceModalOpen(false);
+    window.addEventListener("staytup-open-devices", handleOpen);
+    window.addEventListener("staytup-close-devices", handleClose);
+    window.staytupOpenDevices = handleOpen;
+    window.staytupCloseDevices = handleClose;
+    return () => {
+      window.removeEventListener("staytup-open-devices", handleOpen);
+      window.removeEventListener("staytup-close-devices", handleClose);
+    };
+  }, []);
 
   // Sleep Timer state
   const [sleepSecondsLeft, setSleepSecondsLeft] = useState(null);
   const [sleepEndOnTrack, setSleepEndOnTrack] = useState(false);
   const sleepEndOnTrackRef = useRef(false);
   const sleepTimerEndAtRef = useRef(null);
-
-  // Active Listening Party Room State (party playback isolation)
-  const [activePartyId, setActivePartyId] = useState(null);
-  const activePartyRef = useRef(null);
-
-  const setActiveParty = useCallback((partyOrId) => {
-    const id = typeof partyOrId === "object" ? partyOrId?.id : partyOrId;
-    setActivePartyId(id || null);
-    activePartyRef.current = partyOrId || null;
-  }, []);
 
   // Native player reference (expo-av)
   const soundRef = useRef(null);
@@ -149,7 +272,7 @@ const AudioProvider = ({ children }) => {
   const currentTrackRef = useRef(currentTrack);
   const positionMillisRef = useRef(positionMillis);
   const durationMillisRef = useRef(durationMillis);
-  const authoritativeDurationRef = useRef(0);
+  const authoritativeDurationRef = useRef(initialDuration > 1 ? initialDuration : 0);
   const advancingRef = useRef(false);
   const volumeRef = useRef(0.85);
   const lastUpdatePosRef = useRef(0);
@@ -158,6 +281,7 @@ const AudioProvider = ({ children }) => {
   // Every requested track load gets an id. Stream resolution is asynchronous,
   // so an older request must never replace a newer selection.
   const playbackRequestRef = useRef(0);
+  const localPlaybackStartedAtRef = useRef(0);
 
   const playTrackRef = useRef(null);
   const togglePlayPauseRef = useRef(null);
@@ -170,6 +294,36 @@ const AudioProvider = ({ children }) => {
   useEffect(() => {
     let unsubscribeFollowed = null;
     let heartbeatTimer = null;
+    let currentUid = auth?.currentUser?.uid || null;
+
+    const pingDevice = (uid) => {
+      if (!uid) return;
+      updateActiveDeviceHeartbeat(uid, myDeviceId, {
+        isPlaying: Boolean(isPlayingRef.current),
+        currentTrackTitle: currentTrackRef.current?.title || null,
+        currentTrackId: currentTrackRef.current?.videoId || null,
+      }).catch(() => {});
+    };
+
+    const handleFocusOrVisible = () => {
+      if (currentUid && typeof document !== "undefined" && !document.hidden) {
+        pingDevice(currentUid);
+      }
+    };
+
+    const handleUnloadOrClose = () => {
+      if (currentUid) {
+        try {
+          setUserOffline(currentUid, myDeviceId);
+        } catch (_) {}
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", handleFocusOrVisible);
+      document.addEventListener("visibilitychange", handleFocusOrVisible);
+      window.addEventListener("beforeunload", handleUnloadOrClose);
+    }
 
     const unsubAuth = onAuthChange((user) => {
       if (unsubscribeFollowed) {
@@ -181,8 +335,10 @@ const AudioProvider = ({ children }) => {
         heartbeatTimer = null;
       }
 
+      currentUid = user?.uid || null;
+
       if (user?.uid) {
-        // 1. Register this device presence in RTDB
+        // 1. Register this device presence in RTDB immediately
         registerActiveDevice(user.uid, {
           id: myDeviceId,
           name: myDeviceInfo.name,
@@ -190,12 +346,15 @@ const AudioProvider = ({ children }) => {
           browser: myDeviceInfo.browser,
           deviceType: myDeviceInfo.deviceType,
           icon: myDeviceInfo.icon,
+          isPlaying: Boolean(isPlayingRef.current),
+          currentTrackTitle: currentTrackRef.current?.title || null,
+          currentTrackId: currentTrackRef.current?.videoId || null,
         }).catch(() => {});
 
-        // 2. Periodic presence heartbeat (every 45s)
+        // 2. High-frequency presence heartbeat (every 20s)
         heartbeatTimer = setInterval(() => {
-          updateActiveDeviceHeartbeat(user.uid, myDeviceId).catch(() => {});
-        }, 45000);
+          pingDevice(user.uid);
+        }, 20000);
 
         // 3. Followed artists subscription
         unsubscribeFollowed = subscribeFollowedArtists(user.uid, (artistsList) => {
@@ -210,6 +369,17 @@ const AudioProvider = ({ children }) => {
     });
 
     return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", handleFocusOrVisible);
+        document.removeEventListener("visibilitychange", handleFocusOrVisible);
+        window.removeEventListener("beforeunload", handleUnloadOrClose);
+        window.removeEventListener("pagehide", handleUnloadOrClose);
+      }
+      if (currentUid) {
+        try {
+          setUserOffline(currentUid, myDeviceId);
+        } catch (_) {}
+      }
       if (unsubscribeFollowed) unsubscribeFollowed();
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (unsubAuth) unsubAuth();
@@ -452,19 +622,20 @@ const AudioProvider = ({ children }) => {
     }
     webAudioRef.current = audio;
 
-    // Web Autoplay Policy Unlocker: Prime audio element on very first user gesture
+    // Web Autoplay Policy Unlocker: Prime audio on user gesture using an isolated Audio object
+    // DO NOT touch webAudioRef.current or set its src, so we never trigger its onPlay/onPlaying listeners or start playing restored tracks!
     const unlockAudio = () => {
-      if (webAudioRef.current && webAudioRef.current.paused && (!webAudioRef.current.src || webAudioRef.current.src === window.location.href)) {
-        try {
-          webAudioRef.current.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-          webAudioRef.current.play().then(() => {
-            if (webAudioRef.current && webAudioRef.current.src.startsWith("data:")) {
-              webAudioRef.current.pause();
-              webAudioRef.current.src = "";
-            }
+      try {
+        const dummy = new window.Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
+        dummy.volume = 0;
+        const p = dummy.play();
+        if (p !== undefined) {
+          p.then(() => {
+            dummy.pause();
+            dummy.src = "";
           }).catch(() => {});
-        } catch (_) {}
-      }
+        }
+      } catch (_) {}
       window.removeEventListener("pointerdown", unlockAudio);
       window.removeEventListener("touchstart", unlockAudio);
       window.removeEventListener("click", unlockAudio);
@@ -476,6 +647,9 @@ const AudioProvider = ({ children }) => {
     window.addEventListener("keydown", unlockAudio, { passive: true, once: true });
 
     const onPlay = () => {
+      if (!audio || !audio.src || audio.src === "" || audio.src.startsWith("data:") || audio.src === window.location.href) {
+        return;
+      }
       // Force-ensure audio is audible every time playback starts
       if (audio) {
         audio.muted = false;
@@ -512,6 +686,9 @@ const AudioProvider = ({ children }) => {
     };
 
     const onPlaying = () => {
+      if (!audio || !audio.src || audio.src === "" || audio.src.startsWith("data:") || audio.src === window.location.href) {
+        return;
+      }
       setIsLoading(false);
       setIsPlaying(true);
       isPlayingRef.current = true;
@@ -526,7 +703,7 @@ const AudioProvider = ({ children }) => {
     };
 
     const onTimeUpdate = () => {
-      if (!audio) return;
+      if (!audio || !audio.src || audio.src === "" || audio.src.startsWith("data:") || audio.src === window.location.href) return;
       if (refreshSleepTimer()) return;
       const curSec = audio.currentTime || 0;
       const durSec = audio.duration || 0;
@@ -544,6 +721,27 @@ const AudioProvider = ({ children }) => {
       if (Math.abs(curMs - lastUpdatePosRef.current) >= 500) {
         lastUpdatePosRef.current = curMs;
         setPositionMillis(curMs);
+      }
+
+      // Throttled sync of position & playing state to RTDB every 4.5s for cross-device sync
+      const nowSync = Date.now();
+      if (nowSync - lastSessionSyncRef.current >= 4500 && auth?.currentUser?.uid && isPlayingRef.current) {
+        lastSessionSyncRef.current = nowSync;
+        const syncTrack = currentTrackRef.current;
+        if (syncTrack) {
+          updatePlaybackSession(auth.currentUser.uid, {
+            deviceId: myDeviceId,
+            deviceName: myDeviceName,
+            trackId: syncTrack.videoId || syncTrack.video_id || syncTrack.id,
+            trackTitle: syncTrack.title,
+            track: syncTrack,
+            queue: queueRef.current,
+            queueIndex: queueIndexRef.current,
+            positionMillis: curMs,
+            durationMillis: durSec ? Math.round(durSec * 1000) : (durationMillisRef.current || 0),
+            isPlaying: true,
+          }).catch(() => {});
+        }
       }
 
       if (durSec && Number.isFinite(durSec) && durSec > 0) {
@@ -612,8 +810,8 @@ const AudioProvider = ({ children }) => {
         return;
       }
 
-      // 3. Ignore empty or uninitialized source
-      if (!audio || !audio.src || audio.src === "" || audio.src === window.location.href) {
+      // 3. Ignore empty, uninitialized, or dummy data source
+      if (!audio || !audio.src || audio.src === "" || audio.src.startsWith("data:") || audio.src === window.location.href) {
         return;
       }
 
@@ -659,9 +857,10 @@ const AudioProvider = ({ children }) => {
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible" && webAudioRef.current) {
         const a = webAudioRef.current;
-        setIsPlaying(!a.paused);
-        isPlayingRef.current = !a.paused;
-        updateMediaSessionPlaybackState(!a.paused);
+        const isReallyPlaying = !a.paused && Boolean(a.src) && !a.src.startsWith("data:") && a.src !== window.location.href;
+        setIsPlaying(isReallyPlaying);
+        isPlayingRef.current = isReallyPlaying;
+        updateMediaSessionPlaybackState(isReallyPlaying);
       }
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -770,36 +969,45 @@ const AudioProvider = ({ children }) => {
       const uid = firebaseUser?.uid || "guest";
       loadHiddenTracks(uid).catch(() => {});
 
-      // 1. Restore last played track so miniplayer appears immediately
+      // 1. Restore last played track so miniplayer is always fresh & synced
       try {
         const playbackData = await getLastPlayback(uid);
         if (playbackData && playbackData.track) {
           const track = playbackData.track;
-          if (track && (track.videoId || track.video_id || track.id) && !currentTrackRef.current) {
-            // NEVER use cached stream_url — always resolve fresh on user tap
-            track.stream_url = null;
-            setCurrentTrack(track);
-            currentTrackRef.current = track;
+          if (track && (track.videoId || track.video_id || track.id)) {
+            const fbTimestamp = playbackData.updatedAt ? new Date(playbackData.updatedAt).getTime() : (playbackData.timestamp || 0);
+            const localTimestamp = initialPlayback?.timestamp || 0;
+            const shouldAdopt = !currentTrackRef.current || (fbTimestamp > localTimestamp + 1000);
 
-            let initDurationMs = 0;
-            if (track.duration_seconds && Number.isFinite(Number(track.duration_seconds)) && Number(track.duration_seconds) > 0) {
-              const s = Number(track.duration_seconds);
-              initDurationMs = s > 10000 ? s : s * 1000;
-            } else if (typeof track.duration === "number" && track.duration > 0) {
-              initDurationMs = track.duration * 1000;
-            }
-            if (initDurationMs > 0 && initDurationMs < 86400000) {
-              authoritativeDurationRef.current = initDurationMs;
-              durationMillisRef.current = initDurationMs;
-              setDurationMillis(initDurationMs);
-            }
-            updateMediaSessionMetadata(track);
-            if (Array.isArray(playbackData.queue) && playbackData.queue.length > 0) {
-              setQueue(playbackData.queue);
-              const idx = playbackData.queue.findIndex(
-                (t) => (t.videoId || t.video_id || t.id) === (track.videoId || track.video_id || track.id)
-              );
-              setQueueIndex(idx >= 0 ? idx : 0);
+            if (shouldAdopt) {
+              // NEVER use cached stream_url — always resolve fresh on user tap
+              track.stream_url = null;
+              setCurrentTrack(track);
+              currentTrackRef.current = track;
+              saveLocalPlayback(track, playbackData.queue || queueRef.current);
+
+              let initDurationMs = 0;
+              if (track.duration_seconds && Number.isFinite(Number(track.duration_seconds)) && Number(track.duration_seconds) > 0) {
+                const s = Number(track.duration_seconds);
+                initDurationMs = s > 10000 ? s : s * 1000;
+              } else if (typeof track.duration === "number" && track.duration > 0) {
+                initDurationMs = track.duration * 1000;
+              }
+              if (initDurationMs > 0 && initDurationMs < 86400000) {
+                authoritativeDurationRef.current = initDurationMs;
+                durationMillisRef.current = initDurationMs;
+                setDurationMillis(initDurationMs);
+              }
+              updateMediaSessionMetadata(track);
+              if (Array.isArray(playbackData.queue) && playbackData.queue.length > 0) {
+                setQueue(playbackData.queue);
+                const idx = playbackData.queue.findIndex(
+                  (t) => (t.videoId || t.video_id || t.id) === (track.videoId || track.video_id || track.id)
+                );
+                setQueueIndex(idx >= 0 ? idx : 0);
+              }
+            } else if (currentTrackRef.current) {
+              saveLocalPlayback(currentTrackRef.current, queueRef.current);
             }
           }
         }
@@ -807,15 +1015,23 @@ const AudioProvider = ({ children }) => {
         console.warn("Error restoring last played track from Firebase:", err);
       }
 
-      // 2. Single-device playback listener
+      // 2. Real-time playback session listener (Spotify Connect state)
       if (firebaseUser) {
         unsubscribePlayback = subscribePlaybackSession(firebaseUser.uid, (session) => {
+          setPlaybackSession(session || null);
+          const now = Date.now();
+          const sessionAge = session?.updatedAt ? now - session.updatedAt : Infinity;
+          // Must be currently active on another device (updated within last 20 seconds)
+          // AND must be newer than our own local play start (so stale or pre-existing sessions never pause us)
+          const isRemoteNewer = session?.updatedAt && session.updatedAt > (localPlaybackStartedAtRef.current + 2500);
           if (
             session &&
             session.isPlaying &&
+            sessionAge < 20000 &&
             session.deviceId &&
             session.deviceId !== myDeviceId &&
-            isPlayingRef.current
+            isPlayingRef.current &&
+            isRemoteNewer
           ) {
             if (Platform.OS === "web" && webAudioRef.current) {
               webAudioRef.current.pause();
@@ -827,7 +1043,7 @@ const AudioProvider = ({ children }) => {
             isPlayingRef.current = false;
             updateMediaSessionPlaybackState(false);
             const activeDev = session.deviceName || "another device";
-            setErrorNotice(`Playback paused — active on ${activeDev}`);
+            setErrorNotice(`Playback moved to ${activeDev}`);
             setTimeout(() => setErrorNotice(null), 4500);
           }
         });
@@ -839,6 +1055,70 @@ const AudioProvider = ({ children }) => {
       if (unsubscribePlayback) unsubscribePlayback();
     };
   }, []);
+
+  // Spotify Connect cross-device derived state
+  const isRemotePlaying = Boolean(
+    playbackSession?.isPlaying &&
+    playbackSession?.deviceId &&
+    playbackSession?.deviceId !== myDeviceId &&
+    playbackSession?.track &&
+    playbackSession?.updatedAt &&
+    (Date.now() - playbackSession.updatedAt < 25000) &&
+    !isPlaying
+  );
+  const remotePlaybackSession = isRemotePlaying ? playbackSession : null;
+
+  const transferPlaybackToThisDevice = useCallback(async () => {
+    if (!playbackSession?.track) return;
+    const targetTrack = playbackSession.track;
+    const targetQueue = Array.isArray(playbackSession.queue) && playbackSession.queue.length > 0
+      ? playbackSession.queue
+      : [targetTrack];
+    const targetIndex = Number.isInteger(playbackSession.queueIndex) && playbackSession.queueIndex >= 0
+      ? playbackSession.queueIndex
+      : targetQueue.findIndex((t) => (t?.videoId || t?.video_id || t?.id) === (targetTrack?.videoId || targetTrack?.video_id || targetTrack?.id));
+    const effectiveIndex = targetIndex >= 0 ? targetIndex : 0;
+
+    let resumePos = Number(playbackSession.positionMillis) || 0;
+    if (playbackSession.isPlaying && playbackSession.updatedAt) {
+      const elapsed = Math.max(0, Date.now() - playbackSession.updatedAt);
+      const durSec = targetTrack.duration_seconds || targetTrack.duration || 0;
+      const durMs = durSec > 0 ? (durSec > 10000 ? durSec : durSec * 1000) : (playbackSession.durationMillis || 0);
+      if (durMs > 0) {
+        resumePos = Math.min(Math.max(0, durMs - 1500), resumePos + elapsed);
+      } else {
+        resumePos = resumePos + elapsed;
+      }
+    }
+
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      updatePlaybackSession(uid, {
+        deviceId: myDeviceId,
+        deviceName: myDeviceName,
+        trackId: targetTrack.videoId || targetTrack.video_id || targetTrack.id,
+        trackTitle: targetTrack.title,
+        track: targetTrack,
+        queue: targetQueue,
+        queueIndex: effectiveIndex,
+        positionMillis: resumePos,
+        durationMillis: playbackSession.durationMillis || 0,
+        isPlaying: true,
+      }).catch(() => {});
+
+      updateActiveDeviceHeartbeat(uid, myDeviceId, {
+        isPlaying: true,
+        currentTrackTitle: targetTrack.title,
+        currentTrackId: targetTrack.videoId || targetTrack.video_id || targetTrack.id,
+      }).catch(() => {});
+    }
+
+    if (playTrackRef.current) {
+      await playTrackRef.current(targetTrack, targetQueue, effectiveIndex, {
+        initialPositionMillis: resumePos,
+      });
+    }
+  }, [playbackSession, myDeviceId, myDeviceName]);
 
   // Update playback status handler for native expo-av
   const onPlaybackStatusUpdate = (status) => {
@@ -1513,6 +1793,7 @@ const AudioProvider = ({ children }) => {
     }
 
     const requestId = ++playbackRequestRef.current;
+    localPlaybackStartedAtRef.current = Date.now();
     const uid = auth.currentUser?.uid || "guest";
     // A track removed from history stays out of automatic queues. Selecting it
     // intentionally restores it to recommendations and history.
@@ -1531,8 +1812,16 @@ const AudioProvider = ({ children }) => {
     setErrorNotice(null);
 
     // Immediate 500x500 artwork upgrade if 50x50 or 150x150 is present
-    const rawArt = track.artwork_url || track.thumbnail || "";
-    const immediateArtwork = rawArt ? String(rawArt).replace(/(?:50x50|150x150)\.jpg/i, "500x500.jpg") : "";
+    const rawArt =
+      extractImageUrl(track.artwork_url) ||
+      extractImageUrl(track.thumbnail) ||
+      extractImageUrl(track.image) ||
+      getCachedTrackArtwork(trackId) ||
+      "";
+    const immediateArtwork = rawArt ? getHighResArtwork(rawArt) || rawArt : "";
+    if (immediateArtwork) {
+      setCachedTrackArtwork(trackId, immediateArtwork);
+    }
     const preparedTrack = {
       ...track,
       artwork_url: immediateArtwork || track.artwork_url || track.thumbnail || "",
@@ -1663,6 +1952,7 @@ const AudioProvider = ({ children }) => {
     };
 
     try {
+      saveLocalPlayback(sanitizedTrack, newQueue || queueRef.current, 0);
       saveLastPlayback(uid, sanitizedTrack, newQueue || queueRef.current);
       addRecentlyPlayed(uid, sanitizedTrack);
       recordAppSongPlay(sanitizedTrack);
@@ -1684,6 +1974,10 @@ const AudioProvider = ({ children }) => {
     (async () => {
       try {
         const properImg = await api.getTrackImage(cleanId, sanitizedTrack.title, sanitizedTrack.artist);
+        if (properImg) {
+          setCachedTrackArtwork(cleanId, properImg);
+          setCachedTrackArtwork(trackId, properImg);
+        }
         if (properImg && properImg !== preparedTrack.artwork_url) {
           setCurrentTrack((prev) => {
             if (!prev) return prev;
@@ -1720,6 +2014,7 @@ const AudioProvider = ({ children }) => {
               thumbnail: properImg,
             };
             saveCachedTrackImage(cleanId, properImg).catch(() => {});
+            saveLocalPlayback(updatedSanitized, queueRef.current, positionMillisRef.current);
             saveLastPlayback(uid, updatedSanitized, queueRef.current).catch(() => {});
             addRecentlyPlayed(uid, updatedSanitized).catch(() => {});
             recordAppSongPlay(updatedSanitized).catch(() => {});
@@ -1854,6 +2149,18 @@ const AudioProvider = ({ children }) => {
         }
 
         if (playSuccess) {
+          if (options.initialPositionMillis && Number.isFinite(options.initialPositionMillis) && options.initialPositionMillis > 0) {
+            const sec = options.initialPositionMillis / 1000;
+            if (audio.readyState >= 1) {
+              try { audio.currentTime = sec; } catch (_) {}
+            } else {
+              audio.addEventListener("loadedmetadata", () => {
+                try { audio.currentTime = sec; } catch (_) {}
+              }, { once: true });
+            }
+            setPositionMillis(options.initialPositionMillis);
+            positionMillisRef.current = options.initialPositionMillis;
+          }
           audio.muted = false;
           audio.volume = volumeRef.current;
           setIsPlaying(true);
@@ -1871,6 +2178,9 @@ const AudioProvider = ({ children }) => {
                 webAudioRef.current.muted = false;
                 webAudioRef.current.volume = volumeRef.current;
                 await webAudioRef.current.play();
+                if (options.initialPositionMillis && Number.isFinite(options.initialPositionMillis) && options.initialPositionMillis > 0) {
+                  try { webAudioRef.current.currentTime = options.initialPositionMillis / 1000; } catch (_) {}
+                }
                 setIsPlaying(true);
                 isPlayingRef.current = true;
                 updateMediaSessionPlaybackState(true);
@@ -1904,12 +2214,23 @@ const AudioProvider = ({ children }) => {
         await soundRef.current.unloadAsync().catch(() => {});
         soundRef.current = null;
       }
+      const initialStatus = {
+        shouldPlay: true,
+        progressUpdateIntervalMillis: 500,
+        ...(options.initialPositionMillis && options.initialPositionMillis > 0
+          ? { positionMillis: Math.round(options.initialPositionMillis) }
+          : {}),
+      };
       const { sound } = await Audio.Sound.createAsync(
         { uri: playableUrl },
-        { shouldPlay: true, progressUpdateIntervalMillis: 500 },
+        initialStatus,
         onPlaybackStatusUpdate
       );
       soundRef.current = sound;
+      if (options.initialPositionMillis && options.initialPositionMillis > 0) {
+        setPositionMillis(options.initialPositionMillis);
+        positionMillisRef.current = options.initialPositionMillis;
+      }
       setIsPlaying(true);
       isPlayingRef.current = true;
       setIsLoading(false);
@@ -1962,6 +2283,9 @@ const AudioProvider = ({ children }) => {
         if (dur > 0) {
           updateMediaSessionPosition(positionMillisRef.current, dur, true);
         }
+        if (currentTrackRef.current) {
+          saveLocalPlayback(currentTrackRef.current, queueRef.current, positionMillisRef.current);
+        }
         updatePlaybackSession(uid, { deviceId: myDeviceId, deviceName: myDeviceName, isPlaying: false });
       } else {
         if (!audio.src && currentTrack) {
@@ -1973,6 +2297,7 @@ const AudioProvider = ({ children }) => {
         audio.muted = false;
         audio.volume = volumeRef.current;
         try {
+          localPlaybackStartedAtRef.current = Date.now();
           await audio.play();
           setIsPlaying(true);
           isPlayingRef.current = true;
@@ -2118,16 +2443,6 @@ const AudioProvider = ({ children }) => {
   const playNext = () => {
     if (advancingRef.current) return;
     advancingRef.current = true;
-
-    // If currently inside an active listening party, party queue takes precedence.
-    // Do NOT play local queue or trigger autoplay.
-    if (activePartyRef.current || activePartyId) {
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("staytup-party-track-ended"));
-      }
-      advancingRef.current = false;
-      return;
-    }
 
     const q = queueRef.current;
     if (!q || q.length === 0) {
@@ -2375,8 +2690,14 @@ const AudioProvider = ({ children }) => {
       setIsQueueOpen,
       queueNotice,
       showQueueNotice,
-      activePartyId,
-      setActiveParty,
+      // Spotify Connect fields
+      playbackSession,
+      isRemotePlaying,
+      remotePlaybackSession,
+      transferPlaybackToThisDevice,
+      myDeviceId,
+      myDeviceName,
+      myDeviceInfo,
     }),
     [
       currentTrack,
@@ -2396,8 +2717,13 @@ const AudioProvider = ({ children }) => {
       sleepEndOnTrack,
       isQueueOpen,
       queueNotice,
-      activePartyId,
-      setActiveParty,
+      playbackSession,
+      isRemotePlaying,
+      remotePlaybackSession,
+      transferPlaybackToThisDevice,
+      myDeviceId,
+      myDeviceName,
+      myDeviceInfo,
     ]
   );
 
@@ -2494,8 +2820,13 @@ const defaultAudioContext = {
   setIsDeviceModalOpen: () => {},
   openDeviceModal: () => {},
   closeDeviceModal: () => {},
-  activePartyId: null,
-  setActiveParty: () => {},
+  playbackSession: null,
+  isRemotePlaying: false,
+  remotePlaybackSession: null,
+  transferPlaybackToThisDevice: () => {},
+  myDeviceId: "",
+  myDeviceName: "",
+  myDeviceInfo: {},
 };
 
 export const useAudio = () => {

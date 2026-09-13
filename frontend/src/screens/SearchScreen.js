@@ -19,6 +19,8 @@ import {
 import { Ionicons, MaterialCommunityIcons, Feather } from "@expo/vector-icons";
 import AddToPlaylistModal from "../components/AddToPlaylistModal";
 import ArtistModal from "../components/ArtistModal";
+import AlbumModal from "../components/AlbumModal";
+import PlaylistModal from "../components/PlaylistModal";
 import { resolveLocalArtistImage } from "../theme/artistImages";
 import { colors, fonts } from "../theme/colors";
 import { api } from "../api/client";
@@ -26,7 +28,7 @@ import { useAudioPlayback } from "../context/AudioContext";
 import { registerBackAction } from "../services/navigation";
 import { useResponsive } from "../context/ResponsiveContext";
 import { useUser } from "../context/UserContext";
-import { getHighResArtwork } from "../utils/imageUtils";
+import { getHighResArtwork, resolveArtwork, extractImageUrl } from "../utils/imageUtils";
 import {
   auth,
   getRecentlyPlayed,
@@ -318,6 +320,8 @@ export default function SearchScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [totalLoaded, setTotalLoaded] = useState(0);
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null);
+  const [selectedAlbumForModal, setSelectedAlbumForModal] = useState(null);
+  const [selectedPlaylistForModal, setSelectedPlaylistForModal] = useState(null);
   const [pageLoading, setPageLoading] = useState(true);
   const [isListeningVoice, setIsListeningVoice] = useState(false);
   const speechRecognitionRef = useRef(null);
@@ -409,7 +413,22 @@ export default function SearchScreen() {
     };
   }, [currentUser]);
 
-  // Load recent items from localStorage (Tracks played from search ONLY)
+  // Helper to uniquely identify recent items (tracks, albums, playlists)
+  const getRecentItemKey = (item) => {
+    if (!item) return "";
+    if (item.type === "album") return "album_" + (item.id || item.album_id || item.title);
+    if (item.type === "playlist") return "playlist_" + (item.id || item.listid || item.title);
+    return "track_" + (item.videoId || item.video_id || item.id || "");
+  };
+
+  const isSanitizedRecentItem = (item) => {
+    if (!item || item.query || item.type === "query") return false;
+    if (item.type === "album") return Boolean(item.id || item.album_id || item.title);
+    if (item.type === "playlist") return Boolean(item.id || item.listid || item.title);
+    return Boolean(item.videoId || item.video_id || item.id);
+  };
+
+  // Load recent items from localStorage (Tracks, Albums, and Playlists from search)
   useEffect(() => {
     let localList = [];
     if (typeof window !== "undefined" && window.localStorage) {
@@ -418,11 +437,7 @@ export default function SearchScreen() {
         if (stored) {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) {
-            // Keep ONLY valid songs played from search, NEVER raw typing queries
-            localList = parsed.filter(
-              (item) => item && !item.query && item.type !== "query" && (item.videoId || item.video_id || item.id)
-            );
-            // Re-write sanitized list to localStorage to remove all legacy typing entries
+            localList = parsed.filter(isSanitizedRecentItem);
             window.localStorage.setItem(LOCAL_RECENTS_KEY, JSON.stringify(localList));
           }
         }
@@ -458,9 +473,7 @@ export default function SearchScreen() {
 
   // Sync recent items back to localStorage
   const persistRecentItems = (items) => {
-    const sanitized = (items || []).filter(
-      (item) => item && !item.query && item.type !== "query" && (item.videoId || item.video_id || item.id)
-    );
+    const sanitized = (items || []).filter(isSanitizedRecentItem);
     setRecentItems(sanitized);
     if (typeof window !== "undefined" && window.localStorage) {
       try {
@@ -474,13 +487,62 @@ export default function SearchScreen() {
     const trackId = track.videoId || track.video_id || track.id;
     if (!trackId) return;
 
+    const trackItem = { ...track, type: "track" };
+    const key = getRecentItemKey(trackItem);
     setRecentItems((prev) => {
-      const filtered = (prev || []).filter((item) => {
-        if (!item || item.query || item.type === "query") return false;
-        const id = item.videoId || item.video_id || item.id;
-        return id !== trackId;
-      });
-      const updated = [{ ...track, type: "track" }, ...filtered].slice(0, 20);
+      const filtered = (prev || []).filter((item) => getRecentItemKey(item) !== key);
+      const updated = [trackItem, ...filtered].slice(0, 20);
+      if (typeof window !== "undefined" && window.localStorage) {
+        try {
+          window.localStorage.setItem(LOCAL_RECENTS_KEY, JSON.stringify(updated));
+        } catch (_) {}
+      }
+      return updated;
+    });
+  };
+
+  const addAlbumToRecent = (album) => {
+    if (!album) return;
+    const albumItem = {
+      ...album,
+      type: "album",
+      id: album.id || album.album_id,
+      album_id: album.id || album.album_id,
+      title: album.title || album.name || "Unknown Album",
+      artist: album.artist || album.subtitle || "Various Artists",
+      image: album.image || album.artwork_url || album.thumbnail || "",
+      artwork_url: album.image || album.artwork_url || album.thumbnail || "",
+      thumbnail: album.image || album.artwork_url || album.thumbnail || "",
+    };
+    const key = getRecentItemKey(albumItem);
+    setRecentItems((prev) => {
+      const filtered = (prev || []).filter((item) => getRecentItemKey(item) !== key);
+      const updated = [albumItem, ...filtered].slice(0, 20);
+      if (typeof window !== "undefined" && window.localStorage) {
+        try {
+          window.localStorage.setItem(LOCAL_RECENTS_KEY, JSON.stringify(updated));
+        } catch (_) {}
+      }
+      return updated;
+    });
+  };
+
+  const addPlaylistToRecent = (playlist) => {
+    if (!playlist) return;
+    const playlistItem = {
+      ...playlist,
+      type: "playlist",
+      id: playlist.id || playlist.listid,
+      title: playlist.title || playlist.name || "Unknown Playlist",
+      description: playlist.description || playlist.subtitle || "Staytup Playlist",
+      image: playlist.image || playlist.artwork_url || playlist.thumbnail || "",
+      artwork_url: playlist.image || playlist.artwork_url || playlist.thumbnail || "",
+      thumbnail: playlist.image || playlist.artwork_url || playlist.thumbnail || "",
+    };
+    const key = getRecentItemKey(playlistItem);
+    setRecentItems((prev) => {
+      const filtered = (prev || []).filter((item) => getRecentItemKey(item) !== key);
+      const updated = [playlistItem, ...filtered].slice(0, 20);
       if (typeof window !== "undefined" && window.localStorage) {
         try {
           window.localStorage.setItem(LOCAL_RECENTS_KEY, JSON.stringify(updated));
@@ -491,12 +553,9 @@ export default function SearchScreen() {
   };
 
   const handleRemoveRecentItem = (itemToRemove) => {
-    const targetKey = itemToRemove?.videoId || itemToRemove?.video_id || itemToRemove?.id;
+    const targetKey = getRecentItemKey(itemToRemove);
     if (!targetKey) return;
-    const updated = recentItems.filter((item) => {
-      const k = item?.videoId || item?.video_id || item?.id;
-      return k !== targetKey;
-    });
+    const updated = (recentItems || []).filter((item) => getRecentItemKey(item) !== targetKey);
     persistRecentItems(updated);
   };
 
@@ -777,11 +836,9 @@ export default function SearchScreen() {
   const isQueryActive = Boolean(query.trim());
   const topArtist = artistResults && artistResults.length > 0 ? artistResults[0] : null;
 
-  // Effective recent items: strictly tracks played from search
+  // Effective recent items: tracks, albums, and playlists from search
   const displayRecents = useMemo(() => {
-    return (recentItems || []).filter(
-      (item) => item && !item.query && item.type !== "query" && (item.videoId || item.video_id || item.id)
-    );
+    return (recentItems || []).filter(isSanitizedRecentItem);
   }, [recentItems]);
 
   return (
@@ -1084,9 +1141,8 @@ export default function SearchScreen() {
                         key={(alb.id || alb.title) + "_" + idx}
                         style={styles.albumCard}
                         onPress={() => {
-                          // Search songs from this album
-                          setQuery(alb.title);
-                          setSelectedFilter("songs");
+                          addAlbumToRecent(alb);
+                          setSelectedAlbumForModal(alb);
                         }}
                         activeOpacity={0.8}
                       >
@@ -1116,9 +1172,8 @@ export default function SearchScreen() {
                         key={(pl.id || pl.title) + "_" + idx}
                         style={styles.playlistCard}
                         onPress={() => {
-                          // Search songs from this playlist
-                          setQuery(pl.title);
-                          setSelectedFilter("songs");
+                          addPlaylistToRecent(pl);
+                          setSelectedPlaylistForModal(pl);
                         }}
                         activeOpacity={0.8}
                       >
@@ -1150,7 +1205,10 @@ export default function SearchScreen() {
             const trackId = item.videoId || item.video_id || item.id;
             const isCurrent = Boolean(currentTrack?.videoId && trackId && currentTrack.videoId === trackId);
             const isThisPlaying = isCurrent && Boolean(isPlaying);
-            const rawArtwork = item.artwork_url || item.thumbnail || item.image;
+            const rawArtwork =
+              resolveArtwork(item) ||
+              getHighResArtwork(item.artwork_url || item.thumbnail || item.image) ||
+              extractImageUrl(item.artwork_url || item.thumbnail || item.image);
             const artistName = item.artist || item.primaryArtists || "Staytup";
 
             return (
@@ -1162,7 +1220,12 @@ export default function SearchScreen() {
                 {/* Artwork */}
                 <View style={styles.spotifyArtworkWrap}>
                   {rawArtwork ? (
-                    <Image source={{ uri: rawArtwork }} style={styles.spotifyArtwork} resizeMode="cover" />
+                    <Image
+                      key={rawArtwork || `search-${trackId}`}
+                      source={{ uri: rawArtwork }}
+                      style={styles.spotifyArtwork}
+                      resizeMode="cover"
+                    />
                   ) : (
                     <View style={[styles.spotifyArtwork, styles.artworkFallback]}>
                       <Ionicons name="musical-note" size={20} color={colors.primary} />
@@ -1272,6 +1335,62 @@ export default function SearchScreen() {
                           {item.query}
                         </Text>
                       </TouchableOpacity>
+                    ) : item.type === "album" ? (
+                      /* Album Row */
+                      <TouchableOpacity
+                        style={styles.recentTrackTouch}
+                        onPress={() => setSelectedAlbumForModal(item)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.spotifyArtworkWrap}>
+                          {item.artwork_url || item.thumbnail || item.image ? (
+                            <Image
+                              source={{ uri: getHighResArtwork(item.artwork_url || item.thumbnail || item.image) || item.artwork_url || item.thumbnail || item.image }}
+                              style={styles.spotifyArtwork}
+                            />
+                          ) : (
+                            <View style={[styles.spotifyArtwork, styles.artworkFallback]}>
+                              <Ionicons name="disc" size={20} color={colors.primary} />
+                            </View>
+                          )}
+                        </View>
+                        <View style={styles.spotifySongTextCol}>
+                          <Text style={styles.spotifySongTitle} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+                          <Text style={styles.spotifySongSubtitle} numberOfLines={1}>
+                            {`Album • ${item.artist || "Staytup"}`}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    ) : item.type === "playlist" ? (
+                      /* Playlist Row */
+                      <TouchableOpacity
+                        style={styles.recentTrackTouch}
+                        onPress={() => setSelectedPlaylistForModal(item)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.spotifyArtworkWrap}>
+                          {item.artwork_url || item.thumbnail || item.image ? (
+                            <Image
+                              source={{ uri: getHighResArtwork(item.artwork_url || item.thumbnail || item.image) || item.artwork_url || item.thumbnail || item.image }}
+                              style={styles.spotifyArtwork}
+                            />
+                          ) : (
+                            <View style={[styles.spotifyArtwork, styles.artworkFallback]}>
+                              <Ionicons name="list" size={20} color={colors.primary} />
+                            </View>
+                          )}
+                        </View>
+                        <View style={styles.spotifySongTextCol}>
+                          <Text style={styles.spotifySongTitle} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+                          <Text style={styles.spotifySongSubtitle} numberOfLines={1}>
+                            {`Playlist • ${item.description || "Staytup"}`}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
                     ) : (
                       /* Track Row (Screenshot 2) */
                       (() => {
@@ -1290,7 +1409,7 @@ export default function SearchScreen() {
                               if (isCurrentTrack) {
                                 setFullPlayerVisible(true);
                               } else {
-                                const validRecents = displayRecents.filter((i) => i.type !== "query");
+                                const validRecents = displayRecents.filter((i) => !i.type || i.type === "track");
                                 handlePlaySong(item, idx, validRecents);
                               }
                             }}
@@ -1326,7 +1445,7 @@ export default function SearchScreen() {
 
                     {/* Right actions: Circular plus (for track) + Remove 'x' button */}
                     <View style={styles.recentRightActions}>
-                      {item.type !== "query" && (
+                      {item.type !== "query" && item.type !== "album" && item.type !== "playlist" && (
                         <CircularPlusButton
                           track={item}
                           onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
@@ -1489,6 +1608,21 @@ export default function SearchScreen() {
             setArtistImagesMap((prev) => ({ ...prev, [name]: photo }));
           }
         }}
+      />
+
+      {/* Album Details & Playback Modal */}
+      <AlbumModal
+        visible={!!selectedAlbumForModal}
+        onClose={() => setSelectedAlbumForModal(null)}
+        album={selectedAlbumForModal}
+        albumId={selectedAlbumForModal?.id || selectedAlbumForModal?.album_id}
+      />
+
+      {/* Playlist Details & Playback Modal */}
+      <PlaylistModal
+        visible={!!selectedPlaylistForModal}
+        onClose={() => setSelectedPlaylistForModal(null)}
+        playlist={selectedPlaylistForModal}
       />
     </View>
   );
@@ -1787,6 +1921,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 6,
+    backgroundColor: "#242424",
   },
   artworkFallback: {
     alignItems: "center",

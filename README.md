@@ -25,15 +25,6 @@
 - **Playlist Backup, Export & Restore**: 1-click "Export Playlist Backup (.json)" downloading a structured JSON file with all tracks and metadata, plus "Restore Backup" for instant JSON import.
 - **Bulk Playlist Editing**: Multi-select track editing mode with checkboxes on each track row, Select All / Deselect All, and a sticky bottom action bar for bulk Delete and bulk Download.
 
-### 2. 🎧 Listening Party — Without Chat
-- **Synchronized Group Listening**: Create public discovery rooms or private rooms with 4-digit passcodes. Host playback controls are broadcasted live to all listeners with millisecond-level drift correction (~200ms) and automatic seek syncing.
-- **Collaborative Room Queue**: Anyone in the room can search and suggest songs to the party queue.
-- **Democratic Queue Upvoting**: Listeners can upvote queued tracks (`▲ count`); higher-voted tracks bubble up to play next automatically.
-- **Democratic Vote-to-Skip**: If a track isn't vibing, listeners can vote to skip (`⏭ Vote Skip (x/threshold)`). When votes exceed 50% of active participants, the track advances automatically.
-- **Zero-Chat Emoji Reaction Bursts**: Float real-time reaction bursts (❤️ 🔥 😂 😮 👏) across all listeners' screens without conversational text chatter, keeping the experience 100% focused on music.
-- **Room Deep Links**: Instant sharing via `staytup.app/room/{id}` for one-tap entrance directly into the party.
-- **Discovery Hub**: Dedicated "Parties" tab and live party discovery banner in the Friends screen.
-
 ### 2. Much Smarter Search & Voice Search
 - **Search Operators**: Direct support for query operators (`artist:Arijit`, `genre:romantic`, `mood:chill`, `lyrics:phrase`, `year:2024`, `lang:hindi`) with one-tap quick operator chips.
 - **Natural Language Discovery**: Search by lyrics, mood, genre, language, year, or artist + genre combinations.
